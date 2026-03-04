@@ -1,0 +1,983 @@
+"""Tests for the evaluate module."""
+
+from __future__ import annotations
+
+from cruxible_core.config.schema import (
+    ConstraintSchema,
+    CoreConfig,
+    EntityTypeSchema,
+    PropertySchema,
+    RelationshipSchema,
+)
+from cruxible_core.evaluate import evaluate_graph
+from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+
+
+def _minimal_config(**overrides) -> CoreConfig:
+    """Build a minimal CoreConfig with overrides."""
+    defaults = {
+        "name": "test",
+        "entity_types": {
+            "Part": EntityTypeSchema(
+                properties={
+                    "part_id": PropertySchema(type="string", primary_key=True),
+                    "category": PropertySchema(type="string"),
+                }
+            ),
+            "Vehicle": EntityTypeSchema(
+                properties={
+                    "vehicle_id": PropertySchema(type="string", primary_key=True),
+                    "make": PropertySchema(type="string"),
+                }
+            ),
+        },
+        "relationships": [
+            RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle"),
+            RelationshipSchema(
+                name="replaces",
+                from_entity="Part",
+                to_entity="Part",
+                properties={"confidence": PropertySchema(type="float")},
+            ),
+        ],
+    }
+    defaults.update(overrides)
+    return CoreConfig(**defaults)
+
+
+class TestOrphanEntities:
+    def test_detects_orphan(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        # P1 has no edges -> orphan
+        report = evaluate_graph(config, graph)
+        orphans = [f for f in report.findings if f.category == "orphan_entity"]
+        assert len(orphans) == 1
+        assert "P1" in orphans[0].message
+        assert orphans[0].severity == "warning"
+
+    def test_exclude_orphan_types(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
+        # Both orphans, but exclude Vehicle
+        report = evaluate_graph(config, graph, exclude_orphan_types=["Vehicle"])
+        orphans = [f for f in report.findings if f.category == "orphan_entity"]
+        assert len(orphans) == 1
+        assert "Part" in orphans[0].message
+
+    def test_exclude_multiple_types(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
+        report = evaluate_graph(config, graph, exclude_orphan_types=["Part", "Vehicle"])
+        orphans = [f for f in report.findings if f.category == "orphan_entity"]
+        assert len(orphans) == 0
+
+    def test_exclude_none_same_as_default(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        report_default = evaluate_graph(config, graph)
+        report_none = evaluate_graph(config, graph, exclude_orphan_types=None)
+        orphans_default = [f for f in report_default.findings if f.category == "orphan_entity"]
+        orphans_none = [f for f in report_none.findings if f.category == "orphan_entity"]
+        assert len(orphans_default) == len(orphans_none)
+
+    def test_no_orphan_when_connected(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Vehicle",
+                to_entity_id="V1",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        orphans = [f for f in report.findings if f.category == "orphan_entity"]
+        assert len(orphans) == 0
+
+
+class TestCoverageGaps:
+    def test_detects_missing_entity_type(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        # Only add Part, not Vehicle
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        gaps = [f for f in report.findings if f.category == "coverage_gap"]
+        entity_gaps = [g for g in gaps if g.detail.get("type") == "entity_type"]
+        assert any("Vehicle" in g.message for g in entity_gaps)
+
+    def test_detects_missing_relationship_type(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
+        # Only add fits, not replaces
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Vehicle",
+                to_entity_id="V1",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        gaps = [f for f in report.findings if f.category == "coverage_gap"]
+        rel_gaps = [g for g in gaps if g.detail.get("type") == "relationship_type"]
+        assert any("replaces" in g.message for g in rel_gaps)
+
+    def test_no_gap_when_fully_covered(self):
+        config = _minimal_config(
+            entity_types={
+                "Part": EntityTypeSchema(
+                    properties={"part_id": PropertySchema(type="string", primary_key=True)}
+                ),
+            },
+            relationships=[
+                RelationshipSchema(name="replaces", from_entity="Part", to_entity="Part"),
+            ],
+        )
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        gaps = [f for f in report.findings if f.category == "coverage_gap"]
+        assert len(gaps) == 0
+
+
+class TestConstraintViolations:
+    def test_detects_violation(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(
+                    name="same_category",
+                    rule="replaces.FROM.category == replaces.TO.category",
+                    severity="error",
+                ),
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": "brake"})
+        )
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P2", properties={"category": "engine"})
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        violations = [f for f in report.findings if f.category == "constraint_violation"]
+        assert len(violations) == 1
+        assert violations[0].severity == "error"
+        assert "same_category" in violations[0].message
+
+    def test_no_violation_when_matching(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(
+                    name="same_category",
+                    rule="replaces.FROM.category == replaces.TO.category",
+                ),
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": "brake"})
+        )
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P2", properties={"category": "brake"})
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        violations = [f for f in report.findings if f.category == "constraint_violation"]
+        assert len(violations) == 0
+
+    def test_skips_unparseable_rule(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(name="complex", rule="some_complex_expression(x, y)"),
+            ]
+        )
+        graph = EntityGraph()
+        report = evaluate_graph(config, graph)
+        violations = [f for f in report.findings if f.category == "constraint_violation"]
+        assert len(violations) == 0
+
+
+class TestCandidateOpportunities:
+    def test_detects_candidate(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        # P1 and P2 both fit V1 but don't have a 'replaces' edge
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Vehicle",
+                to_entity_id="V1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P2",
+                to_entity_type="Vehicle",
+                to_entity_id="V1",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        candidates = [f for f in report.findings if f.category == "candidate_opportunity"]
+        assert len(candidates) == 1
+        assert candidates[0].detail["relationship_type"] == "replaces"
+
+    def test_no_candidate_when_edge_exists(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Vehicle",
+                to_entity_id="V1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P2",
+                to_entity_type="Vehicle",
+                to_entity_id="V1",
+                properties={},
+            )
+        )
+        # They already have a replaces edge
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        candidates = [f for f in report.findings if f.category == "candidate_opportunity"]
+        assert len(candidates) == 0
+
+
+class TestLowConfidenceEdges:
+    def test_detects_low_confidence(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={"confidence": 0.3},
+            )
+        )
+        report = evaluate_graph(config, graph, confidence_threshold=0.5)
+        low = [f for f in report.findings if f.category == "low_confidence_edge"]
+        assert len(low) == 1
+        assert "0.30" in low[0].message
+
+    def test_detects_pending_review(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={"review_status": "pending_review"},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        low = [f for f in report.findings if f.category == "low_confidence_edge"]
+        assert len(low) == 1
+        assert "Pending review" in low[0].message
+
+    def test_no_flag_when_confident(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={"confidence": 0.9},
+            )
+        )
+        report = evaluate_graph(config, graph, confidence_threshold=0.5)
+        low = [f for f in report.findings if f.category == "low_confidence_edge"]
+        assert len(low) == 0
+
+    def test_non_numeric_confidence_is_warning(self):
+        """Non-numeric confidence like 'high' produces a warning instead of crashing."""
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={"confidence": "high"},
+            )
+        )
+        report = evaluate_graph(config, graph, confidence_threshold=0.5)
+        low = [f for f in report.findings if f.category == "low_confidence_edge"]
+        assert len(low) == 1
+        assert "Non-numeric confidence" in low[0].message
+        assert "'high'" in low[0].message
+        assert low[0].severity == "warning"
+
+
+class TestReportStructure:
+    def test_max_findings_truncates(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        # Create 5 orphan entities
+        for i in range(5):
+            graph.add_entity(EntityInstance(entity_type="Part", entity_id=f"P{i}", properties={}))
+        report = evaluate_graph(config, graph, max_findings=3)
+        assert len(report.findings) == 3
+        # Summary counts all findings, not just truncated
+        assert report.summary["orphan_entity"] == 5
+
+    def test_summary_counts(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P2",
+                to_entity_type="Part",
+                to_entity_id="P3",
+                properties={"confidence": 0.1},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        assert report.entity_count > 0
+        assert report.edge_count > 0
+        # Should have at least orphan and low_confidence findings
+        assert "orphan_entity" in report.summary
+        assert "low_confidence_edge" in report.summary
+
+    def test_empty_graph(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        report = evaluate_graph(config, graph)
+        assert report.entity_count == 0
+        assert report.edge_count == 0
+        # Should still have coverage gaps
+        gaps = [f for f in report.findings if f.category == "coverage_gap"]
+        assert len(gaps) > 0
+
+
+def _cross_ref_config(**overrides) -> CoreConfig:
+    """Config with SDN, Officer, Company types and xref + works_at relationships."""
+    defaults = {
+        "name": "test_xref",
+        "entity_types": {
+            "SDN": EntityTypeSchema(
+                properties={"sdn_id": PropertySchema(type="string", primary_key=True)}
+            ),
+            "Officer": EntityTypeSchema(
+                properties={"officer_id": PropertySchema(type="string", primary_key=True)}
+            ),
+            "Company": EntityTypeSchema(
+                properties={"company_id": PropertySchema(type="string", primary_key=True)}
+            ),
+        },
+        "relationships": [
+            RelationshipSchema(name="xref", from_entity="SDN", to_entity="Officer"),
+            RelationshipSchema(name="works_at", from_entity="Officer", to_entity="Company"),
+        ],
+    }
+    defaults.update(overrides)
+    return CoreConfig(**defaults)
+
+
+class TestUnreviewedCoMembers:
+    def test_detects_unreviewed_co_member(self):
+        """Officer2 shares Company1 with matched Officer1 but has no xref → flagged."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        # SDN1 → Officer1 via xref
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        # Officer1 → Company1 via works_at
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+        # Officer2 → Company1 via works_at
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O2",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 1
+        assert co_members[0].detail["entity_type"] == "Officer"
+        assert co_members[0].detail["entity_id"] == "O2"
+        assert co_members[0].detail["matched_sibling"] == "Officer:O1"
+        assert co_members[0].detail["shared_via"] == "works_at"
+        assert co_members[0].detail["shared_entity"] == "Company:C1"
+        assert co_members[0].detail["missing_relationship"] == "xref"
+
+    def test_no_finding_when_co_member_also_matched(self):
+        """Officer2 also has incoming xref → not flagged."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S2",
+                to_entity_type="Officer",
+                to_entity_id="O2",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O2",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 0
+
+    def test_no_findings_for_self_referential(self):
+        """Config with only Part→Part replaces → no co-member findings."""
+        config = _minimal_config(
+            entity_types={
+                "Part": EntityTypeSchema(
+                    properties={"part_id": PropertySchema(type="string", primary_key=True)}
+                ),
+            },
+            relationships=[
+                RelationshipSchema(name="replaces", from_entity="Part", to_entity="Part"),
+            ],
+        )
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 0
+
+    def test_deduplication_across_intermediaries(self):
+        """Officer2 shares Company1 AND Company2 with Officer1 → only 1 finding."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C2", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        # Officer1 works at both C1 and C2
+        for c_id in ["C1", "C2"]:
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="works_at",
+                    from_entity_type="Officer",
+                    from_entity_id="O1",
+                    to_entity_type="Company",
+                    to_entity_id=c_id,
+                    properties={},
+                )
+            )
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="works_at",
+                    from_entity_type="Officer",
+                    from_entity_id="O2",
+                    to_entity_type="Company",
+                    to_entity_id=c_id,
+                    properties={},
+                )
+            )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 1
+        assert co_members[0].detail["entity_id"] == "O2"
+
+    def test_skips_high_degree_intermediary(self):
+        """Company with >200 incoming works_at edges → zero co-member findings."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+        # Add 201 more officers at Company1 (total incoming = 202 > 200)
+        for i in range(201):
+            oid = f"OX{i}"
+            graph.add_entity(EntityInstance(entity_type="Officer", entity_id=oid, properties={}))
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="works_at",
+                    from_entity_type="Officer",
+                    from_entity_id=oid,
+                    to_entity_type="Company",
+                    to_entity_id="C1",
+                    properties={},
+                )
+            )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 0
+
+    def test_does_not_skip_low_degree_intermediary(self):
+        """Same structure with fewer officers → Officer2 IS flagged."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O2",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 1
+        assert co_members[0].detail["entity_id"] == "O2"
+
+    def test_skips_rejected_seed_edge(self):
+        """Rejected xref seed doesn't populate matched_set → no finding."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={"review_status": "human_rejected"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O2",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 0
+
+    def test_skips_rejected_outgoing_membership_edge(self):
+        """Rejected outgoing works_at from Officer1 → Company1 not reachable."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={"review_status": "human_rejected"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O2",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 0
+
+    def test_skips_rejected_incoming_membership_edge(self):
+        """Rejected incoming works_at for Officer2 → not reachable as co-member."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O2",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={"review_status": "human_rejected"},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 0
+
+    def test_summary_counts_all_before_truncation(self):
+        """Summary counts reflect true totals even when findings are truncated."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+
+        # Create SDN and matched Officer
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+
+        # Create >10 unmatched officers at the same company
+        for i in range(12):
+            oid = f"UO{i}"
+            graph.add_entity(EntityInstance(entity_type="Officer", entity_id=oid, properties={}))
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="works_at",
+                    from_entity_type="Officer",
+                    from_entity_id=oid,
+                    to_entity_type="Company",
+                    to_entity_id="C1",
+                    properties={},
+                )
+            )
+
+        report = evaluate_graph(config, graph, max_findings=5)
+        assert len(report.findings) == 5
+        assert report.summary["unreviewed_co_member"] > 5
+
+    def test_skips_malformed_edge_wrong_co_member_type(self):
+        """Malformed works_at edge from Company to Company is ignored."""
+        config = _cross_ref_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="SDN", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Officer", entity_id="O1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Company", entity_id="C2", properties={}))
+
+        # SDN1 → Officer1 via xref (seeds matched_set)
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="xref",
+                from_entity_type="SDN",
+                from_entity_id="S1",
+                to_entity_type="Officer",
+                to_entity_id="O1",
+                properties={},
+            )
+        )
+        # Officer1 → Company1 via works_at
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Officer",
+                from_entity_id="O1",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+        # Malformed: Company2 → Company1 via works_at (wrong from_entity type)
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="works_at",
+                from_entity_type="Company",
+                from_entity_id="C2",
+                to_entity_type="Company",
+                to_entity_id="C1",
+                properties={},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+        co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
+        assert len(co_members) == 0

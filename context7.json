@@ -1,0 +1,15 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Cruxible Core",
+  "description": "Deterministic decision engine with receipts. AI agents write YAML configs defining entity types, relationships, queries, and constraints. Core ingests data, executes queries via graph traversal, and produces receipt-based provenance. 19 MCP tools for full lifecycle orchestration. Zero LLM inside.",
+  "folders": ["docs"],
+  "excludeFolders": [],
+  "excludeFiles": [],
+  "rules": [
+    "Always validate config with cruxible_validate before cruxible_init",
+    "Ingest entities before relationships — edges reference entity IDs",
+    "Use cruxible_add_relationship for inferred relationships, not batch CSV scripts",
+    "Include source, confidence, and evidence in edge properties for provenance",
+    "Use the instance_id from cruxible_init in all subsequent tool calls"
+  ]
+}

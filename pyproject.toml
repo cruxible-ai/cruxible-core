@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cruxible-core"
+version = "0.1.0"
+description = "Deterministic decision engine with receipts. AI agents write configs, Core executes with proof."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    {name = "Alchemyze LLC DBA Cruxible"},
+]
+keywords = ["decision-engine", "graph", "receipts", "mcp", "deterministic", "ai-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "pydantic>=2.0",
+    "networkx>=3.0",
+    "polars>=1.0",
+    "pyyaml>=6.0",
+    "structlog>=24.0",
+    "click>=8.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "ruff>=0.7",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+cruxible = "cruxible_core.cli.main:cli"
+cruxible-mcp = "cruxible_core.mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/cruxible/cruxible-core"
+Documentation = "https://github.com/cruxible/cruxible-core/tree/main/docs"
+Repository = "https://github.com/cruxible/cruxible-core"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cruxible_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+packages = ["cruxible_core"]
+
+[dependency-groups]
+dev = [
+    "types-networkx>=3.6.1.20260303",
+    "types-pyyaml>=6.0.12.20250915",
+]

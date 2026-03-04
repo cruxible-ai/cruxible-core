@@ -1,0 +1,663 @@
+"""In-memory entity graph using networkx.
+
+Uses networkx.MultiDiGraph for storage:
+- Nodes store EntityInstance data
+- Edges store RelationshipInstance data with unique integer keys
+- Supports multiple edges of the same type between nodes
+
+Node ID format: "{entity_type}:{entity_id}" (e.g., "Vehicle:V-2024-CIVIC-EX")
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict, deque
+from collections.abc import Callable, Iterator
+from itertools import count
+from typing import Any
+
+import networkx as nx
+
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    make_node_id,
+    split_node_id,
+)
+
+
+class EntityGraph:
+    """In-memory graph of entity instances and relationships."""
+
+    def __init__(self) -> None:
+        self._graph: nx.MultiDiGraph[str] = nx.MultiDiGraph()
+        self._entities_by_type: dict[str, set[str]] = defaultdict(set)
+        self._edge_counter: count[int] = count()
+
+    def clear(self) -> None:
+        """Clear all entities and relationships from the graph."""
+        self._graph.clear()
+        self._entities_by_type.clear()
+        self._edge_counter = count()
+
+    # -------------------------------------------------------------------------
+    # Entity Operations
+    # -------------------------------------------------------------------------
+
+    def add_entity(self, entity: EntityInstance) -> None:
+        """Add an entity to the graph. Updates if entity with same ID exists."""
+        node_id = entity.node_id()
+        self._graph.add_node(
+            node_id,
+            entity_type=entity.entity_type,
+            entity_id=entity.entity_id,
+            properties=entity.properties,
+        )
+        self._entities_by_type[entity.entity_type].add(node_id)
+
+    def get_entity(self, entity_type: str, entity_id: str) -> EntityInstance | None:
+        """Get an entity by type and ID. Returns None if not found."""
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return None
+
+        node_data = self._graph.nodes[node_id]
+        return EntityInstance(
+            entity_type=node_data["entity_type"],
+            entity_id=node_data["entity_id"],
+            properties=node_data.get("properties", {}),
+        )
+
+    def has_entity(self, entity_type: str, entity_id: str) -> bool:
+        """Check if an entity exists in the graph."""
+        return make_node_id(entity_type, entity_id) in self._graph
+
+    def list_entities(
+        self,
+        entity_type: str,
+        property_filter: dict[str, Any] | None = None,
+    ) -> list[EntityInstance]:
+        """List all entities of a given type, optionally filtered by properties.
+
+        When ``property_filter`` is provided, only entities whose properties
+        match **all** filter key-value pairs (exact equality, AND semantics)
+        are returned.
+        """
+        node_ids = self._entities_by_type.get(entity_type, set())
+        entities = []
+        for node_id in node_ids:
+            if node_id in self._graph:
+                node_data = self._graph.nodes[node_id]
+                if property_filter:
+                    props = node_data.get("properties", {})
+                    if not all(props.get(k) == v for k, v in property_filter.items()):
+                        continue
+                entities.append(
+                    EntityInstance(
+                        entity_type=node_data["entity_type"],
+                        entity_id=node_data["entity_id"],
+                        properties=node_data.get("properties", {}),
+                    )
+                )
+        return entities
+
+    def remove_entity(self, entity_type: str, entity_id: str) -> None:
+        """Remove an entity and all its relationships."""
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id in self._graph:
+            self._graph.remove_node(node_id)
+            self._entities_by_type[entity_type].discard(node_id)
+
+    def iter_all_entities(self) -> Iterator[EntityInstance]:
+        """Yield every EntityInstance in the graph, across all types."""
+        for node_ids in self._entities_by_type.values():
+            for node_id in node_ids:
+                if node_id not in self._graph:
+                    continue
+                data = self._graph.nodes[node_id]
+                yield EntityInstance(
+                    entity_type=data["entity_type"],
+                    entity_id=data["entity_id"],
+                    properties=data.get("properties", {}),
+                )
+
+    def is_isolated(self, entity_type: str, entity_id: str) -> bool:
+        """Check whether an entity has zero edges.
+
+        Returns True if the entity does not exist in the graph.
+        """
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return True
+        return bool(self._graph.degree(node_id) == 0)
+
+    def neighbor_ids(self, entity_type: str, entity_id: str) -> set[str]:
+        """Get all neighbor node-ID strings (both directions, all relationship types).
+
+        Returns an empty set if the entity does not exist in the graph.
+        """
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return set()
+        result: set[str] = set()
+        for _, dest in self._graph.out_edges(node_id):
+            result.add(dest)
+        for src, _ in self._graph.in_edges(node_id):
+            result.add(src)
+        return result
+
+    # -------------------------------------------------------------------------
+    # Relationship Operations
+    # -------------------------------------------------------------------------
+
+    def add_relationship(self, rel: RelationshipInstance) -> None:
+        """Add a relationship to the graph. Creates stub entities if needed."""
+        from_node = rel.from_node_id()
+        to_node = rel.to_node_id()
+
+        if from_node not in self._graph:
+            self._graph.add_node(
+                from_node,
+                entity_type=rel.from_entity_type,
+                entity_id=rel.from_entity_id,
+                properties={},
+            )
+            self._entities_by_type[rel.from_entity_type].add(from_node)
+
+        if to_node not in self._graph:
+            self._graph.add_node(
+                to_node,
+                entity_type=rel.to_entity_type,
+                entity_id=rel.to_entity_id,
+                properties={},
+            )
+            self._entities_by_type[rel.to_entity_type].add(to_node)
+
+        edge_key = next(self._edge_counter)
+        self._graph.add_edge(
+            from_node,
+            to_node,
+            key=edge_key,
+            relationship_type=rel.relationship_type,
+            properties=rel.properties,
+        )
+
+    def get_relationship(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+        edge_key: int | None = None,
+    ) -> RelationshipInstance | None:
+        """Get a specific relationship between two entities. Returns first match."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return None
+
+        for key, edge_data in edge_dict.items():
+            if edge_key is not None and key != edge_key:
+                continue
+            if edge_data.get("relationship_type") == relationship_type:
+                return RelationshipInstance(
+                    relationship_type=relationship_type,
+                    from_entity_type=from_type,
+                    from_entity_id=from_id,
+                    to_entity_type=to_type,
+                    to_entity_id=to_id,
+                    edge_key=key if isinstance(key, int) else None,
+                    properties=edge_data.get("properties", {}),
+                )
+        return None
+
+    def has_relationship(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+    ) -> bool:
+        """Check if a specific relationship exists between two entities."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return False
+        return any(e.get("relationship_type") == relationship_type for e in edge_dict.values())
+
+    def update_edge_properties(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+        updates: dict[str, Any],
+        edge_key: int | None = None,
+    ) -> bool:
+        """Merge updates into an edge's properties. Returns True if found."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return False
+
+        for key, edge_data in edge_dict.items():
+            if edge_key is not None and key != edge_key:
+                continue
+            if edge_data.get("relationship_type") == relationship_type:
+                edge_data.setdefault("properties", {}).update(updates)
+                return True
+
+        return False
+
+    def replace_edge_properties(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+        new_properties: dict[str, Any],
+        edge_key: int | None = None,
+    ) -> bool:
+        """Replace all properties on an edge (full overwrite, not merge). Returns True if found."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return False
+
+        for key, edge_data in edge_dict.items():
+            if edge_key is not None and key != edge_key:
+                continue
+            if edge_data.get("relationship_type") == relationship_type:
+                old_prov = edge_data.get("properties", {}).get("_provenance")
+                edge_data["properties"] = dict(new_properties)
+                if old_prov and "_provenance" not in new_properties:
+                    edge_data["properties"]["_provenance"] = old_prov
+                return True
+
+        return False
+
+    def remove_relationship(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+        edge_key: int | None = None,
+    ) -> bool:
+        """Remove a specific relationship. Returns True if found and removed."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return False
+
+        for key, edge_data in edge_dict.items():
+            if edge_key is not None and key != edge_key:
+                continue
+            if edge_data.get("relationship_type") == relationship_type:
+                self._graph.remove_edge(from_node, to_node, key=key)
+                return True
+
+        return False
+
+    def relationship_count_between(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+    ) -> int:
+        """Count matching relationships between two entities for a relationship type."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return 0
+        return sum(
+            1
+            for edge_data in edge_dict.values()
+            if edge_data.get("relationship_type") == relationship_type
+        )
+
+    # -------------------------------------------------------------------------
+    # Traversal Operations
+    # -------------------------------------------------------------------------
+
+    def get_descendants(
+        self,
+        entity_type: str,
+        entity_id: str,
+        relationship_type: str | None = None,
+        max_depth: int | None = None,
+        edge_filter: Callable[[dict[str, Any]], bool] | None = None,
+        bidirectional: bool = False,
+    ) -> list[tuple[EntityInstance, int]]:
+        """Get all descendants (transitive closure) via BFS with depth.
+
+        Args:
+            entity_type: Source entity type
+            entity_id: Source entity ID
+            relationship_type: Filter by relationship type (None for all)
+            max_depth: Maximum traversal depth (None for unlimited)
+            edge_filter: Callable on edge properties dict, return True to traverse
+            bidirectional: If True, traverse both outgoing and incoming edges
+        """
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return []
+
+        descendants: list[tuple[EntityInstance, int]] = []
+        visited: set[str] = {node_id}
+        queue: deque[tuple[str, int]] = deque([(node_id, 0)])
+
+        while queue:
+            current_id, depth = queue.popleft()
+
+            if max_depth is not None and depth >= max_depth:
+                continue
+
+            edges_to_check: list[tuple[str, str, dict[str, Any]]] = []  # noqa: UP006
+            for _, target, key, data in self._graph.out_edges(current_id, keys=True, data=True):
+                edges_to_check.append((target, key, data))
+            if bidirectional:
+                for source, _, key, data in self._graph.in_edges(current_id, keys=True, data=True):
+                    edges_to_check.append((source, key, data))
+
+            for neighbor, _key, data in edges_to_check:
+                if neighbor in visited:
+                    continue
+                if (
+                    relationship_type is not None
+                    and data.get("relationship_type") != relationship_type
+                ):
+                    continue
+                if edge_filter is not None and not edge_filter(data.get("properties", {})):
+                    continue
+
+                visited.add(neighbor)
+                queue.append((neighbor, depth + 1))
+
+                if neighbor in self._graph:
+                    node_data = self._graph.nodes[neighbor]
+                    descendants.append(
+                        (
+                            EntityInstance(
+                                entity_type=node_data["entity_type"],
+                                entity_id=node_data["entity_id"],
+                                properties=node_data.get("properties", {}),
+                            ),
+                            depth + 1,
+                        )
+                    )
+
+        return descendants
+
+    def get_ancestors(
+        self,
+        entity_type: str,
+        entity_id: str,
+        relationship_type: str,
+        max_depth: int | None = None,
+    ) -> list[tuple[EntityInstance, int]]:
+        """Get all ancestors by walking UP incoming edges of a relationship.
+
+        Follows incoming edges (parent → child direction, walking child → parent).
+        """
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return []
+
+        ancestors: list[tuple[EntityInstance, int]] = []
+        visited: set[str] = {node_id}
+        queue: deque[tuple[str, int]] = deque([(node_id, 0)])
+
+        while queue:
+            current_id, depth = queue.popleft()
+
+            if max_depth is not None and depth >= max_depth:
+                continue
+
+            for source, _, _key, data in self._graph.in_edges(current_id, keys=True, data=True):
+                if source in visited:
+                    continue
+                if data.get("relationship_type") != relationship_type:
+                    continue
+
+                visited.add(source)
+                queue.append((source, depth + 1))
+
+                if source in self._graph:
+                    node_data = self._graph.nodes[source]
+                    ancestors.append(
+                        (
+                            EntityInstance(
+                                entity_type=node_data["entity_type"],
+                                entity_id=node_data["entity_id"],
+                                properties=node_data.get("properties", {}),
+                            ),
+                            depth + 1,
+                        )
+                    )
+
+        return ancestors
+
+    def find_path(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        max_depth: int = 10,
+    ) -> list[EntityInstance] | None:
+        """Find shortest path between two entities. Returns None if no path."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+
+        if from_node not in self._graph or to_node not in self._graph:
+            return None
+
+        try:
+            path = nx.shortest_path(self._graph, from_node, to_node)
+            if len(path) > max_depth + 1:
+                return None
+
+            return [
+                EntityInstance(
+                    entity_type=self._graph.nodes[nid]["entity_type"],
+                    entity_id=self._graph.nodes[nid]["entity_id"],
+                    properties=self._graph.nodes[nid].get("properties", {}),
+                )
+                for nid in path
+            ]
+        except nx.NetworkXNoPath:
+            return None
+
+    # -------------------------------------------------------------------------
+    # Efficient Edge Iteration
+    # -------------------------------------------------------------------------
+
+    def iter_edge_data(
+        self,
+        relationship_type: str | None = None,
+    ) -> Iterator[tuple[str, str, str, str, dict[str, Any]]]:
+        """Iterate edges yielding (from_type, from_id, to_type, to_id, properties)."""
+        for u, v, _key, data in self._graph.edges(keys=True, data=True):
+            if relationship_type is not None and data.get("relationship_type") != relationship_type:
+                continue
+            from_type, from_id = split_node_id(u)
+            to_type, to_id = split_node_id(v)
+            yield from_type, from_id, to_type, to_id, data.get("properties", {})
+
+    def list_edges(
+        self,
+        relationship_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List edges as dicts including edge_key and relationship_type."""
+        results: list[dict[str, Any]] = []
+        for u, v, key, data in self._graph.edges(keys=True, data=True):
+            rel_type = data.get("relationship_type", "")
+            if relationship_type is not None and rel_type != relationship_type:
+                continue
+            from_type, from_id = split_node_id(u)
+            to_type, to_id = split_node_id(v)
+            results.append({
+                "from_type": from_type,
+                "from_id": from_id,
+                "to_type": to_type,
+                "to_id": to_id,
+                "relationship_type": rel_type,
+                "edge_key": key,
+                "properties": data.get("properties", {}),
+            })
+        return results
+
+    def get_neighbors_with_edge_refs(
+        self,
+        entity_type: str,
+        entity_id: str,
+        relationship_type: str | None = None,
+        direction: str = "both",
+    ) -> list[tuple[EntityInstance, dict[str, Any], int]]:
+        """Get neighbors, edge properties, and edge key for connecting edges."""
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return []
+
+        results: list[tuple[EntityInstance, dict[str, Any], int]] = []
+        seen_edges: set[tuple[str, str, str]] = set()
+
+        if direction in ("outgoing", "both"):
+            for source, target, key, data in self._graph.out_edges(node_id, keys=True, data=True):
+                if (
+                    relationship_type is not None
+                    and data.get("relationship_type") != relationship_type
+                ):
+                    continue
+                edge_id = (source, target, str(key))
+                if edge_id in seen_edges:
+                    continue
+                seen_edges.add(edge_id)
+                entity = self.get_entity(*split_node_id(target))
+                if entity:
+                    results.append((entity, data.get("properties", {}), key))
+
+        if direction in ("incoming", "both"):
+            for source, target, key, data in self._graph.in_edges(node_id, keys=True, data=True):
+                if (
+                    relationship_type is not None
+                    and data.get("relationship_type") != relationship_type
+                ):
+                    continue
+                edge_id = (source, target, str(key))
+                if edge_id in seen_edges:
+                    continue
+                seen_edges.add(edge_id)
+                entity = self.get_entity(*split_node_id(source))
+                if entity:
+                    results.append((entity, data.get("properties", {}), key))
+
+        return results
+
+    # -------------------------------------------------------------------------
+    # Introspection
+    # -------------------------------------------------------------------------
+
+    def list_entity_types(self) -> list[str]:
+        """Return entity types that have instances in the graph."""
+        return [t for t, ids in self._entities_by_type.items() if ids]
+
+    def list_relationship_types(self) -> list[str]:
+        """Return relationship types that have edges in the graph."""
+        types: set[str] = set()
+        for _, _, _, data in self._graph.edges(keys=True, data=True):
+            rt = data.get("relationship_type")
+            if rt:
+                types.add(rt)
+        return sorted(types)
+
+    # -------------------------------------------------------------------------
+    # Counts
+    # -------------------------------------------------------------------------
+
+    def entity_count(self, entity_type: str | None = None) -> int:
+        """Count entities, optionally filtered by type."""
+        if entity_type is None:
+            return int(self._graph.number_of_nodes())
+        return len(self._entities_by_type.get(entity_type, set()))
+
+    def count_edges(
+        self,
+        entity_type: str,
+        entity_id: str,
+        relationship_type: str | None = None,
+        direction: str = "both",
+    ) -> int:
+        """Count edges by type/direction without materializing neighbors."""
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return 0
+        n = 0
+        if direction in ("incoming", "both"):
+            for _, _, data in self._graph.in_edges(node_id, data=True):
+                if relationship_type is None or data.get("relationship_type") == relationship_type:
+                    n += 1
+        if direction in ("outgoing", "both"):
+            for _, _, data in self._graph.out_edges(node_id, data=True):
+                if relationship_type is None or data.get("relationship_type") == relationship_type:
+                    n += 1
+        return n
+
+    def edge_count(self, relationship_type: str | None = None) -> int:
+        """Count edges, optionally filtered by type."""
+        if relationship_type is None:
+            return int(self._graph.number_of_edges())
+        return sum(
+            1
+            for _, _, _, data in self._graph.edges(keys=True, data=True)
+            if data.get("relationship_type") == relationship_type
+        )
+
+    # -------------------------------------------------------------------------
+    # Serialization
+    # -------------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the graph to a dict (networkx node-link format)."""
+        return dict(nx.node_link_data(self._graph, edges="edges"))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EntityGraph:
+        """Deserialize a graph from a dict (networkx node-link format).
+
+        Rebuilds internal indexes (_entities_by_type, _edge_counter).
+        """
+        graph = cls()
+        nx_graph = nx.node_link_graph(data, directed=True, multigraph=True, edges="edges")
+        if not nx_graph.is_directed() or not nx_graph.is_multigraph():
+            raise ValueError("Graph data must represent a directed multigraph")
+        graph._graph = nx_graph
+        # rebuild _entities_by_type index
+        for node_id, node_data in graph._graph.nodes(data=True):
+            entity_type = node_data.get("entity_type")
+            if entity_type:
+                graph._entities_by_type[entity_type].add(node_id)
+        # rebuild _edge_counter
+        max_key = -1
+        for _, _, key in graph._graph.edges(keys=True):
+            if isinstance(key, int) and key > max_key:
+                max_key = key
+        graph._edge_counter = count(max_key + 1)
+        return graph

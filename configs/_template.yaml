@@ -1,0 +1,85 @@
+# Cruxible Core Configuration Template
+# =====================================
+# Copy this file and fill in your domain-specific entity types,
+# relationships, queries, constraints, and ingestion mappings.
+
+name: "my_domain"
+description: "Describe your decision domain here"
+
+# Entity types define the nodes in your graph.
+# Each entity type has typed properties with optional constraints.
+entity_types:
+  # ExampleEntity:
+  #   description: "What this entity represents"
+  #   properties:
+  #     id:
+  #       type: string
+  #       primary_key: true
+  #     name:
+  #       type: string
+  #       indexed: true
+  #     category:
+  #       type: string
+  #       enum: [option_a, option_b, option_c]
+  #       indexed: true
+  #     score:
+  #       type: float
+  #       optional: true
+
+# Relationships define edges between entity types.
+# Each relationship has a direction (from -> to) and optional properties.
+relationships: []
+  # - name: relates_to
+  #   description: "How EntityA connects to EntityB"
+  #   from: EntityA
+  #   to: EntityB
+  #   properties:
+  #     confidence:
+  #       type: float
+  #     source:
+  #       type: string
+  #       optional: true
+  #     verified:
+  #       type: bool
+  #       default: false
+
+# Named queries define reusable traversal patterns.
+# Each query starts at an entry_point entity type and follows traversal steps.
+named_queries: {}
+  # find_related:
+  #   description: "Find entities related to the given one"
+  #   entry_point: EntityA
+  #   returns: EntityB
+  #   traversal:
+  #     - relationship: relates_to
+  #       direction: outgoing
+  #       filter:
+  #         verified: true
+
+# Constraints define rules that should hold in the graph.
+# Checked by cruxible_evaluate. Severity: "warning" logs, "error" blocks.
+constraints: []
+  # - name: must_be_same_type
+  #   rule: "relates_to.from.category == relates_to.to.category"
+  #   severity: warning
+  #   description: "Related entities should share a category"
+
+# Ingestion mappings tell Core how to load CSV/JSON into the graph.
+# For entities: set entity_type + id_column.
+# For relationships: set relationship_type + from_column + to_column.
+# Use column_map when CSV column names don't match property names.
+ingestion: {}
+  # my_entities:
+  #   description: "Source data for ExampleEntity"
+  #   entity_type: ExampleEntity
+  #   id_column: id
+  #   column_map:
+  #     csv_column_name: property_name
+  # my_edges:
+  #   description: "Source data for relates_to relationships"
+  #   relationship_type: relates_to
+  #   from_column: source_id
+  #   to_column: target_id
+  #   column_map:
+  #     csv_confidence: confidence
+  #     csv_source: source

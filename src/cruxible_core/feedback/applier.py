@@ -1,0 +1,144 @@
+"""Apply feedback to the entity graph.
+
+Actions:
+- approve: set review_status based on source (human_approved or ai_approved)
+- reject: set review_status based on source (human_rejected or ai_rejected)
+- correct: merge corrections into edge properties, set approved status
+- flag: set review_status to pending_review
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+from cruxible_core.errors import DataValidationError, EdgeAmbiguityError
+from cruxible_core.feedback.types import FeedbackRecord
+
+if TYPE_CHECKING:
+    from cruxible_core.graph.entity_graph import EntityGraph
+
+
+def _read_provenance(
+    graph: EntityGraph, t: Any, relationship: str, edge_key: int | None,
+) -> dict[str, Any]:
+    """Read existing _provenance from an edge, returning a mutable copy or empty dict."""
+    existing = graph.get_relationship(
+        t.from_type,
+        t.from_id,
+        t.to_type,
+        t.to_id,
+        relationship,
+        edge_key=edge_key,
+    )
+    if existing:
+        old_prov = existing.properties.get("_provenance")
+        if old_prov:
+            return dict(old_prov)
+    return {}
+
+
+def _stamp_provenance(prov: dict[str, Any], action: str) -> dict[str, Any]:
+    """Add modification timestamp and actor to a provenance dict."""
+    prov["last_modified_at"] = datetime.now(timezone.utc).isoformat()
+    prov["last_modified_by"] = f"feedback:{action}"
+    return prov
+
+
+_SOURCE_PREFIX = {
+    "human": "human",
+    "ai_review": "ai",
+    "system": "human",
+}
+
+_ACTION_PAST = {"approve": "approved", "reject": "rejected"}
+
+
+def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
+    """Apply a feedback record to the graph. Returns True if the edge was found.
+
+    review_status is determined by (source, action):
+    - human approve/reject → human_approved/human_rejected
+    - ai_review approve/reject → ai_approved/ai_rejected
+    - flag → pending_review (any source)
+    - correct → merges corrections, sets approved status per source
+    """
+    t = feedback.target
+    edge_key = t.edge_key
+
+    if edge_key is None:
+        match_count = graph.relationship_count_between(
+            from_type=t.from_type,
+            from_id=t.from_id,
+            to_type=t.to_type,
+            to_id=t.to_id,
+            relationship_type=t.relationship,
+        )
+        if match_count > 1:
+            raise EdgeAmbiguityError(
+                from_type=t.from_type,
+                from_id=t.from_id,
+                to_type=t.to_type,
+                to_id=t.to_id,
+                relationship=t.relationship,
+            )
+
+    prefix = _SOURCE_PREFIX[feedback.source]
+
+    if feedback.action in _ACTION_PAST:
+        prov = _read_provenance(graph, t, t.relationship, edge_key)
+        updates: dict[str, Any] = {"review_status": f"{prefix}_{_ACTION_PAST[feedback.action]}"}
+        if prov:
+            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
+        return graph.update_edge_properties(
+            from_type=t.from_type,
+            from_id=t.from_id,
+            to_type=t.to_type,
+            to_id=t.to_id,
+            relationship_type=t.relationship,
+            updates=updates,
+            edge_key=edge_key,
+        )
+
+    if feedback.action == "flag":
+        prov = _read_provenance(graph, t, t.relationship, edge_key)
+        updates = {"review_status": "pending_review"}
+        if prov:
+            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
+        return graph.update_edge_properties(
+            from_type=t.from_type,
+            from_id=t.from_id,
+            to_type=t.to_type,
+            to_id=t.to_id,
+            relationship_type=t.relationship,
+            updates=updates,
+            edge_key=edge_key,
+        )
+
+    if feedback.action == "correct":
+        # Defensive: validate confidence in corrections
+        confidence = feedback.corrections.get("confidence")
+        if confidence is not None:
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+                raise DataValidationError(
+                    f"corrections.confidence must be numeric (float). "
+                    f"Got {confidence!r}. "
+                    f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
+                )
+        # Strip _provenance from corrections (prevent spoofing)
+        updates = {k: v for k, v in feedback.corrections.items() if k != "_provenance"}
+        updates["review_status"] = f"{prefix}_approved"
+        prov = _read_provenance(graph, t, t.relationship, edge_key)
+        if prov:
+            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
+        return graph.update_edge_properties(
+            from_type=t.from_type,
+            from_id=t.from_id,
+            to_type=t.to_type,
+            to_id=t.to_id,
+            relationship_type=t.relationship,
+            updates=updates,
+            edge_key=edge_key,
+        )
+
+    return False

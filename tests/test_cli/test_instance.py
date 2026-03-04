@@ -1,0 +1,241 @@
+"""Tests for CruxibleInstance (.cruxible/ management)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.errors import ConfigError, InstanceNotFoundError
+from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+
+
+class TestInit:
+    def test_creates_instance_dir(self, tmp_project: Path) -> None:
+        CruxibleInstance.init(tmp_project, "config.yaml")
+        assert (tmp_project / ".cruxible").is_dir()
+        assert (tmp_project / ".cruxible" / "instance.json").exists()
+        assert (tmp_project / ".cruxible" / "graph.json").exists()
+
+    def test_instance_json_metadata(self, tmp_project: Path) -> None:
+        CruxibleInstance.init(tmp_project, "config.yaml", data_dir="data")
+        meta = json.loads((tmp_project / ".cruxible" / "instance.json").read_text())
+        assert meta["config_path"] == "config.yaml"
+        assert meta["data_dir"] == "data"
+        assert "created_at" in meta
+        assert "version" in meta
+
+    def test_rejects_invalid_config(self, tmp_path: Path) -> None:
+        bad_config = tmp_path / "bad.yaml"
+        bad_config.write_text("not_valid: true\n")
+        with pytest.raises(ConfigError):
+            CruxibleInstance.init(tmp_path, "bad.yaml")
+
+    def test_rejects_missing_config(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError):
+            CruxibleInstance.init(tmp_path, "nonexistent.yaml")
+
+
+class TestLoad:
+    def test_loads_from_root(self, initialized_project: CruxibleInstance) -> None:
+        loaded = CruxibleInstance.load(initialized_project.root)
+        assert loaded.root == initialized_project.root
+        assert loaded.metadata["config_path"] == "config.yaml"
+
+    def test_walks_up_to_find_instance(self, initialized_project: CruxibleInstance) -> None:
+        subdir = initialized_project.root / "subdir" / "nested"
+        subdir.mkdir(parents=True)
+        loaded = CruxibleInstance.load(subdir)
+        assert loaded.root == initialized_project.root
+
+    def test_raises_when_not_found(self, tmp_path: Path) -> None:
+        with pytest.raises(InstanceNotFoundError):
+            CruxibleInstance.load(tmp_path)
+
+
+class TestGraphPersistence:
+    def test_save_and_load_empty_graph(self, initialized_project: CruxibleInstance) -> None:
+        graph = initialized_project.load_graph()
+        assert graph.entity_count() == 0
+        assert graph.edge_count() == 0
+
+    def test_roundtrip_entities(self, initialized_project: CruxibleInstance) -> None:
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={"make": "Honda", "year": 2024},
+            )
+        )
+        initialized_project.save_graph(graph)
+
+        loaded = initialized_project.load_graph()
+        assert loaded.entity_count() == 1
+        entity = loaded.get_entity("Vehicle", "V-1")
+        assert entity is not None
+        assert entity.properties["make"] == "Honda"
+
+    def test_roundtrip_relationships(self, initialized_project: CruxibleInstance) -> None:
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P-1",
+                to_entity_type="Vehicle",
+                to_entity_id="V-1",
+                properties={"verified": True},
+            )
+        )
+        initialized_project.save_graph(graph)
+
+        loaded = initialized_project.load_graph()
+        assert loaded.edge_count() == 1
+        assert loaded.has_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
+
+    def test_entities_by_type_rebuilt(self, initialized_project: CruxibleInstance) -> None:
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
+        initialized_project.save_graph(graph)
+
+        loaded = initialized_project.load_graph()
+        assert len(loaded.list_entities("Part")) == 2
+        assert len(loaded.list_entities("Vehicle")) == 1
+
+    def test_edge_counter_rebuilt(self, initialized_project: CruxibleInstance) -> None:
+        """After load, new edges should not collide with existing keys."""
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-2", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P-1",
+                to_entity_type="Vehicle",
+                to_entity_id="V-1",
+                properties={},
+            )
+        )
+        initialized_project.save_graph(graph)
+
+        loaded = initialized_project.load_graph()
+        # Adding another relationship should work without key collision
+        loaded.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P-2",
+                to_entity_type="Vehicle",
+                to_entity_id="V-1",
+                properties={},
+            )
+        )
+        assert loaded.edge_count() == 2
+
+
+class TestGraphRoundTrip:
+    """Integration test: save_graph/load_graph preserves full graph state."""
+
+    def test_entities_and_relationships_preserved(
+        self, initialized_project: CruxibleInstance
+    ) -> None:
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P-1", properties={"name": "Widget"})
+        )
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P-2", properties={"name": "Gizmo"})
+        )
+        graph.add_entity(
+            EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={"make": "Honda"})
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P-1",
+                to_entity_type="Vehicle",
+                to_entity_id="V-1",
+                properties={"confidence": 0.95},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="P-2",
+                to_entity_type="Vehicle",
+                to_entity_id="V-1",
+                properties={"confidence": 0.8},
+            )
+        )
+        initialized_project.save_graph(graph)
+
+        loaded = initialized_project.load_graph()
+        assert loaded.entity_count() == 3
+        assert loaded.edge_count() == 2
+        rel = loaded.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
+        assert rel is not None
+        assert rel.properties["confidence"] == 0.95
+
+
+class TestGraphCache:
+    def test_load_graph_caches(self, initialized_project: CruxibleInstance) -> None:
+        """Second load_graph call returns same object (identity check)."""
+        g1 = initialized_project.load_graph()
+        g2 = initialized_project.load_graph()
+        assert g1 is g2
+
+    def test_save_graph_updates_cache(self, initialized_project: CruxibleInstance) -> None:
+        """save_graph sets cache so load_graph returns saved graph without re-read."""
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P-1", properties={"name": "Pad"})
+        )
+        initialized_project.save_graph(graph)
+        loaded = initialized_project.load_graph()
+        assert loaded is graph
+
+    def test_cache_survives_across_calls(self, tmp_project: Path) -> None:
+        """init → ingest-style save → load_graph twice → same object."""
+        instance = CruxibleInstance.init(tmp_project, "config.yaml")
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={"make": "Honda"})
+        )
+        instance.save_graph(graph)
+        g1 = instance.load_graph()
+        g2 = instance.load_graph()
+        assert g1 is g2
+        assert g1 is graph
+
+    def test_invalidate_graph_cache(self, initialized_project: CruxibleInstance) -> None:
+        """invalidate_graph_cache forces re-read from disk."""
+        g1 = initialized_project.load_graph()
+        initialized_project.invalidate_graph_cache()
+        g2 = initialized_project.load_graph()
+        assert g1 is not g2
+
+
+class TestStores:
+    def test_receipt_store(self, initialized_project: CruxibleInstance) -> None:
+        store = initialized_project.get_receipt_store()
+        assert store is not None
+        store.close()
+        assert (initialized_project.instance_dir / "receipts.db").exists()
+
+    def test_feedback_store(self, initialized_project: CruxibleInstance) -> None:
+        store = initialized_project.get_feedback_store()
+        assert store is not None
+        store.close()
+        assert (initialized_project.instance_dir / "feedback.db").exists()

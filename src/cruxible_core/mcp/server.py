@@ -1,0 +1,160 @@
+"""FastMCP server factory and entry point."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+
+import structlog
+from mcp.server.fastmcp import FastMCP
+
+from cruxible_core import __version__
+from cruxible_core.mcp.permissions import (
+    TOOL_PERMISSIONS,
+    PermissionMode,
+    init_permissions,
+    validate_tool_permissions,
+)
+from cruxible_core.mcp.prompts import register_prompts
+from cruxible_core.mcp.tools import register_tools
+
+BASE_INSTRUCTIONS = """\
+# cruxible-core
+
+Deterministic graph-based decision engine. Zero LLM inside.
+You (the AI agent) provide intelligence; cruxible provides deterministic
+execution with proof via receipts.
+
+## Start Here
+
+Prompts contain the workflow logic. These instructions are just the reference.
+
+**No config yet?** Call `cruxible_prompt("onboard_domain", {"domain": "<domain>"})`.
+It is the step-by-step workflow from raw data to working graph.
+
+**Existing graph?** Call `cruxible_prompt("review_graph", {"instance_id": "<id>"})`.
+
+**Discover all prompts:** Call `cruxible_prompt()` with no arguments.
+
+Use prompt defaults unless the user explicitly requests deviation.
+
+## Permission Modes
+
+The server runs in one of three cumulative permission modes controlled by
+the `CRUXIBLE_MODE` environment variable:
+- `READ_ONLY`: query, inspect, validate — no graph or config mutations
+- `GRAPH_WRITE`: READ_ONLY + add entities/relationships, record feedback/outcomes
+- `ADMIN` (default): all tools available including ingest and config mutation
+
+If a tool call is denied, the error message indicates the required mode.
+
+## Config Syntax (YAML)
+
+You must write a YAML config before initializing. Sections:
+
+### entity_types
+- Dict keyed by type name. Each property is `{type: string, ...}`.
+- Mark the ID property with `primary_key: true` (on the property, not the entity).
+- Properties support `optional: true`, `enum: [...]`, `indexed: true`.
+
+Example:
+```yaml
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id: {type: string, primary_key: true}
+      make: {type: string}
+  Part:
+    properties:
+      part_number: {type: string, primary_key: true}
+      name: {type: string}
+```
+
+### relationships
+- `name`, `from`/`to` (entity type names)
+- `properties` (typed, same as entities), `cardinality` (one|many)
+- `inverse` (optional reverse relationship name)
+
+### named_queries
+- `entry_point` (entity type + optional filter)
+- `traversal` steps: `relationship`, `direction` (outgoing|incoming|both),
+  `filter`, `constraint`, `max_depth`
+
+### constraints
+- Rule expressions, e.g. `replaces.FROM.category == replaces.TO.category`
+- `severity`: warning | error
+
+### ingestion
+- One mapping per data file
+- Entity mappings: `entity_type`, `id_column`, `column_map`
+- Relationship mappings: `relationship_type`, `from_column`, `to_column`,
+  `column_map` (for edge properties)
+- `column_map` renames CSV columns to property names: `{csv_column: property_name}`
+
+## Error Convention
+
+Tools raise errors on failure — the MCP protocol returns them
+with an error flag. Check tool call success before processing results.
+"""
+
+
+def _build_instructions(mode: PermissionMode) -> str:
+    """Build server instructions with a dynamic permission mode section."""
+    available = sorted(name for name, tier in TOOL_PERMISSIONS.items() if mode >= tier)
+    denied = sorted(name for name, tier in TOOL_PERMISSIONS.items() if mode < tier)
+
+    tool_list = ", ".join(available)
+    section = f"\n\n## Current Permission Mode: {mode.name}\n\nAvailable tools: {tool_list}"
+    if denied:
+        section += f"\nDenied tools (insufficient mode): {', '.join(denied)}"
+
+    return BASE_INSTRUCTIONS + section
+
+
+def create_server() -> FastMCP:
+    """Create and configure the cruxible-core MCP server."""
+    mode = init_permissions()
+    server = FastMCP(
+        name=f"cruxible-core v{__version__}",
+        instructions=_build_instructions(mode),
+    )
+    registered = register_tools(server)
+    register_prompts(server)
+    validate_tool_permissions(registered)
+    # NOTE: Runtime FastMCP parity check is in main(), not here.
+    # create_server() must remain safe for async embedders.
+    return server
+
+
+def validate_runtime_tools(server: FastMCP) -> None:
+    """Compare FastMCP's actual tool list against TOOL_PERMISSIONS.
+
+    Must be called from a sync context (no running event loop).
+    """
+    actual_tools = {t.name for t in asyncio.run(server.list_tools())}
+    validate_tool_permissions(list(actual_tools))
+
+
+def configure_structlog() -> None:
+    """Reconfigure structlog for JSON audit output to stderr (production)."""
+    structlog.configure(
+        processors=[
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.add_log_level,
+            structlog.processors.JSONRenderer(),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        cache_logger_on_first_use=True,
+    )
+
+
+def main() -> None:
+    """Entry point for the cruxible-core MCP server."""
+    configure_structlog()
+    server = create_server()
+    validate_runtime_tools(server)
+    server.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()
