@@ -2,6 +2,8 @@
 
 This guide explains how AI agents (Claude Code, Cursor, Codex, or any MCP-capable agent) should orchestrate Cruxible Core. You provide the intelligence; Core provides deterministic execution with proof.
 
+**MCP is the recommended interface** for domain onboarding and graph building. The CLI supports prompts and all core operations, but MCP returns structured data that agents can reason over more effectively.
+
 ## Role Separation
 
 **You (the AI agent):**
