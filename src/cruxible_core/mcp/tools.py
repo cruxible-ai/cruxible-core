@@ -180,6 +180,9 @@ def register_tools(server: FastMCP) -> list[str]:
         Use `cruxible_schema` to find primary key fields.
 
         `receipt_id` is also promoted to top-level for follow-up tools.
+        After querying, use `cruxible_receipt` to inspect the traversal
+        proof showing exactly how results were derived.
+
         Use `limit` to cap the number of returned results and omit
         the inline receipt (fetch it later via `cruxible_receipt`).
         """
