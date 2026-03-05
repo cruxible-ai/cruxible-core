@@ -19,6 +19,8 @@ OFAC sanctions screening with beneficial ownership and offshore structure analys
 
 Three sanctions programs represented: LIBYA3, RUSSIA-EO14024, IFSR (Iran).
 
+Curated subset of 30 entities from the [OFAC SDN list](https://sanctionssearch.ofac.treas.gov/) (~12,000 total) and [ICIJ Offshore Leaks](https://offshoreleaks.icij.org/) for demonstration purposes.
+
 The `xref_officer` and `xref_company` edges are pre-baked AI-inferred relationships with `source`, `confidence`, `evidence`, and `match_type` properties — including both approved matches and rejected false positives.
 
 ## Try it

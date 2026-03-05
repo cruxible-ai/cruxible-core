@@ -38,7 +38,7 @@ The graph is pre-built. Open your AI agent in this directory and ask:
 - "How do we detect credential dumping?"
 - "What malware does Lazarus Group use?"
 - "Who uses phishing techniques?"
-- "What TTPs were used in campaign C0027?"
+- "What TTPs were used in campaign C0017?"
 
 14 named queries power these: `group_techniques`, `technique_mitigations`, `technique_detections`, `group_software`, `technique_groups`, `campaign_techniques`, `group_campaigns`, `technique_tactics`, `technique_software`, `software_techniques`, `software_groups`, `tactic_techniques`, `campaign_breakdown`, `mitigation_coverage`.
 

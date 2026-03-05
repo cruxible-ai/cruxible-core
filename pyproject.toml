@@ -47,9 +47,9 @@ cruxible = "cruxible_core.cli.main:cli"
 cruxible-mcp = "cruxible_core.mcp.server:main"
 
 [project.urls]
-Homepage = "https://github.com/cruxible/cruxible-core"
-Documentation = "https://github.com/cruxible/cruxible-core/tree/main/docs"
-Repository = "https://github.com/cruxible/cruxible-core"
+Homepage = "https://github.com/cruxible-ai/cruxible-core"
+Documentation = "https://github.com/cruxible-ai/cruxible-core/tree/main/docs"
+Repository = "https://github.com/cruxible-ai/cruxible-core"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cruxible_core"]

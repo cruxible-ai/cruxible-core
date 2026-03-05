@@ -2,6 +2,8 @@
 
 ## Project Overview
 
+**GitHub:** https://github.com/cruxible-ai/cruxible-core
+
 Cruxible Core is a deterministic decision engine with receipts. AI agents (Claude Code, etc.) write configs and orchestrate workflows. Core executes deterministically with proof — no LLM inside.
 
 Four primitives: **Config**, **Ingest**, **Query**, **Feedback**.

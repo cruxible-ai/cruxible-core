@@ -19,6 +19,8 @@ Clinical drug interaction checking with CYP450 enzyme metabolism analysis. Trace
 
 Six therapeutic classes represented: statins, SSRIs, ACE inhibitors, beta blockers, PPIs, and benzodiazepines.
 
+Curated subset of 46 drugs from [DDinter](http://ddinter.scbdd.com/) (~2,500 total) and CYP450 substrate datasets for demonstration purposes.
+
 The `inhibits` and `induces` edges are AI-inferred relationships with `confidence`, `evidence`, and `source` properties — demonstrating the feedback loop workflow.
 
 ## Try it
