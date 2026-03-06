@@ -208,3 +208,5 @@ Built on [Pydantic](https://docs.pydantic.dev/) (validation), [NetworkX](https:/
 ## License
 
 MIT
+
+<!-- mcp-name: io.github.cruxible-ai/cruxible-core -->

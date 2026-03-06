@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.cruxible-ai/cruxible-core",
+  "description": "Deterministic decision engine with receipts. Define entity types, relationships, queries, and constraints in YAML. Ingest data, query a knowledge graph, and get DAG-structured proofs of every answer.",
+  "repository": {
+    "url": "https://github.com/cruxible-ai/cruxible-core",
+    "source": "github"
+  },
+  "version": "0.1.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "cruxible-core",
+      "version": "0.1.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Permission mode: admin (default), graph_write, or read_only",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "CRUXIBLE_MODE"
+        },
+        {
+          "description": "Comma-separated absolute paths restricting which directories cruxible_init can access",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "CRUXIBLE_ALLOWED_ROOTS"
+        }
+      ]
+    }
+  ]
+}
