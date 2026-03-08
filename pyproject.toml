@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cruxible-core"
 version = "0.1.2"
-description = "Deterministic decision engine with receipts. AI agents write configs, Core executes with proof."
+description = "Deterministic decision engine with DAG-based receipts. Build entity graphs, query with MCP, get auditable proof."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"

@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cruxible-ai/cruxible-core",
-  "description": "Deterministic decision engine with receipts. Define entity types, relationships, queries, and constraints in YAML. Ingest data, query a knowledge graph, and get DAG-structured proofs of every answer.",
+  "description": "Deterministic decision engine with DAG-based receipts. Build entity graphs, query with MCP, get auditable proof.",
   "repository": {
     "url": "https://github.com/cruxible-ai/cruxible-core",
     "source": "github"

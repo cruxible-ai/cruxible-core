@@ -10,7 +10,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Deterministic decision engine with receipts.** Define rules in YAML. Query a knowledge graph. Get a proof of every answer.
+**Deterministic decision engine with DAG-based receipts.** Build entity graphs, query with MCP, get auditable proof.
 
 Define a decision domain in YAML — entity types, relationships, queries, constraints. Ingest data, build the graph, query it, and get a receipt/audit trail proving exactly how the answer was derived. AI agents orchestrate the workflow, Core executes deterministically. No LLM inside, no API keys, no token costs.
 
