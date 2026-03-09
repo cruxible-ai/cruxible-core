@@ -180,6 +180,18 @@ If yes, use it — candidates are reproducible, auditable, and iterative:
 4. Review candidates and persist confirmed matches with `cruxible_add_relationship`
    — include `source`, `confidence`, and `evidence` in properties for provenance.
 
+**Confidence guidelines** — always set `confidence` on every edge you add:
+
+| Score     | Meaning                                                      |
+|-----------|--------------------------------------------------------------|
+| ≥ 0.9     | Unambiguous match — no plausible alternatives exist          |
+| 0.7 – 0.9 | Inspected and reasonable, but alternatives exist             |
+| 0.5 – 0.7 | Ambiguous — decent guess, other candidates similarly plausible |
+| < 0.5     | Speculative — likely needs human review before trusting      |
+
+Be honest with yourself — if multiple candidates could fit, that is not 0.9.
+Edges below 0.7 will be surfaced for review by `cruxible_evaluate`.
+
 `cruxible_find_candidates` only does exact/iequals matching. If the domain needs
 fuzzy matching, transliteration, abbreviation handling, or other logic it can't
 express — use your own approach. Write and run custom scripts (Python, Polars,
@@ -290,10 +302,16 @@ Work through findings by priority:
 2. **Low confidence edges**: proposed matches needing review. Review these
    autonomously with `source="ai_review"`. Prefer `correct` (adjust
    confidence or evidence) over `reject` — an edge with adjusted confidence
-   is more valuable than a deleted edge. If you find a recurring pattern
-   (e.g. several rejections share a property mismatch) or an ambiguous edge
-   you can't resolve confidently, escalate to the user — show the edge with
-   entity details from both sides and let them decide (`source="human"`).
+   is more valuable than a deleted edge. Use these confidence guidelines
+   when correcting:
+   - **≥ 0.9**: Unambiguous — no plausible alternatives
+   - **0.7 – 0.9**: Reasonable but alternatives exist
+   - **0.5 – 0.7**: Ambiguous — decent guess, flag for review
+   - **< 0.5**: Speculative — needs human review
+   If you find a recurring pattern (e.g. several rejections share a property
+   mismatch) or an ambiguous edge you can't resolve confidently, escalate to
+   the user — show the edge with entity details from both sides and let them
+   decide (`source="human"`).
    `cruxible_feedback` requires a `receipt_id` — use one from a previous
    `cruxible_query` run. If no receipts exist yet, run any named query to
    generate one. If the config has no named queries, ask the user to add

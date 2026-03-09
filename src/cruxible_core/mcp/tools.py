@@ -365,6 +365,17 @@ def register_tools(server: FastMCP) -> list[str]:
         Entities must already exist. Re-submitting an existing edge replaces
         its properties (full overwrite, not merge).
 
+        **Confidence guidelines** (always set ``confidence`` in properties):
+
+        - **≥ 0.9**: Unambiguous match — no plausible alternatives exist.
+        - **0.7 – 0.9**: Inspected and reasonable, but alternatives exist.
+        - **0.5 – 0.7**: Ambiguous — decent guess, other candidates are
+          similarly plausible. Flag for review.
+        - **< 0.5**: Speculative — likely needs human review before trusting.
+
+        Also set ``source`` (how the edge was created, e.g. "property_match",
+        "ai_inferred") and ``evidence`` (dict of supporting details).
+
         Batch size: practical limit is ~500 relationships per call.
         For bulk ingestion of 10K+ relationships, use ``cruxible_ingest``
         with CSV files instead.
