@@ -38,6 +38,7 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
+from cruxible_core.graph.types import REJECTED_STATUSES
 from cruxible_core.ingest import ingest_file
 from cruxible_core.mcp import contracts
 from cruxible_core.query.candidates import MatchRule, find_candidates
@@ -758,8 +759,14 @@ def export_group() -> None:
     help="Output file path.",
 )
 @click.option("--relationship", default=None, help="Filter by relationship type.")
+@click.option(
+    "--exclude-rejected",
+    is_flag=True,
+    default=False,
+    help="Exclude edges with rejected review_status.",
+)
 @handle_errors
-def export_edges(output: str, relationship: str | None) -> None:
+def export_edges(output: str, relationship: str | None, exclude_rejected: bool) -> None:
     """Export all edges to CSV."""
     instance = CruxibleInstance.load()
     graph = instance.load_graph()
@@ -780,6 +787,10 @@ def export_edges(output: str, relationship: str | None) -> None:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for edge in graph.iter_edges(relationship_type=relationship):
+                if exclude_rejected:
+                    status = edge["properties"].get("review_status", "")
+                    if status in REJECTED_STATUSES:
+                        continue
                 writer.writerow(
                     {
                         "from_type": edge["from_type"],

@@ -61,6 +61,10 @@ class RelationshipInstance(BaseModel):
         return make_node_id(self.to_entity_type, self.to_entity_id)
 
 
+REJECTED_STATUSES: frozenset[str] = frozenset({"human_rejected", "ai_rejected"})
+"""Edge review_status values that indicate rejection."""
+
+
 def make_provenance(source: str, source_ref: str) -> dict[str, str]:
     """Create a provenance metadata dict for edge creation."""
     return {

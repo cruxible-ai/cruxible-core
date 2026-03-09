@@ -401,19 +401,20 @@ Export graph data to files. Unlike `list` (which renders Rich tables to stdout w
 Export all edges to CSV.
 
 ```bash
-cruxible export edges -o <path> [--relationship <type>]
+cruxible export edges -o <path> [--relationship <type>] [--exclude-rejected]
 ```
 
 | Option | Required | Description |
 |--------|----------|-------------|
 | `--output` / `-o` | **yes** | Output file path |
 | `--relationship` | no | Filter by relationship type |
+| `--exclude-rejected` | no | Omit edges with `human_rejected` or `ai_rejected` review status |
 
 **Columns:** `from_type`, `from_id`, `to_type`, `to_id`, `relationship_type`, `edge_key`, `properties_json`
 
 The `properties_json` column is the full edge properties dict as JSON with deterministic key ordering (`sort_keys=True`). This includes config-defined properties, `review_status`, and `_provenance`. See [Edge Properties](concepts.md#edge-properties) for what these contain.
 
-All edges are exported regardless of `review_status` — rejected edges are included. Filter downstream as needed.
+By default all edges are exported regardless of `review_status`. Use `--exclude-rejected` to omit rejected edges.
 
 **Example:**
 

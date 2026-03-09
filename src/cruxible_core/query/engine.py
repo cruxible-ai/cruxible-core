@@ -23,7 +23,7 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     RelationshipNotFoundError,
 )
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import REJECTED_STATUSES, EntityInstance
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 
@@ -202,7 +202,7 @@ def _execute_step(
             )
 
             for neighbor, edge_props, edge_key in neighbors:
-                if edge_props.get("review_status") in _REJECTED_STATUSES:
+                if edge_props.get("review_status") in REJECTED_STATUSES:
                     continue
 
                 nid = neighbor.node_id()
@@ -285,8 +285,6 @@ def _matches_filter(
             return False
     return True
 
-
-_REJECTED_STATUSES = {"human_rejected", "ai_rejected"}
 
 _CONSTRAINT_RE = re.compile(r"^(target|source)\.(\w+)\s*(==|!=)\s*(.+)$")
 

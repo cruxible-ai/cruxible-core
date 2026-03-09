@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import make_node_id, split_node_id
+from cruxible_core.graph.types import REJECTED_STATUSES, make_node_id, split_node_id
 
 FindingCategory = Literal[
     "orphan_entity",
@@ -325,7 +325,6 @@ def _check_low_confidence_edges(
 
 _MAX_MATCHED_FOR_CO_MEMBERS = 1000
 _MAX_INTERMEDIARY_DEGREE = 200
-_REJECTED_STATUSES = {"human_rejected", "ai_rejected"}
 
 
 def _check_unreviewed_co_members(
@@ -356,7 +355,7 @@ def _check_unreviewed_co_members(
         for _, _, to_type, to_id, props in graph.iter_edge_data(r_rel.name):
             if to_type != r_rel.to_entity:
                 continue
-            if props.get("review_status") in _REJECTED_STATUSES:
+            if props.get("review_status") in REJECTED_STATUSES:
                 continue
             matched_set.add(make_node_id(to_type, to_id))
 
@@ -377,7 +376,7 @@ def _check_unreviewed_co_members(
 
                 for intermediary, out_edge_props, _ in outgoing:
                     # Skip rejected outgoing S edges
-                    if out_edge_props.get("review_status") in _REJECTED_STATUSES:
+                    if out_edge_props.get("review_status") in REJECTED_STATUSES:
                         continue
 
                     intermediary_node_id = make_node_id(
@@ -410,7 +409,7 @@ def _check_unreviewed_co_members(
 
                     for co_member, in_edge_props, _ in cached:
                         # Skip rejected incoming S edges
-                        if in_edge_props.get("review_status") in _REJECTED_STATUSES:
+                        if in_edge_props.get("review_status") in REJECTED_STATUSES:
                             continue
 
                         # Defensive: skip malformed edges
