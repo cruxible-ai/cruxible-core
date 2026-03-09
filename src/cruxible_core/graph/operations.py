@@ -128,9 +128,7 @@ def validate_relationship(
                     f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
                 )
         if not math.isfinite(confidence):
-            raise DataValidationError(
-                f"confidence must be a finite number. Got {confidence!r}."
-            )
+            raise DataValidationError(f"confidence must be a finite number. Got {confidence!r}.")
         props["confidence"] = confidence
 
     # Strip system-owned _provenance from user input

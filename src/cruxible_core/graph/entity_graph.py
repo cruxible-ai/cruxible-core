@@ -513,15 +513,17 @@ class EntityGraph:
                 continue
             from_type, from_id = split_node_id(u)
             to_type, to_id = split_node_id(v)
-            results.append({
-                "from_type": from_type,
-                "from_id": from_id,
-                "to_type": to_type,
-                "to_id": to_id,
-                "relationship_type": rel_type,
-                "edge_key": key,
-                "properties": data.get("properties", {}),
-            })
+            results.append(
+                {
+                    "from_type": from_type,
+                    "from_id": from_id,
+                    "to_type": to_type,
+                    "to_id": to_id,
+                    "relationship_type": rel_type,
+                    "edge_key": key,
+                    "properties": data.get("properties", {}),
+                }
+            )
         return results
 
     def get_neighbors_with_edge_refs(

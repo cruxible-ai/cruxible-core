@@ -628,11 +628,16 @@ class TestGetRelationship:
             populated_instance.root,
             [
                 "get-relationship",
-                "--from-type", "Part",
-                "--from-id", "BP-1001",
-                "--relationship", "fits",
-                "--to-type", "Vehicle",
-                "--to-id", "V-2024-CIVIC-EX",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1001",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "V-2024-CIVIC-EX",
             ],
         )
         assert result.exit_code == 0
@@ -648,11 +653,16 @@ class TestGetRelationship:
             populated_instance.root,
             [
                 "get-relationship",
-                "--from-type", "Part",
-                "--from-id", "BP-1001",
-                "--relationship", "fits",
-                "--to-type", "Vehicle",
-                "--to-id", "NONEXISTENT",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1001",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "NONEXISTENT",
             ],
         )
         assert result.exit_code == 0
@@ -687,11 +697,16 @@ class TestGetRelationship:
             populated_instance.root,
             [
                 "get-relationship",
-                "--from-type", "Part",
-                "--from-id", "BP-1001",
-                "--relationship", "fits",
-                "--to-type", "Vehicle",
-                "--to-id", "V-2024-CIVIC-EX",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1001",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "V-2024-CIVIC-EX",
             ],
         )
         assert result.exit_code == 1
@@ -714,8 +729,10 @@ class TestAddEntity:
             populated_instance.root,
             [
                 "add-entity",
-                "--type", "Vehicle",
-                "--id", "V-NEW",
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-NEW",
                 "--props",
                 '{"vehicle_id": "V-NEW", "year": 2025, "make": "Toyota"}',
             ],
@@ -741,9 +758,12 @@ class TestAddEntity:
             populated_instance.root,
             [
                 "add-entity",
-                "--type", "Vehicle",
-                "--id", "V-2024-CIVIC-EX",
-                "--props", '{"vehicle_id": "V-2024-CIVIC-EX", "year": 2025}',
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-2024-CIVIC-EX",
+                "--props",
+                '{"vehicle_id": "V-2024-CIVIC-EX", "year": 2025}',
             ],
         )
         assert result.exit_code == 0
@@ -778,12 +798,18 @@ class TestAddRelationship:
             populated_instance.root,
             [
                 "add-relationship",
-                "--from-type", "Part",
-                "--from-id", "BP-1002",
-                "--relationship", "fits",
-                "--to-type", "Vehicle",
-                "--to-id", "V-2024-ACCORD-SPORT",
-                "--props", '{"verified": true, "source": "manual"}',
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1002",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "V-2024-ACCORD-SPORT",
+                "--props",
+                '{"verified": true, "source": "manual"}',
             ],
         )
         assert result.exit_code == 0
@@ -799,12 +825,18 @@ class TestAddRelationship:
             populated_instance.root,
             [
                 "add-relationship",
-                "--from-type", "Part",
-                "--from-id", "BP-1001",
-                "--relationship", "fits",
-                "--to-type", "Vehicle",
-                "--to-id", "V-2024-CIVIC-EX",
-                "--props", '{"verified": true, "source": "updated"}',
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1001",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "V-2024-CIVIC-EX",
+                "--props",
+                '{"verified": true, "source": "updated"}',
             ],
         )
         assert result.exit_code == 0
@@ -820,11 +852,16 @@ class TestAddRelationship:
             populated_instance.root,
             [
                 "add-relationship",
-                "--from-type", "Part",
-                "--from-id", "MISSING",
-                "--relationship", "fits",
-                "--to-type", "Vehicle",
-                "--to-id", "V-2024-CIVIC-EX",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "MISSING",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "V-2024-CIVIC-EX",
             ],
         )
         assert result.exit_code == 1
@@ -839,11 +876,16 @@ class TestAddRelationship:
             populated_instance.root,
             [
                 "add-relationship",
-                "--from-type", "Vehicle",
-                "--from-id", "V-2024-CIVIC-EX",
-                "--relationship", "fits",
-                "--to-type", "Part",
-                "--to-id", "BP-1001",
+                "--from-type",
+                "Vehicle",
+                "--from-id",
+                "V-2024-CIVIC-EX",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Part",
+                "--to-id",
+                "BP-1001",
             ],
         )
         assert result.exit_code == 1
@@ -865,10 +907,14 @@ class TestAddConstraint:
             populated_instance.root,
             [
                 "add-constraint",
-                "--name", "brake_category_match",
-                "--rule", "replaces.FROM.category == replaces.TO.category",
-                "--severity", "warning",
-                "--description", "Replacement parts must be same category",
+                "--name",
+                "brake_category_match",
+                "--rule",
+                "replaces.FROM.category == replaces.TO.category",
+                "--severity",
+                "warning",
+                "--description",
+                "Replacement parts must be same category",
             ],
         )
         assert result.exit_code == 0
@@ -889,8 +935,10 @@ class TestAddConstraint:
             populated_instance.root,
             [
                 "add-constraint",
-                "--name", "bad",
-                "--rule", "this is not valid syntax",
+                "--name",
+                "bad",
+                "--rule",
+                "this is not valid syntax",
             ],
         )
         assert result.exit_code == 1
@@ -906,8 +954,10 @@ class TestAddConstraint:
             populated_instance.root,
             [
                 "add-constraint",
-                "--name", "unique_rule",
-                "--rule", "replaces.FROM.category == replaces.TO.category",
+                "--name",
+                "unique_rule",
+                "--rule",
+                "replaces.FROM.category == replaces.TO.category",
             ],
         )
         # Try to add duplicate
@@ -916,8 +966,10 @@ class TestAddConstraint:
             populated_instance.root,
             [
                 "add-constraint",
-                "--name", "unique_rule",
-                "--rule", "replaces.FROM.category == replaces.TO.category",
+                "--name",
+                "unique_rule",
+                "--rule",
+                "replaces.FROM.category == replaces.TO.category",
             ],
         )
         assert result.exit_code == 1

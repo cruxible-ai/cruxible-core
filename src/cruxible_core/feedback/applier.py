@@ -20,7 +20,10 @@ if TYPE_CHECKING:
 
 
 def _read_provenance(
-    graph: EntityGraph, t: Any, relationship: str, edge_key: int | None,
+    graph: EntityGraph,
+    t: Any,
+    relationship: str,
+    edge_key: int | None,
 ) -> dict[str, Any]:
     """Read existing _provenance from an edge, returning a mutable copy or empty dict."""
     existing = graph.get_relationship(

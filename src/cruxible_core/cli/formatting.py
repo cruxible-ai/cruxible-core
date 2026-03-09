@@ -137,9 +137,7 @@ def edges_table(edges: list[dict[str, Any]]) -> Table:
         from_label = f"{e['from_type']}:{e['from_id']}"
         to_label = f"{e['to_type']}:{e['to_id']}"
         props = e.get("properties", {})
-        props_str = ", ".join(
-            f"{k}={v}" for k, v in props.items() if k != "_provenance"
-        )
+        props_str = ", ".join(f"{k}={v}" for k, v in props.items() if k != "_provenance")
         table.add_row(
             from_label,
             to_label,

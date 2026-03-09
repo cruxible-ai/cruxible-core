@@ -63,8 +63,6 @@ def test_prompt_read_extra_arg() -> None:
 
 def test_prompt_read_malformed_arg() -> None:
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["prompt", "read", "--name", "onboard_domain", "--arg", "domain"]
-    )
+    result = runner.invoke(cli, ["prompt", "read", "--name", "onboard_domain", "--arg", "domain"])
     assert result.exit_code != 0
     assert "KEY=VALUE" in result.output

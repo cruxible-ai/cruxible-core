@@ -1251,9 +1251,7 @@ class TestList:
         )
         assert "property_filter" in error_msg
 
-    def test_list_edges_all(
-        self, server, tmp_project, vehicles_csv, parts_csv, fitments_csv
-    ):
+    def test_list_edges_all(self, server, tmp_project, vehicles_csv, parts_csv, fitments_csv):
         call_tool(
             server,
             "cruxible_init",

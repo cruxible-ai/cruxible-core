@@ -367,9 +367,7 @@ class TestQueryErrors:
     def test_missing_param_shows_available_keys(self, config: CoreConfig, graph: EntityGraph):
         """Error message includes the param keys the caller actually provided."""
         with pytest.raises(QueryExecutionError, match="Got params:.*person_name") as exc_info:
-            execute_query(
-                config, graph, "parts_for_vehicle", {"person_name": "Bob"}
-            )
+            execute_query(config, graph, "parts_for_vehicle", {"person_name": "Bob"})
         assert "vehicle_id" in str(exc_info.value)
 
     def test_entity_not_in_graph(self, config: CoreConfig, graph: EntityGraph):
@@ -607,14 +605,10 @@ def _fan_out_graph() -> EntityGraph:
         EntityInstance(entity_type="Org", entity_id="ORG-1", properties={"org_id": "ORG-1"})
     )
     g.add_entity(
-        EntityInstance(
-            entity_type="Person", entity_id="P-1", properties={"person_id": "P-1"}
-        )
+        EntityInstance(entity_type="Person", entity_id="P-1", properties={"person_id": "P-1"})
     )
     g.add_entity(
-        EntityInstance(
-            entity_type="Person", entity_id="P-2", properties={"person_id": "P-2"}
-        )
+        EntityInstance(entity_type="Person", entity_id="P-2", properties={"person_id": "P-2"})
     )
     g.add_entity(
         EntityInstance(
@@ -823,9 +817,7 @@ def _chain_graph() -> EntityGraph:
     """A -> B -> C -> D linear chain via 'links'."""
     g = EntityGraph()
     for nid in ["A", "B", "C", "D"]:
-        g.add_entity(
-            EntityInstance(entity_type="Node", entity_id=nid, properties={"node_id": nid})
-        )
+        g.add_entity(EntityInstance(entity_type="Node", entity_id=nid, properties={"node_id": nid}))
     for src, dst in [("A", "B"), ("B", "C"), ("C", "D")]:
         g.add_relationship(
             RelationshipInstance(

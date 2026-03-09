@@ -417,9 +417,7 @@ def _check_unreviewed_co_members(
                         if co_member.entity_type != r_rel.to_entity:
                             continue
 
-                        co_member_node_id = make_node_id(
-                            co_member.entity_type, co_member.entity_id
-                        )
+                        co_member_node_id = make_node_id(co_member.entity_type, co_member.entity_id)
 
                         # Skip self
                         if co_member_node_id == matched_node_id:
@@ -458,13 +456,10 @@ def _check_unreviewed_co_members(
                                 detail={
                                     "entity_type": co_member.entity_type,
                                     "entity_id": co_member.entity_id,
-                                    "matched_sibling": (
-                                        f"{r_rel.to_entity}:{matched_id}"
-                                    ),
+                                    "matched_sibling": (f"{r_rel.to_entity}:{matched_id}"),
                                     "shared_via": s_rel.name,
                                     "shared_entity": (
-                                        f"{intermediary.entity_type}"
-                                        f":{intermediary.entity_id}"
+                                        f"{intermediary.entity_type}:{intermediary.entity_id}"
                                     ),
                                     "missing_relationship": r_rel.name,
                                 },

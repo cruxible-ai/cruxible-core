@@ -310,9 +310,7 @@ def ingest_from_mapping(
     )
 
 
-def load_data_from_string(
-    data: str, fmt: Literal["csv", "json", "ndjson"]
-) -> pl.DataFrame:
+def load_data_from_string(data: str, fmt: Literal["csv", "json", "ndjson"]) -> pl.DataFrame:
     """Parse an inline data string into a Polars DataFrame.
 
     Args:

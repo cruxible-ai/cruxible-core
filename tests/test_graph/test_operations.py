@@ -101,32 +101,38 @@ class TestValidateRelationship:
     def test_bad_direction(self, config, graph):
         """from_type doesn't match config from_entity -> error."""
         with pytest.raises(DataValidationError, match="from_type.*does not match"):
-            validate_relationship(
-                config, graph, "Vehicle", "V1", "fits", "Part", "P1"
-            )
+            validate_relationship(config, graph, "Vehicle", "V1", "fits", "Part", "P1")
 
     def test_missing_source_entity(self, config, graph):
         with pytest.raises(DataValidationError, match="Part:MISSING not found"):
-            validate_relationship(
-                config, graph, "Part", "MISSING", "fits", "Vehicle", "V1"
-            )
+            validate_relationship(config, graph, "Part", "MISSING", "fits", "Vehicle", "V1")
 
     def test_missing_target_entity(self, config, graph):
         with pytest.raises(DataValidationError, match="Vehicle:MISSING not found"):
-            validate_relationship(
-                config, graph, "Part", "P1", "fits", "Vehicle", "MISSING"
-            )
+            validate_relationship(config, graph, "Part", "P1", "fits", "Vehicle", "MISSING")
 
     def test_confidence_bool_rejected(self, config, graph):
         with pytest.raises(DataValidationError, match="confidence must be numeric"):
             validate_relationship(
-                config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
                 {"confidence": True},
             )
 
     def test_confidence_string_coerced(self, config, graph):
         result = validate_relationship(
-            config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+            config,
+            graph,
+            "Part",
+            "P1",
+            "fits",
+            "Vehicle",
+            "V1",
             {"confidence": "0.75"},
         )
         assert result.relationship.properties["confidence"] == 0.75
@@ -135,36 +141,58 @@ class TestValidateRelationship:
     def test_confidence_non_numeric_rejected(self, config, graph):
         with pytest.raises(DataValidationError, match="confidence must be numeric"):
             validate_relationship(
-                config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
                 {"confidence": "high"},
             )
 
     def test_confidence_non_finite_rejected(self, config, graph):
         with pytest.raises(DataValidationError, match="confidence must be a finite"):
             validate_relationship(
-                config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
                 {"confidence": float("inf")},
             )
 
     def test_confidence_nan_rejected(self, config, graph):
         with pytest.raises(DataValidationError, match="confidence must be a finite"):
             validate_relationship(
-                config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
                 {"confidence": float("nan")},
             )
 
     def test_provenance_stripped(self, config, graph):
         result = validate_relationship(
-            config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+            config,
+            graph,
+            "Part",
+            "P1",
+            "fits",
+            "Vehicle",
+            "V1",
             {"confidence": 0.9, "_provenance": {"source": "evil"}},
         )
         assert "_provenance" not in result.relationship.properties
 
     def test_unknown_relationship(self, config, graph):
         with pytest.raises(DataValidationError, match="not found in config"):
-            validate_relationship(
-                config, graph, "Part", "P1", "no_such_rel", "Vehicle", "V1"
-            )
+            validate_relationship(config, graph, "Part", "P1", "no_such_rel", "Vehicle", "V1")
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +224,13 @@ class TestApplyRelationship:
     def test_new_provenance(self, config, graph):
         """New edge gets make_provenance(source, source_ref)."""
         validated = validate_relationship(
-            config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+            config,
+            graph,
+            "Part",
+            "P1",
+            "fits",
+            "Vehicle",
+            "V1",
         )
         apply_relationship(graph, validated, "mcp_add", "cruxible_add_relationship")
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
@@ -223,13 +257,19 @@ class TestApplyRelationship:
                 },
             )
         )
-        original_prov = graph.get_relationship(
-            "Part", "P1", "Vehicle", "V1", "fits"
-        ).properties["_provenance"]
+        original_prov = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits").properties[
+            "_provenance"
+        ]
 
         # Now update via apply_relationship
         validated = validate_relationship(
-            config, graph, "Part", "P1", "fits", "Vehicle", "V1",
+            config,
+            graph,
+            "Part",
+            "P1",
+            "fits",
+            "Vehicle",
+            "V1",
             {"confidence": 0.9},
         )
         assert validated.is_update is True
@@ -248,7 +288,13 @@ class TestApplyRelationship:
     def test_cli_provenance(self, config, graph):
         """CLI source values are preserved."""
         validated = validate_relationship(
-            config, graph, "Part", "P2", "fits", "Vehicle", "V1",
+            config,
+            graph,
+            "Part",
+            "P2",
+            "fits",
+            "Vehicle",
+            "V1",
         )
         apply_relationship(graph, validated, "cli_add", "add-relationship")
         rel = graph.get_relationship("Part", "P2", "Vehicle", "V1", "fits")

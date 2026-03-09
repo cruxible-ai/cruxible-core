@@ -549,7 +549,11 @@ def get_relationship_cmd(
     # When no edge_key, check for ambiguity
     if edge_key is None:
         count = graph.relationship_count_between(
-            from_type, from_id, to_type, to_id, relationship,
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            relationship,
         )
         if count > 1:
             raise EdgeAmbiguityError(
@@ -561,7 +565,12 @@ def get_relationship_cmd(
             )
 
     rel = graph.get_relationship(
-        from_type, from_id, to_type, to_id, relationship, edge_key=edge_key,
+        from_type,
+        from_id,
+        to_type,
+        to_id,
+        relationship,
+        edge_key=edge_key,
     )
     if rel is None:
         click.echo("Not found.")
@@ -637,14 +646,19 @@ def add_relationship_cmd(
     graph = instance.load_graph()
 
     validated = validate_relationship(
-        config, graph, from_type, from_id, relationship, to_type, to_id, properties,
+        config,
+        graph,
+        from_type,
+        from_id,
+        relationship,
+        to_type,
+        to_id,
+        properties,
     )
     apply_relationship(graph, validated, "cli_add", "add-relationship")
     instance.save_graph(graph)
 
-    edge_label = (
-        f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"
-    )
+    edge_label = f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"
     if validated.is_update:
         click.echo(f"Relationship updated: {edge_label}")
     else:
@@ -766,9 +780,7 @@ def prompt_read(prompt_name: str, arg: tuple[str, ...]) -> None:
     # Validate prompt exists
     if prompt_name not in PROMPT_REGISTRY:
         available = ", ".join(sorted(PROMPT_REGISTRY.keys()))
-        raise click.ClickException(
-            f"Unknown prompt '{prompt_name}'. Available: {available}"
-        )
+        raise click.ClickException(f"Unknown prompt '{prompt_name}'. Available: {available}")
 
     # Parse and validate args
     args_dict = _parse_params(arg)
@@ -776,20 +788,14 @@ def prompt_read(prompt_name: str, arg: tuple[str, ...]) -> None:
     fn, _desc = PROMPT_REGISTRY[prompt_name]
     sig = inspect.signature(fn)
 
-    required = [
-        p.name for p in sig.parameters.values() if p.default is inspect.Parameter.empty
-    ]
+    required = [p.name for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
     missing = [r for r in required if r not in args_dict]
     if missing:
-        raise click.ClickException(
-            f"Prompt '{prompt_name}' requires: {', '.join(missing)}"
-        )
+        raise click.ClickException(f"Prompt '{prompt_name}' requires: {', '.join(missing)}")
 
     extra = set(args_dict.keys()) - set(sig.parameters.keys())
     if extra:
-        raise click.ClickException(
-            f"Unknown args for '{prompt_name}': {', '.join(sorted(extra))}"
-        )
+        raise click.ClickException(f"Unknown args for '{prompt_name}': {', '.join(sorted(extra))}")
 
     content = fn(**args_dict)
     click.echo(content)

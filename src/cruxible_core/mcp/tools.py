@@ -69,33 +69,20 @@ def register_tools(server: FastMCP) -> list[str]:
         # Read mode
         if prompt_name not in PROMPT_REGISTRY:
             available = ", ".join(sorted(PROMPT_REGISTRY.keys()))
-            raise ValueError(
-                f"Unknown prompt '{prompt_name}'. "
-                f"Available: {available}"
-            )
+            raise ValueError(f"Unknown prompt '{prompt_name}'. Available: {available}")
 
         fn, _desc = PROMPT_REGISTRY[prompt_name]
 
         # Validate args against signature
         sig = inspect.signature(fn)
-        required = [
-            p.name
-            for p in sig.parameters.values()
-            if p.default is inspect.Parameter.empty
-        ]
+        required = [p.name for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
         provided = set((args or {}).keys())
         missing = [r for r in required if r not in provided]
         if missing:
-            raise ValueError(
-                f"Prompt '{prompt_name}' requires: "
-                f"{', '.join(missing)}"
-            )
+            raise ValueError(f"Prompt '{prompt_name}' requires: {', '.join(missing)}")
         extra = provided - set(sig.parameters.keys())
         if extra:
-            raise ValueError(
-                f"Unknown args for '{prompt_name}': "
-                f"{', '.join(sorted(extra))}"
-            )
+            raise ValueError(f"Unknown args for '{prompt_name}': {', '.join(sorted(extra))}")
 
         content = fn(**(args or {}))
         return {"prompt_name": prompt_name, "content": content}
