@@ -1,7 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "Cruxible Core",
-  "description": "Deterministic decision engine with receipts. AI agents write YAML configs defining entity types, relationships, queries, and constraints. Core ingests data, executes queries via graph traversal, and produces receipt-based provenance. 19 MCP tools for full lifecycle orchestration. Zero LLM inside.",
+  "description": "Deterministic decision engine with DAG-based receipts. Build entity graphs, query with MCP, get auditable proof.",
   "folders": ["docs"],
   "excludeFolders": [],
   "excludeFiles": [],

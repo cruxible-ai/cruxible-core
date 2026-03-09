@@ -17,3 +17,4 @@ htmlcov/
 /.cruxible/
 .venv/
 venv/
+docs/dev/
