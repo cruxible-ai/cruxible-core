@@ -12,7 +12,7 @@
 
 **Deterministic decision engine with DAG-based receipts.** Build entity graphs, query with MCP, get auditable proof.
 
-Define a decision domain in YAML — entity types, relationships, queries, constraints. Ingest data, build the graph, query it, and get a receipt/audit trail proving exactly how the answer was derived. AI agents orchestrate the workflow, Core executes deterministically. No LLM inside, no API keys, no token costs.
+Define entity graphs, queries, and constraints in YAML. Run them locally from CLI or MCP, and get receipts proving exactly why each result was returned.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -32,7 +32,7 @@ Define a decision domain in YAML — entity types, relationships, queries, const
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## What It Looks Like
+## Quick Example
 
 **1. Define a domain in YAML:**
 
@@ -66,13 +66,13 @@ named_queries:
         direction: outgoing
 ```
 
-**2. Ingest data. Ask your AI agent:**
+**2. Load data and run a deterministic query:**
 
 > "Suggest an alternative to simvastatin"
 
 **3. Get a receipt — structured proof of every answer:**
 
-*Receipt interpreted by Claude Code from the raw receipt DAG:*
+*Raw receipt DAG rendered for readability:*
 
 ```
 Receipt RCP-17b864830ada
@@ -98,7 +98,7 @@ Step 3: Traverse metabolized_by (outgoing) for each alternative
   n16  fluvastatin -> CYP2D6    (CYP450 dataset)
   n17  pitavastatin -> CYP2C9   (CYP450 dataset)
 
-Results: CYP3A4, CYP2C9, CYP2C19, CYP2D6
+Results: atorvastatin, rosuvastatin, lovastatin, pravastatin, fluvastatin, pitavastatin
 Duration: 0.41ms | 2 traversal steps
 ```
 
@@ -144,7 +144,7 @@ git clone https://github.com/cruxible-ai/cruxible-core
 cd cruxible-core/demos/drug-interactions
 ```
 
-Each demo includes a config, prebuilt graph, and `.mcp.json`. Open your agent in a demo directory.
+Each demo is a starter kit with a config, prebuilt graph, example queries, and receipts. If you're new, start with `drug-interactions`.
 
 First, load the instance:
 
@@ -157,6 +157,17 @@ Then try:
 - "Suggest an alternative to simvastatin"
 
 Every query produces a receipt you can inspect.
+
+## Why Not Just Write Code?
+
+Cruxible is useful when the same decision logic needs to be reviewed, replayed, adapted, and trusted over time. It gives you:
+
+- A declarative spec surface in YAML
+- Deterministic execution over entity graphs
+- Receipts proving why a result was returned
+- Constraints, evaluation, and feedback without rebuilding custom infrastructure
+
+The same way Terraform replaced hand-rolled infrastructure scripts with plans, state, and diffs, Cruxible replaces ad-hoc decision code with declarative configs, deterministic execution, and auditable receipts.
 
 ## Why Cruxible
 
