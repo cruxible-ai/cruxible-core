@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import inspect
 import json
 from pathlib import Path
@@ -736,6 +737,65 @@ def list_edges(relationship: str | None, limit: int) -> None:
     edges = graph.list_edges(relationship_type=relationship)[:limit]
     console.print(edges_table(edges))
     click.echo(f"{len(edges)} edge(s) shown.")
+
+
+# ---------------------------------------------------------------------------
+# export (subgroup)
+# ---------------------------------------------------------------------------
+
+
+@click.group("export")
+def export_group() -> None:
+    """Export graph data to files."""
+
+
+@export_group.command("edges")
+@click.option(
+    "--output",
+    "-o",
+    required=True,
+    type=click.Path(dir_okay=False, writable=True),
+    help="Output file path.",
+)
+@click.option("--relationship", default=None, help="Filter by relationship type.")
+@handle_errors
+def export_edges(output: str, relationship: str | None) -> None:
+    """Export all edges to CSV."""
+    instance = CruxibleInstance.load()
+    graph = instance.load_graph()
+
+    path = Path(output)
+    fieldnames = [
+        "from_type",
+        "from_id",
+        "to_type",
+        "to_id",
+        "relationship_type",
+        "edge_key",
+        "properties_json",
+    ]
+    count = 0
+    try:
+        with path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for edge in graph.iter_edges(relationship_type=relationship):
+                writer.writerow(
+                    {
+                        "from_type": edge["from_type"],
+                        "from_id": edge["from_id"],
+                        "to_type": edge["to_type"],
+                        "to_id": edge["to_id"],
+                        "relationship_type": edge["relationship_type"],
+                        "edge_key": edge["edge_key"],
+                        "properties_json": json.dumps(edge["properties"], sort_keys=True),
+                    }
+                )
+                count += 1
+    except OSError as exc:
+        raise ConfigError(f"Failed to write {path}: {exc}") from exc
+
+    click.echo(f"Exported {count} edge(s) to {path}")
 
 
 # ---------------------------------------------------------------------------

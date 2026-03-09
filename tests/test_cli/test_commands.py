@@ -1012,6 +1012,190 @@ class TestListEdges:
 
 
 # ---------------------------------------------------------------------------
+# export edges
+# ---------------------------------------------------------------------------
+
+
+class TestExportEdges:
+    def test_export_all_edges(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """Exports all edges to CSV with correct headers and row count."""
+        out = populated_instance.root / "edges.csv"
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out)],
+        )
+        assert result.exit_code == 0
+        assert "Exported 4 edge(s)" in result.output
+
+        import csv as csv_mod
+
+        with out.open() as f:
+            reader = csv_mod.DictReader(f)
+            rows = list(reader)
+        assert len(rows) == 4
+        expected_fields = {
+            "from_type",
+            "from_id",
+            "to_type",
+            "to_id",
+            "relationship_type",
+            "edge_key",
+            "properties_json",
+        }
+        assert set(reader.fieldnames) == expected_fields
+
+    def test_export_filter_by_relationship(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """--relationship filter produces only matching edges."""
+        out = populated_instance.root / "replaces.csv"
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out), "--relationship", "replaces"],
+        )
+        assert result.exit_code == 0
+        assert "Exported 1 edge(s)" in result.output
+
+        import csv as csv_mod
+
+        with out.open() as f:
+            rows = list(csv_mod.DictReader(f))
+        assert len(rows) == 1
+        assert rows[0]["relationship_type"] == "replaces"
+
+    def test_properties_json_roundtrip(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """properties_json round-trips through json.loads."""
+        out = populated_instance.root / "edges.csv"
+        _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out)],
+        )
+
+        import csv as csv_mod
+
+        with out.open() as f:
+            for row in csv_mod.DictReader(f):
+                props = json.loads(row["properties_json"])
+                assert isinstance(props, dict)
+
+    def test_properties_json_sort_keys(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """properties_json uses sort_keys=True for deterministic output."""
+        out = populated_instance.root / "edges.csv"
+        _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out)],
+        )
+
+        import csv as csv_mod
+
+        graph = populated_instance.load_graph()
+        edges = graph.list_edges()
+
+        with out.open() as f:
+            rows = list(csv_mod.DictReader(f))
+
+        for edge, row in zip(edges, rows):
+            assert row["properties_json"] == json.dumps(edge["properties"], sort_keys=True)
+
+    def test_empty_graph(
+        self,
+        runner: CliRunner,
+        initialized_project: CruxibleInstance,
+    ) -> None:
+        """Empty graph produces CSV with headers only."""
+        out = initialized_project.root / "empty.csv"
+        result = _chdir_run(
+            runner,
+            initialized_project.root,
+            ["export", "edges", "-o", str(out)],
+        )
+        assert result.exit_code == 0
+        assert "Exported 0 edge(s)" in result.output
+
+        import csv as csv_mod
+
+        with out.open() as f:
+            reader = csv_mod.DictReader(f)
+            rows = list(reader)
+        assert len(rows) == 0
+        assert reader.fieldnames is not None
+
+    def test_missing_parent_dir(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """File I/O error (missing parent dir) produces friendly error message."""
+        bad_path = populated_instance.root / "no_such_dir" / "edges.csv"
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(bad_path)],
+        )
+        assert result.exit_code == 1
+        assert "Error:" in result.output
+
+    def test_provenance_survives(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """_provenance in edge properties survives in properties_json."""
+        from cruxible_core.graph.types import RelationshipInstance
+
+        graph = populated_instance.load_graph()
+        prov = {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_entity_type="Part",
+                from_entity_id="BP-1002",
+                to_entity_type="Vehicle",
+                to_entity_id="V-2024-ACCORD-SPORT",
+                properties={"verified": True, "_provenance": prov},
+            )
+        )
+        populated_instance.save_graph(graph)
+        populated_instance.invalidate_graph_cache()
+
+        out = populated_instance.root / "edges.csv"
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out)],
+        )
+        assert result.exit_code == 0
+
+        import csv as csv_mod
+
+        with out.open() as f:
+            for row in csv_mod.DictReader(f):
+                props = json.loads(row["properties_json"])
+                if props.get("_provenance"):
+                    assert props["_provenance"] == prov
+                    return
+        pytest.fail("No edge with _provenance found in exported CSV")
+
+
+# ---------------------------------------------------------------------------
 # E2E Gate Test
 # ---------------------------------------------------------------------------
 

@@ -752,6 +752,59 @@ class TestFindPath:
         assert graph.find_path("A", "1", "B", "2") is None
 
 
+class TestIterEdges:
+    def test_iter_edges_yields_all_keys(self, populated_graph: EntityGraph):
+        """iter_edges() yields dicts with all 7 expected keys."""
+        expected_keys = {
+            "from_type",
+            "from_id",
+            "to_type",
+            "to_id",
+            "relationship_type",
+            "edge_key",
+            "properties",
+        }
+        for edge in populated_graph.iter_edges():
+            assert set(edge.keys()) == expected_keys
+
+    def test_iter_edges_filter(self, populated_graph: EntityGraph):
+        """iter_edges(relationship_type=...) filters correctly."""
+        fits = list(populated_graph.iter_edges(relationship_type="fits"))
+        assert len(fits) == 3
+        assert all(e["relationship_type"] == "fits" for e in fits)
+
+        replaces = list(populated_graph.iter_edges(relationship_type="replaces"))
+        assert len(replaces) == 1
+        assert replaces[0]["relationship_type"] == "replaces"
+
+    def test_iter_edges_no_match(self, populated_graph: EntityGraph):
+        assert list(populated_graph.iter_edges(relationship_type="nonexistent")) == []
+
+    def test_list_edges_equals_materialized_iter_edges(self, populated_graph: EntityGraph):
+        """list_edges() == list(iter_edges()) — parity assertion."""
+        assert populated_graph.list_edges() == list(populated_graph.iter_edges())
+        assert populated_graph.list_edges(relationship_type="fits") == list(
+            populated_graph.iter_edges(relationship_type="fits")
+        )
+
+    def test_iter_edge_data_matches_iter_edges(self, populated_graph: EntityGraph):
+        """iter_edge_data() yields tuples matching iter_edges() data."""
+        for edge_dict, edge_tuple in zip(
+            populated_graph.iter_edges(),
+            populated_graph.iter_edge_data(),
+            strict=True,
+        ):
+            from_type, from_id, to_type, to_id, props = edge_tuple
+            assert from_type == edge_dict["from_type"]
+            assert from_id == edge_dict["from_id"]
+            assert to_type == edge_dict["to_type"]
+            assert to_id == edge_dict["to_id"]
+            assert props == edge_dict["properties"]
+
+    def test_iter_edges_empty_graph(self, graph: EntityGraph):
+        assert list(graph.iter_edges()) == []
+
+
 class TestEdgeIteration:
     def test_iter_edge_data(self, populated_graph: EntityGraph):
         edges = list(populated_graph.iter_edge_data("fits"))

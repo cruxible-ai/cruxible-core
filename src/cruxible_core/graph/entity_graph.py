@@ -489,42 +489,56 @@ class EntityGraph:
     # Efficient Edge Iteration
     # -------------------------------------------------------------------------
 
-    def iter_edge_data(
+    def _iter_edges_raw(
         self,
         relationship_type: str | None = None,
-    ) -> Iterator[tuple[str, str, str, str, dict[str, Any]]]:
-        """Iterate edges yielding (from_type, from_id, to_type, to_id, properties)."""
-        for u, v, _key, data in self._graph.edges(keys=True, data=True):
-            if relationship_type is not None and data.get("relationship_type") != relationship_type:
-                continue
-            from_type, from_id = split_node_id(u)
-            to_type, to_id = split_node_id(v)
-            yield from_type, from_id, to_type, to_id, data.get("properties", {})
+    ) -> Iterator[tuple[str, str, str, str, str, Any, dict[str, Any]]]:
+        """Low-level iterator yielding 7-tuples.
 
-    def list_edges(
-        self,
-        relationship_type: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """List edges as dicts including edge_key and relationship_type."""
-        results: list[dict[str, Any]] = []
+        Yields (from_type, from_id, to_type, to_id, rel_type, edge_key, properties).
+        """
         for u, v, key, data in self._graph.edges(keys=True, data=True):
             rel_type = data.get("relationship_type", "")
             if relationship_type is not None and rel_type != relationship_type:
                 continue
             from_type, from_id = split_node_id(u)
             to_type, to_id = split_node_id(v)
-            results.append(
-                {
-                    "from_type": from_type,
-                    "from_id": from_id,
-                    "to_type": to_type,
-                    "to_id": to_id,
-                    "relationship_type": rel_type,
-                    "edge_key": key,
-                    "properties": data.get("properties", {}),
-                }
-            )
-        return results
+            yield from_type, from_id, to_type, to_id, rel_type, key, data.get("properties", {})
+
+    def iter_edges(
+        self,
+        relationship_type: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Iterate edges as dicts including edge_key and relationship_type."""
+        for from_type, from_id, to_type, to_id, rel_type, key, props in self._iter_edges_raw(
+            relationship_type
+        ):
+            yield {
+                "from_type": from_type,
+                "from_id": from_id,
+                "to_type": to_type,
+                "to_id": to_id,
+                "relationship_type": rel_type,
+                "edge_key": key,
+                "properties": props,
+            }
+
+    def iter_edge_data(
+        self,
+        relationship_type: str | None = None,
+    ) -> Iterator[tuple[str, str, str, str, dict[str, Any]]]:
+        """Iterate edges yielding (from_type, from_id, to_type, to_id, properties)."""
+        for from_type, from_id, to_type, to_id, _rel, _key, props in self._iter_edges_raw(
+            relationship_type
+        ):
+            yield from_type, from_id, to_type, to_id, props
+
+    def list_edges(
+        self,
+        relationship_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List edges as dicts. Materializes iter_edges()."""
+        return list(self.iter_edges(relationship_type=relationship_type))
 
     def get_neighbors_with_edge_refs(
         self,
