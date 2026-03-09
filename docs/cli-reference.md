@@ -286,7 +286,7 @@ cruxible add-relationship --from-type <type> --from-id <id> \
 | `--relationship` | **yes** | Relationship type (must exist in config) |
 | `--to-type` | **yes** | Target entity type |
 | `--to-id` | **yes** | Target entity ID |
-| `--props` | no | JSON object of edge properties |
+| `--props` | no | JSON object of [edge properties](concepts.md#edge-properties) |
 
 Both endpoint entities must exist. Direction must match config (from_type matches the relationship's `from` entity).
 
@@ -389,6 +389,44 @@ cruxible list outcomes [--receipt <id>] [--limit <n>]
 |--------|----------|---------|-------------|
 | `--receipt` | no | — | Filter by receipt ID |
 | `--limit` | no | `50` | Max records to show |
+
+---
+
+## cruxible export
+
+Export graph data to files. Unlike `list` (which renders Rich tables to stdout with a default limit of 50), `export` writes all matching data to a file.
+
+### cruxible export edges
+
+Export all edges to CSV.
+
+```bash
+cruxible export edges -o <path> [--relationship <type>]
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--output` / `-o` | **yes** | Output file path |
+| `--relationship` | no | Filter by relationship type |
+
+**Columns:** `from_type`, `from_id`, `to_type`, `to_id`, `relationship_type`, `edge_key`, `properties_json`
+
+The `properties_json` column is the full edge properties dict as JSON with deterministic key ordering (`sort_keys=True`). This includes config-defined properties, `review_status`, and `_provenance`. See [Edge Properties](concepts.md#edge-properties) for what these contain.
+
+All edges are exported regardless of `review_status` — rejected edges are included. Filter downstream as needed.
+
+**Example:**
+
+```bash
+cruxible export edges -o edges.csv
+# Exported 704 edge(s) to edges.csv
+
+cruxible export edges -o metabolized.csv --relationship metabolized_by
+# Exported 58 edge(s) to metabolized.csv
+
+# Verify round-trip:
+python -c "import csv, json; [json.loads(r['properties_json']) for r in csv.DictReader(open('edges.csv'))]; print('OK')"
+```
 
 ---
 

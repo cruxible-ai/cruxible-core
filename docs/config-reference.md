@@ -135,7 +135,7 @@ relationships:
 | `from` | string | **yes** | — | Source entity type name |
 | `to` | string | **yes** | — | Target entity type name |
 | `cardinality` | string | no | `"many_to_many"` | Cardinality constraint |
-| `properties` | dict | no | `{}` | Edge property definitions (same schema as entity properties) |
+| `properties` | dict | no | `{}` | Edge property definitions (same schema as entity properties). See [Edge Properties](concepts.md#edge-properties) for system-managed properties added at runtime. |
 | `description` | string | no | `null` | Human-readable description |
 | `inverse` | string | no | `null` | Name for the reverse traversal direction |
 | `is_hierarchy` | bool | no | `false` | Mark as a hierarchical relationship |

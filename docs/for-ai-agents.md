@@ -243,7 +243,7 @@ When rejection patterns emerge from feedback:
 
 ### Relationships
 - `from`/`to` must reference existing entity type names
-- Include `source`, `confidence`, and `evidence` in edge properties for AI-inferred relationships
+- Include `source`, `confidence`, and `evidence` in [edge properties](concepts.md#edge-properties) for AI-inferred relationships
 - Use `inverse` for bidirectional traversal
 
 ### Ingestion Mappings
@@ -267,5 +267,5 @@ When rejection patterns emerge from feedback:
 - **Ingesting relationships before entities** — Edges reference entity IDs. Ingest entities first.
 - **Skipping validation** — Always run `cruxible_validate` before `cruxible_init`. Fail fast.
 - **Ignoring evaluate results** — Run `cruxible_evaluate` after every major change. Orphans and gaps indicate data problems.
-- **Not including provenance in edge properties** — Always include `source`, `confidence`, and `evidence` when proposing inferred relationships. This enables meaningful feedback and constraint analysis.
+- **Omitting `source`, `confidence`, and `evidence` on inferred edges** — Always include these [edge properties](concepts.md#edge-properties) when proposing AI-inferred relationships. They enable meaningful feedback and constraint analysis.
 - **Overloading a single query** — Split complex questions into multiple focused named queries rather than one query with many traversal steps.

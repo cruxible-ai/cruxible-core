@@ -80,6 +80,36 @@ Cruxible stores entities and relationships in a directed graph (NetworkX DiGraph
 
 The graph is persisted to disk and loaded on init. All mutations (ingest, add_entity, add_relationship, feedback) update the graph deterministically.
 
+### Edge Properties
+
+Every edge carries a `properties` dict. Properties come from three sources:
+
+**Config-defined properties** are declared in the relationship schema and set at creation time — either via ingestion mappings or explicit `add_relationship` calls. Examples: `verified`, `confidence`, `source`, `evidence`. See [Config Reference](config-reference.md) for property type definitions.
+
+**`review_status`** is set by feedback actions, not declared in the config schema:
+
+| Feedback action | Source | review_status |
+|-----------------|--------|---------------|
+| approve / correct | human | `human_approved` |
+| approve / correct | ai_review | `ai_approved` |
+| reject | human | `human_rejected` |
+| reject | ai_review | `ai_rejected` |
+| flag | any | `pending_review` |
+
+Absent until the first feedback action is applied to an edge. `correct` additionally merges a corrections dict into the edge properties before setting approved status.
+
+**`_provenance`** is internal metadata tracking edge origin. Stamped automatically on any relationship creation or update — via ingestion, MCP `add_relationship`, or CLI `add-relationship`. Fields:
+
+- `source` — origin system (e.g. `"ingest"`, `"mcp_add"`, `"cli_add"`)
+- `created_at` — ISO 8601 timestamp of edge creation
+- `source_ref` — reference identifier (e.g. mapping name, tool name)
+- `last_modified_at` — updated on edge replacement or feedback (absent until first modification)
+- `last_modified_by` — what modified it (e.g. `"feedback:approve"`, `"ingest"`)
+
+Prefixed with `_` to signal it is system-managed — do not set it manually.
+
+Tools like `cruxible list edges` strip `_provenance` from display. Export tools like `cruxible export edges` include it raw.
+
 ## Receipts: Provenance as a DAG
 
 Every query produces a receipt — a directed acyclic graph of evidence nodes showing:

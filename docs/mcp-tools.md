@@ -331,7 +331,7 @@ List entities, edges, receipts, feedback, or outcomes with optional filters.
 | `to_id` | string | Target entity ID |
 | `relationship_type` | string | Relationship type |
 | `edge_key` | int | Edge key for use with `cruxible_feedback` |
-| `properties` | dict | Edge properties |
+| `properties` | dict | [Edge properties](concepts.md#edge-properties) |
 
 ---
 
@@ -447,7 +447,7 @@ Pass `edge_key` when multiple same-type edges exist between the same endpoints. 
 | `to_type` | string | Target entity type |
 | `to_id` | string | Target entity ID |
 | `edge_key` | int or null | Edge key |
-| `properties` | dict | Edge properties |
+| `properties` | dict | [Edge properties](concepts.md#edge-properties) |
 
 ---
 
@@ -503,7 +503,7 @@ Each `RelationshipInput`:
 | `relationship` | string | **yes** | Relationship type name |
 | `to_type` | string | **yes** | Target entity type |
 | `to_id` | string | **yes** | Target entity ID |
-| `properties` | dict | no | Edge properties (default: `{}`) |
+| `properties` | dict | no | [Edge properties](concepts.md#edge-properties) (default: `{}`) |
 
 Entities must already exist. Re-submitting an existing edge replaces its properties. Include `source`, `confidence`, and `evidence` in properties for provenance tracking.
 
