@@ -129,8 +129,10 @@ def query(query_name: str, param: tuple[str, ...], limit: int | None) -> None:
     # Save receipt
     if result.receipt is not None:
         store = instance.get_receipt_store()
-        receipt_id = store.save_receipt(result.receipt)
-        store.close()
+        try:
+            receipt_id = store.save_receipt(result.receipt)
+        finally:
+            store.close()
     else:
         receipt_id = None
 
@@ -167,8 +169,10 @@ def explain(receipt_id: str, fmt: str) -> None:
     """Explain a query result using its receipt."""
     instance = CruxibleInstance.load()
     store = instance.get_receipt_store()
-    receipt = store.get_receipt(receipt_id)
-    store.close()
+    try:
+        receipt = store.get_receipt(receipt_id)
+    finally:
+        store.close()
 
     if receipt is None:
         raise ReceiptNotFoundError(receipt_id)
@@ -254,15 +258,19 @@ def feedback_cmd(
     instance = CruxibleInstance.load()
     graph = instance.load_graph()
     receipt_store = instance.get_receipt_store()
-    receipt = receipt_store.get_receipt(receipt_id)
-    receipt_store.close()
+    try:
+        receipt = receipt_store.get_receipt(receipt_id)
+    finally:
+        receipt_store.close()
     if receipt is None:
         raise ReceiptNotFoundError(receipt_id)
 
     # Save feedback record
     fb_store = instance.get_feedback_store()
-    fb_id = fb_store.save_feedback(record)
-    fb_store.close()
+    try:
+        fb_id = fb_store.save_feedback(record)
+    finally:
+        fb_store.close()
 
     # Apply to graph and save
     applied = apply_feedback(graph, record)
@@ -307,13 +315,17 @@ def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None
 
     instance = CruxibleInstance.load()
     receipt_store = instance.get_receipt_store()
-    receipt = receipt_store.get_receipt(receipt_id)
-    receipt_store.close()
+    try:
+        receipt = receipt_store.get_receipt(receipt_id)
+    finally:
+        receipt_store.close()
     if receipt is None:
         raise ReceiptNotFoundError(receipt_id)
     fb_store = instance.get_feedback_store()
-    out_id = fb_store.save_outcome(record)
-    fb_store.close()
+    try:
+        out_id = fb_store.save_outcome(record)
+    finally:
+        fb_store.close()
 
     click.echo(f"Outcome {out_id} recorded.")
 
@@ -349,8 +361,10 @@ def list_receipts(query_name: str | None, limit: int) -> None:
     """List receipt summaries."""
     instance = CruxibleInstance.load()
     store = instance.get_receipt_store()
-    receipts = store.list_receipts(query_name=query_name, limit=limit)
-    store.close()
+    try:
+        receipts = store.list_receipts(query_name=query_name, limit=limit)
+    finally:
+        store.close()
     console.print(receipts_table(receipts))
     click.echo(f"{len(receipts)} receipt(s) shown.")
 
@@ -363,8 +377,10 @@ def list_feedback(receipt_id: str | None, limit: int) -> None:
     """List feedback records."""
     instance = CruxibleInstance.load()
     fb_store = instance.get_feedback_store()
-    records = fb_store.list_feedback(receipt_id=receipt_id, limit=limit)
-    fb_store.close()
+    try:
+        records = fb_store.list_feedback(receipt_id=receipt_id, limit=limit)
+    finally:
+        fb_store.close()
     console.print(feedback_table(records))
     click.echo(f"{len(records)} record(s) shown.")
 
@@ -377,8 +393,10 @@ def list_outcomes(receipt_id: str | None, limit: int) -> None:
     """List outcome records."""
     instance = CruxibleInstance.load()
     fb_store = instance.get_feedback_store()
-    records = fb_store.list_outcomes(receipt_id=receipt_id, limit=limit)
-    fb_store.close()
+    try:
+        records = fb_store.list_outcomes(receipt_id=receipt_id, limit=limit)
+    finally:
+        fb_store.close()
     console.print(outcomes_table(records))
     click.echo(f"{len(records)} record(s) shown.")
 

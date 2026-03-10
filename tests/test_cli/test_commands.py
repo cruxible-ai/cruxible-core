@@ -1203,7 +1203,11 @@ class TestExportEdges:
         graph = populated_instance.load_graph()
         # Mark one edge as rejected
         graph.update_edge_properties(
-            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits",
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
             {"review_status": "human_rejected"},
         )
         populated_instance.save_graph(graph)
@@ -1244,7 +1248,11 @@ class TestExportEdges:
         """--exclude-rejected also omits ai_rejected edges."""
         graph = populated_instance.load_graph()
         graph.update_edge_properties(
-            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits",
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
             {"review_status": "ai_rejected"},
         )
         populated_instance.save_graph(graph)
@@ -1258,6 +1266,147 @@ class TestExportEdges:
         )
         assert result.exit_code == 0
         assert "Exported 3 edge(s)" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Store lifecycle (try/finally)
+# ---------------------------------------------------------------------------
+
+
+class TestStoreLifecycle:
+    """Verify stores are closed even when operations raise."""
+
+    def test_query_closes_receipt_store_on_error(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.storage.sqlite import SQLiteStore
+
+        close_count = 0
+        original_close = SQLiteStore.close
+
+        def counting_close(self: SQLiteStore) -> None:
+            nonlocal close_count
+            close_count += 1
+            original_close(self)
+
+        monkeypatch.setattr(SQLiteStore, "close", counting_close)
+        monkeypatch.setattr(
+            SQLiteStore,
+            "save_receipt",
+            lambda self, r: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+        )
+        # The command should fail due to the injected error
+        assert result.exit_code == 1
+        assert close_count >= 1
+
+    def test_feedback_closes_both_stores_on_error(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.feedback.store import FeedbackStore
+        from cruxible_core.storage.sqlite import SQLiteStore
+
+        # First run a query to get a real receipt ID
+        q_result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+        )
+        receipt_id = None
+        for line in q_result.output.splitlines():
+            if line.startswith("Receipt:"):
+                receipt_id = line.split(":", 1)[1].strip()
+        assert receipt_id is not None
+
+        receipt_close_count = 0
+        feedback_close_count = 0
+        original_sqlite_close = SQLiteStore.close
+        original_fb_close = FeedbackStore.close
+
+        def counting_sqlite_close(self: SQLiteStore) -> None:
+            nonlocal receipt_close_count
+            receipt_close_count += 1
+            original_sqlite_close(self)
+
+        def counting_fb_close(self: FeedbackStore) -> None:
+            nonlocal feedback_close_count
+            feedback_close_count += 1
+            original_fb_close(self)
+
+        monkeypatch.setattr(SQLiteStore, "close", counting_sqlite_close)
+        monkeypatch.setattr(FeedbackStore, "close", counting_fb_close)
+        monkeypatch.setattr(
+            FeedbackStore,
+            "save_feedback",
+            lambda self, r: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "feedback",
+                "--receipt",
+                receipt_id,
+                "--action",
+                "approve",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1001",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "V-2024-CIVIC-EX",
+            ],
+        )
+        assert result.exit_code == 1
+        assert receipt_close_count >= 1
+        assert feedback_close_count >= 1
+
+    def test_list_receipts_closes_store_on_error(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.storage.sqlite import SQLiteStore
+
+        close_count = 0
+        original_close = SQLiteStore.close
+
+        def counting_close(self: SQLiteStore) -> None:
+            nonlocal close_count
+            close_count += 1
+            original_close(self)
+
+        monkeypatch.setattr(SQLiteStore, "close", counting_close)
+        monkeypatch.setattr(
+            SQLiteStore,
+            "list_receipts",
+            lambda self, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "receipts"],
+        )
+        assert result.exit_code == 1
+        assert close_count >= 1
 
 
 # ---------------------------------------------------------------------------
