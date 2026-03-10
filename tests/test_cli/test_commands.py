@@ -1194,6 +1194,71 @@ class TestExportEdges:
                     return
         pytest.fail("No edge with _provenance found in exported CSV")
 
+    def test_exclude_rejected(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """--exclude-rejected omits edges with rejected review_status."""
+        graph = populated_instance.load_graph()
+        # Mark one edge as rejected
+        graph.update_edge_properties(
+            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits",
+            {"review_status": "human_rejected"},
+        )
+        populated_instance.save_graph(graph)
+        populated_instance.invalidate_graph_cache()
+
+        # Without flag: all 4 edges
+        out_all = populated_instance.root / "all.csv"
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out_all)],
+        )
+        assert result.exit_code == 0
+        assert "Exported 4 edge(s)" in result.output
+
+        # With flag: 3 edges (rejected one excluded)
+        out_filtered = populated_instance.root / "filtered.csv"
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out_filtered), "--exclude-rejected"],
+        )
+        assert result.exit_code == 0
+        assert "Exported 3 edge(s)" in result.output
+
+        import csv as csv_mod
+
+        with out_filtered.open() as f:
+            for row in csv_mod.DictReader(f):
+                props = json.loads(row["properties_json"])
+                assert props.get("review_status") != "human_rejected"
+
+    def test_exclude_rejected_ai(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """--exclude-rejected also omits ai_rejected edges."""
+        graph = populated_instance.load_graph()
+        graph.update_edge_properties(
+            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits",
+            {"review_status": "ai_rejected"},
+        )
+        populated_instance.save_graph(graph)
+        populated_instance.invalidate_graph_cache()
+
+        out = populated_instance.root / "filtered.csv"
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["export", "edges", "-o", str(out), "--exclude-rejected"],
+        )
+        assert result.exit_code == 0
+        assert "Exported 3 edge(s)" in result.output
+
 
 # ---------------------------------------------------------------------------
 # E2E Gate Test
