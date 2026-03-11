@@ -28,7 +28,12 @@ from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import ConstraintSchema
 from cruxible_core.config.validator import validate_config
-from cruxible_core.errors import ConfigError, EdgeAmbiguityError, ReceiptNotFoundError
+from cruxible_core.errors import (
+    ConfigError,
+    DataValidationError,
+    EdgeAmbiguityError,
+    ReceiptNotFoundError,
+)
 from cruxible_core.evaluate import evaluate_graph
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
@@ -245,6 +250,19 @@ def feedback_cmd(
         raise click.BadParameter("--corrections must be valid JSON") from exc
     if not isinstance(corrections_dict, dict):
         raise click.BadParameter("--corrections must be a JSON object")
+
+    # Validate confidence (match MCP handlers.py:352–361)
+    confidence = corrections_dict.get("confidence")
+    if confidence is not None:
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            raise DataValidationError(
+                f"corrections.confidence must be numeric (float). "
+                f"Got {confidence!r}. "
+                f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
+            )
+
+    # Strip _provenance from corrections (match MCP handlers.py:363)
+    corrections_dict = {k: v for k, v in corrections_dict.items() if k != "_provenance"}
 
     record = FeedbackRecord(
         receipt_id=receipt_id,

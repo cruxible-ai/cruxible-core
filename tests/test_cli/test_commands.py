@@ -1410,6 +1410,99 @@ class TestStoreLifecycle:
 
 
 # ---------------------------------------------------------------------------
+# Feedback validation (confidence + provenance)
+# ---------------------------------------------------------------------------
+
+
+class TestFeedbackValidation:
+    """Verify CLI feedback matches MCP confidence/provenance checks."""
+
+    @staticmethod
+    def _get_receipt_id(runner: CliRunner, instance: CruxibleInstance) -> str:
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+        )
+        for line in result.output.splitlines():
+            if line.startswith("Receipt:"):
+                return line.split(":", 1)[1].strip()
+        pytest.fail("No receipt ID found")
+
+    def _feedback_args(self, receipt_id: str, corrections_json: str) -> list[str]:
+        return [
+            "feedback",
+            "--receipt",
+            receipt_id,
+            "--action",
+            "correct",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1001",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-2024-CIVIC-EX",
+            "--corrections",
+            corrections_json,
+        ]
+
+    def test_feedback_rejects_bool_confidence(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        receipt_id = self._get_receipt_id(runner, populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            self._feedback_args(receipt_id, '{"confidence": true}'),
+        )
+        assert result.exit_code == 1
+        assert "numeric" in result.output
+
+    def test_feedback_rejects_string_confidence(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        receipt_id = self._get_receipt_id(runner, populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            self._feedback_args(receipt_id, '{"confidence": "high"}'),
+        )
+        assert result.exit_code == 1
+        assert "numeric" in result.output
+
+    def test_feedback_strips_provenance(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        receipt_id = self._get_receipt_id(runner, populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            self._feedback_args(receipt_id, '{"_provenance": "spoofed", "note": "ok"}'),
+        )
+        assert result.exit_code == 0
+
+        # Read back from store to verify _provenance was stripped
+        fb_store = populated_instance.get_feedback_store()
+        try:
+            records = fb_store.list_feedback(receipt_id=receipt_id)
+        finally:
+            fb_store.close()
+        assert len(records) == 1
+        assert "_provenance" not in records[0].corrections
+        assert records[0].corrections["note"] == "ok"
+
+
+# ---------------------------------------------------------------------------
 # E2E Gate Test
 # ---------------------------------------------------------------------------
 
