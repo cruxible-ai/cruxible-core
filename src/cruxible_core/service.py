@@ -10,17 +10,27 @@ from __future__ import annotations
 import json as _json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
-from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.config.loader import load_config, load_config_from_string
+from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.validator import validate_config
+from cruxible_core.errors import ConfigError, DataValidationError, ReceiptNotFoundError
+from cruxible_core.evaluate import EvaluationReport, evaluate_graph
+from cruxible_core.feedback.applier import apply_feedback
+from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.operations import (
     apply_entity,
     apply_relationship,
     validate_entity,
     validate_relationship,
 )
+from cruxible_core.graph.types import EntityInstance
 from cruxible_core.ingest import ingest_file, ingest_from_mapping, load_data_from_string
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.query.candidates import CandidateMatch, MatchRule, find_candidates
+from cruxible_core.query.engine import execute_query
+from cruxible_core.receipt.types import Receipt
 
 # ---------------------------------------------------------------------------
 # Input types
@@ -72,6 +82,32 @@ class IngestResult:
     mapping: str
     entity_type: str | None
     relationship_type: str | None
+
+
+@dataclass
+class ValidateServiceResult:
+    config: CoreConfig
+    warnings: list[str]
+
+
+@dataclass
+class QueryServiceResult:
+    results: list[EntityInstance]
+    receipt_id: str | None
+    receipt: Receipt | None
+    total_results: int
+    steps_executed: int
+
+
+@dataclass
+class FeedbackServiceResult:
+    feedback_id: str
+    applied: bool
+
+
+@dataclass
+class OutcomeServiceResult:
+    outcome_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -260,4 +296,234 @@ def service_ingest(
         mapping=mapping_name,
         entity_type=mapping.entity_type,
         relationship_type=mapping.relationship_type,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Validate
+# ---------------------------------------------------------------------------
+
+
+def service_validate(
+    config_path: str | None = None,
+    config_yaml: str | None = None,
+) -> ValidateServiceResult:
+    """Validate a config file or inline YAML string.
+
+    Runs both structural (Pydantic) and semantic (cross-reference) validation.
+    Raises ConfigError on source violations or validation failures.
+    """
+    sources = sum(x is not None for x in (config_path, config_yaml))
+    if sources == 0:
+        raise ConfigError("Provide exactly one of config_path or config_yaml")
+    if sources > 1:
+        raise ConfigError("Provide exactly one of config_path or config_yaml")
+
+    if config_yaml is not None:
+        config = load_config_from_string(config_yaml)
+    else:
+        assert config_path is not None
+        config = load_config(config_path)
+
+    warnings = validate_config(config)
+    return ValidateServiceResult(config=config, warnings=warnings)
+
+
+# ---------------------------------------------------------------------------
+# Query + Feedback
+# ---------------------------------------------------------------------------
+
+
+def service_query(
+    instance: InstanceProtocol,
+    query_name: str,
+    params: dict[str, Any],
+) -> QueryServiceResult:
+    """Execute a named query and persist the receipt.
+
+    Returns results, receipt, and execution metadata.
+    """
+    config = instance.load_config()
+    graph = instance.load_graph()
+    result = execute_query(config, graph, query_name, params)
+
+    if result.receipt:
+        store = instance.get_receipt_store()
+        try:
+            store.save_receipt(result.receipt)
+        finally:
+            store.close()
+
+    total = result.total_results or len(result.results)
+    return QueryServiceResult(
+        results=result.results,
+        receipt_id=result.receipt.receipt_id if result.receipt else None,
+        receipt=result.receipt,
+        total_results=total,
+        steps_executed=result.steps_executed,
+    )
+
+
+def service_feedback(
+    instance: InstanceProtocol,
+    receipt_id: str,
+    action: Literal["approve", "reject", "correct", "flag"],
+    source: Literal["human", "ai_review", "system"],
+    target: EdgeTarget,
+    reason: str = "",
+    corrections: dict[str, Any] | None = None,
+) -> FeedbackServiceResult:
+    """Record feedback on an edge.
+
+    Validates corrections, checks receipt existence, persists feedback,
+    and applies to the graph.
+    """
+    _VALID_ACTIONS = ("approve", "reject", "correct", "flag")
+    if action not in _VALID_ACTIONS:
+        raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
+
+    _VALID_SOURCES = ("human", "ai_review", "system")
+    if source not in _VALID_SOURCES:
+        raise ConfigError(f"Invalid source '{source}'. Use: {', '.join(_VALID_SOURCES)}")
+
+    if corrections is not None and not isinstance(corrections, dict):
+        raise ConfigError("corrections must be an object")
+
+    # Fail-fast: validate confidence in corrections BEFORE persisting
+    if corrections is not None:
+        confidence = corrections.get("confidence")
+        if confidence is not None:
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+                raise DataValidationError(
+                    f"corrections.confidence must be numeric (float). "
+                    f"Got {confidence!r}. "
+                    f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
+                )
+        # Strip _provenance from corrections (prevent spoofing in audit trail)
+        corrections = {k: v for k, v in corrections.items() if k != "_provenance"}
+
+    graph = instance.load_graph()
+    receipt_store = instance.get_receipt_store()
+
+    try:
+        if receipt_store.get_receipt(receipt_id) is None:
+            raise ReceiptNotFoundError(receipt_id)
+    finally:
+        receipt_store.close()
+
+    record = FeedbackRecord(
+        receipt_id=receipt_id,
+        action=action,
+        source=source,
+        target=target,
+        reason=reason,
+        corrections=corrections or {},
+    )
+
+    feedback_store = instance.get_feedback_store()
+    try:
+        feedback_store.save_feedback(record)
+    finally:
+        feedback_store.close()
+
+    applied = apply_feedback(graph, record)
+    instance.save_graph(graph)
+
+    return FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied)
+
+
+def service_outcome(
+    instance: InstanceProtocol,
+    receipt_id: str,
+    outcome: Literal["correct", "incorrect", "partial", "unknown"],
+    detail: dict[str, Any] | None = None,
+) -> OutcomeServiceResult:
+    """Record an outcome for a query.
+
+    Validates receipt existence, persists the outcome record.
+    """
+    _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
+    if outcome not in _VALID_OUTCOMES:
+        raise ConfigError(f"Invalid outcome '{outcome}'. Use: {', '.join(_VALID_OUTCOMES)}")
+
+    if detail is not None and not isinstance(detail, dict):
+        raise ConfigError("detail must be an object")
+
+    receipt_store = instance.get_receipt_store()
+    try:
+        if receipt_store.get_receipt(receipt_id) is None:
+            raise ReceiptNotFoundError(receipt_id)
+    finally:
+        receipt_store.close()
+
+    record = OutcomeRecord(
+        receipt_id=receipt_id,
+        outcome=outcome,
+        detail=detail or {},
+    )
+    feedback_store = instance.get_feedback_store()
+    try:
+        feedback_store.save_outcome(record)
+    finally:
+        feedback_store.close()
+
+    return OutcomeServiceResult(outcome_id=record.outcome_id)
+
+
+# ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
+
+
+def service_find_candidates(
+    instance: InstanceProtocol,
+    relationship_type: str,
+    strategy: Literal["property_match", "shared_neighbors"],
+    match_rules: list[MatchRule] | None = None,
+    via_relationship: str | None = None,
+    min_overlap: float = 0.5,
+    min_confidence: float = 0.5,
+    limit: int = 20,
+    min_distinct_neighbors: int = 2,
+) -> list[CandidateMatch]:
+    """Find candidate relationships using a deterministic strategy."""
+    _VALID_STRATEGIES = ("property_match", "shared_neighbors")
+    if strategy not in _VALID_STRATEGIES:
+        raise ConfigError(f"Invalid strategy '{strategy}'. Use: {', '.join(_VALID_STRATEGIES)}")
+
+    if min_distinct_neighbors < 1:
+        raise ConfigError("min_distinct_neighbors must be >= 1")
+
+    config = instance.load_config()
+    graph = instance.load_graph()
+
+    return find_candidates(
+        config,
+        graph,
+        relationship_type,
+        strategy,
+        match_rules=match_rules,
+        via_relationship=via_relationship,
+        min_overlap=min_overlap,
+        min_confidence=min_confidence,
+        limit=limit,
+        min_distinct_neighbors=min_distinct_neighbors,
+    )
+
+
+def service_evaluate(
+    instance: InstanceProtocol,
+    confidence_threshold: float = 0.5,
+    max_findings: int = 100,
+    exclude_orphan_types: list[str] | None = None,
+) -> EvaluationReport:
+    """Evaluate graph quality with deterministic checks."""
+    config = instance.load_config()
+    graph = instance.load_graph()
+    return evaluate_graph(
+        config,
+        graph,
+        confidence_threshold=confidence_threshold,
+        max_findings=max_findings,
+        exclude_orphan_types=exclude_orphan_types,
     )
