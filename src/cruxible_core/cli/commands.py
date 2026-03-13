@@ -1,4 +1,4 @@
-"""CLI commands delegating to core modules."""
+"""CLI commands delegating to service layer."""
 
 from __future__ import annotations
 
@@ -25,30 +25,34 @@ from cruxible_core.cli.formatting import (
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.constraint_rules import parse_constraint_rule
-from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import ConstraintSchema
 from cruxible_core.config.validator import validate_config
-from cruxible_core.errors import (
-    ConfigError,
-    DataValidationError,
-    EdgeAmbiguityError,
-    ReceiptNotFoundError,
-)
-from cruxible_core.evaluate import evaluate_graph
-from cruxible_core.feedback.applier import apply_feedback
-from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
-from cruxible_core.graph.operations import (
-    apply_entity,
-    apply_relationship,
-    validate_entity,
-    validate_relationship,
-)
+from cruxible_core.errors import ConfigError
+from cruxible_core.feedback.types import EdgeTarget
 from cruxible_core.graph.types import REJECTED_STATUSES
-from cruxible_core.ingest import ingest_file
 from cruxible_core.mcp import contracts
-from cruxible_core.query.candidates import MatchRule, find_candidates
-from cruxible_core.query.engine import execute_query
+from cruxible_core.query.candidates import MatchRule
 from cruxible_core.receipt import serializer
+from cruxible_core.service import (
+    EntityUpsertInput,
+    RelationshipUpsertInput,
+    service_add_entities,
+    service_add_relationships,
+    service_evaluate,
+    service_feedback,
+    service_find_candidates,
+    service_get_entity,
+    service_get_receipt,
+    service_get_relationship,
+    service_ingest,
+    service_init,
+    service_list,
+    service_outcome,
+    service_query,
+    service_sample,
+    service_schema,
+    service_validate,
+)
 
 console = Console()
 
@@ -65,8 +69,10 @@ console = Console()
 def init(config_path: str, data_dir: str | None) -> None:
     """Initialize a new .cruxible/ instance in the current directory."""
     root = Path.cwd()
-    instance = CruxibleInstance.init(root, config_path, data_dir)
-    click.echo(f"Initialized .cruxible/ in {instance.root}")
+    result = service_init(root, config_path=config_path, data_dir=data_dir)
+    click.echo(f"Initialized .cruxible/ in {root}")
+    for w in result.warnings:
+        click.secho(f"  Warning: {w}", fg="yellow")
 
 
 # ---------------------------------------------------------------------------
@@ -79,13 +85,16 @@ def init(config_path: str, data_dir: str | None) -> None:
 @handle_errors
 def validate(config_path: str) -> None:
     """Validate a config YAML file without creating an instance."""
-    config = load_config(config_path)
+    result = service_validate(config_path=config_path)
+    config = result.config
     click.echo(f"Config '{config.name}' is valid.")
     click.echo(
         f"  {len(config.entity_types)} entity types, "
         f"{len(config.relationships)} relationships, "
         f"{len(config.named_queries)} queries"
     )
+    for w in result.warnings:
+        click.secho(f"  Warning: {w}", fg="yellow")
 
 
 # ---------------------------------------------------------------------------
@@ -100,15 +109,11 @@ def validate(config_path: str) -> None:
 def ingest(mapping: str, file_path: str) -> None:
     """Ingest data from a file using a named mapping."""
     instance = CruxibleInstance.load()
-    config = instance.load_config()
-    graph = instance.load_graph()
+    result = service_ingest(instance, mapping, file_path=file_path)
 
-    added, updated = ingest_file(config, graph, mapping, file_path)
-    instance.save_graph(graph)
-
-    parts = [f"{added} added"]
-    if updated:
-        parts.append(f"{updated} updated")
+    parts = [f"{result.records_ingested} added"]
+    if result.records_updated:
+        parts.append(f"{result.records_updated} updated")
     click.echo(f"Ingested {', '.join(parts)} via mapping '{mapping}'.")
 
 
@@ -125,21 +130,8 @@ def ingest(mapping: str, file_path: str) -> None:
 def query(query_name: str, param: tuple[str, ...], limit: int | None) -> None:
     """Execute a named query and save the receipt."""
     instance = CruxibleInstance.load()
-    config = instance.load_config()
-    graph = instance.load_graph()
-
     params = _parse_params(param)
-    result = execute_query(config, graph, query_name, params)
-
-    # Save receipt
-    if result.receipt is not None:
-        store = instance.get_receipt_store()
-        try:
-            receipt_id = store.save_receipt(result.receipt)
-        finally:
-            store.close()
-    else:
-        receipt_id = None
+    result = service_query(instance, query_name, params)
 
     # Display results (apply limit if set)
     results = result.results
@@ -151,8 +143,8 @@ def query(query_name: str, param: tuple[str, ...], limit: int | None) -> None:
     else:
         console.print(entities_table(results, query_name))
         click.echo(f"\n{total} result(s), {result.steps_executed} step(s) executed.")
-    if receipt_id:
-        click.echo(f"Receipt: {receipt_id}")
+    if result.receipt_id:
+        click.echo(f"Receipt: {result.receipt_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +165,7 @@ def query(query_name: str, param: tuple[str, ...], limit: int | None) -> None:
 def explain(receipt_id: str, fmt: str) -> None:
     """Explain a query result using its receipt."""
     instance = CruxibleInstance.load()
-    store = instance.get_receipt_store()
-    try:
-        receipt = store.get_receipt(receipt_id)
-    finally:
-        store.close()
-
-    if receipt is None:
-        raise ReceiptNotFoundError(receipt_id)
+    receipt = service_get_receipt(instance, receipt_id)
 
     if fmt == "json":
         click.echo(serializer.to_json(receipt))
@@ -236,7 +221,14 @@ def feedback_cmd(
     source: str,
 ) -> None:
     """Submit feedback on a specific edge from a query result."""
-    edge_target = EdgeTarget(
+    try:
+        corrections_dict = json.loads(corrections) if corrections else None
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--corrections must be valid JSON") from exc
+    if corrections_dict is not None and not isinstance(corrections_dict, dict):
+        raise click.BadParameter("--corrections must be a JSON object")
+
+    target = EdgeTarget(
         from_type=from_type,
         from_id=from_id,
         relationship=relationship,
@@ -244,60 +236,22 @@ def feedback_cmd(
         to_id=to_id,
         edge_key=edge_key,
     )
-    try:
-        corrections_dict = json.loads(corrections) if corrections else {}
-    except json.JSONDecodeError as exc:
-        raise click.BadParameter("--corrections must be valid JSON") from exc
-    if not isinstance(corrections_dict, dict):
-        raise click.BadParameter("--corrections must be a JSON object")
 
-    # Validate confidence (match MCP handlers.py:352–361)
-    confidence = corrections_dict.get("confidence")
-    if confidence is not None:
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-            raise DataValidationError(
-                f"corrections.confidence must be numeric (float). "
-                f"Got {confidence!r}. "
-                f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
-            )
-
-    # Strip _provenance from corrections (match MCP handlers.py:363)
-    corrections_dict = {k: v for k, v in corrections_dict.items() if k != "_provenance"}
-
-    record = FeedbackRecord(
+    instance = CruxibleInstance.load()
+    result = service_feedback(
+        instance,
         receipt_id=receipt_id,
         action=cast(contracts.FeedbackAction, action),
         source=cast(contracts.FeedbackSource, source),
-        target=edge_target,
+        target=target,
         reason=reason,
         corrections=corrections_dict,
     )
 
-    instance = CruxibleInstance.load()
-    graph = instance.load_graph()
-    receipt_store = instance.get_receipt_store()
-    try:
-        receipt = receipt_store.get_receipt(receipt_id)
-    finally:
-        receipt_store.close()
-    if receipt is None:
-        raise ReceiptNotFoundError(receipt_id)
-
-    # Save feedback record
-    fb_store = instance.get_feedback_store()
-    try:
-        fb_id = fb_store.save_feedback(record)
-    finally:
-        fb_store.close()
-
-    # Apply to graph and save
-    applied = apply_feedback(graph, record)
-    instance.save_graph(graph)
-
-    if applied:
-        click.echo(f"Feedback {fb_id} applied to graph.")
+    if result.applied:
+        click.echo(f"Feedback {result.feedback_id} applied to graph.")
     else:
-        click.echo(f"Feedback {fb_id} saved (edge not found in graph).")
+        click.echo(f"Feedback {result.feedback_id} saved (edge not found in graph).")
 
 
 # ---------------------------------------------------------------------------
@@ -319,33 +273,20 @@ def feedback_cmd(
 def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None:
     """Record the outcome of a decision."""
     try:
-        detail_dict = json.loads(detail) if detail else {}
+        detail_dict = json.loads(detail) if detail else None
     except json.JSONDecodeError as exc:
         raise click.BadParameter("--detail must be valid JSON") from exc
-    if not isinstance(detail_dict, dict):
+    if detail_dict is not None and not isinstance(detail_dict, dict):
         raise click.BadParameter("--detail must be a JSON object")
 
-    record = OutcomeRecord(
+    instance = CruxibleInstance.load()
+    result = service_outcome(
+        instance,
         receipt_id=receipt_id,
         outcome=cast(contracts.OutcomeValue, outcome_value),
         detail=detail_dict,
     )
-
-    instance = CruxibleInstance.load()
-    receipt_store = instance.get_receipt_store()
-    try:
-        receipt = receipt_store.get_receipt(receipt_id)
-    finally:
-        receipt_store.close()
-    if receipt is None:
-        raise ReceiptNotFoundError(receipt_id)
-    fb_store = instance.get_feedback_store()
-    try:
-        out_id = fb_store.save_outcome(record)
-    finally:
-        fb_store.close()
-
-    click.echo(f"Outcome {out_id} recorded.")
+    click.echo(f"Outcome {result.outcome_id} recorded.")
 
 
 # ---------------------------------------------------------------------------
@@ -365,10 +306,9 @@ def list_group() -> None:
 def list_entities(entity_type: str, limit: int) -> None:
     """List entities of a given type."""
     instance = CruxibleInstance.load()
-    graph = instance.load_graph()
-    entities = graph.list_entities(entity_type)[:limit]
-    console.print(entities_table(entities, entity_type))
-    click.echo(f"{len(entities)} entity(ies) shown.")
+    result = service_list(instance, "entities", entity_type=entity_type, limit=limit)
+    console.print(entities_table(result.items, entity_type))
+    click.echo(f"{len(result.items)} entity(ies) shown.")
 
 
 @list_group.command("receipts")
@@ -378,13 +318,9 @@ def list_entities(entity_type: str, limit: int) -> None:
 def list_receipts(query_name: str | None, limit: int) -> None:
     """List receipt summaries."""
     instance = CruxibleInstance.load()
-    store = instance.get_receipt_store()
-    try:
-        receipts = store.list_receipts(query_name=query_name, limit=limit)
-    finally:
-        store.close()
-    console.print(receipts_table(receipts))
-    click.echo(f"{len(receipts)} receipt(s) shown.")
+    result = service_list(instance, "receipts", query_name=query_name, limit=limit)
+    console.print(receipts_table(result.items))
+    click.echo(f"{len(result.items)} receipt(s) shown.")
 
 
 @list_group.command("feedback")
@@ -394,13 +330,9 @@ def list_receipts(query_name: str | None, limit: int) -> None:
 def list_feedback(receipt_id: str | None, limit: int) -> None:
     """List feedback records."""
     instance = CruxibleInstance.load()
-    fb_store = instance.get_feedback_store()
-    try:
-        records = fb_store.list_feedback(receipt_id=receipt_id, limit=limit)
-    finally:
-        fb_store.close()
-    console.print(feedback_table(records))
-    click.echo(f"{len(records)} record(s) shown.")
+    result = service_list(instance, "feedback", receipt_id=receipt_id, limit=limit)
+    console.print(feedback_table(result.items))
+    click.echo(f"{len(result.items)} record(s) shown.")
 
 
 @list_group.command("outcomes")
@@ -410,13 +342,9 @@ def list_feedback(receipt_id: str | None, limit: int) -> None:
 def list_outcomes(receipt_id: str | None, limit: int) -> None:
     """List outcome records."""
     instance = CruxibleInstance.load()
-    fb_store = instance.get_feedback_store()
-    try:
-        records = fb_store.list_outcomes(receipt_id=receipt_id, limit=limit)
-    finally:
-        fb_store.close()
-    console.print(outcomes_table(records))
-    click.echo(f"{len(records)} record(s) shown.")
+    result = service_list(instance, "outcomes", receipt_id=receipt_id, limit=limit)
+    console.print(outcomes_table(result.items))
+    click.echo(f"{len(result.items)} record(s) shown.")
 
 
 # ---------------------------------------------------------------------------
@@ -449,8 +377,6 @@ def find_candidates_cmd(
 ) -> None:
     """Find candidate relationships using a deterministic strategy."""
     instance = CruxibleInstance.load()
-    config = instance.load_config()
-    graph = instance.load_graph()
 
     match_rules = None
     if rule:
@@ -461,9 +387,8 @@ def find_candidates_cmd(
                 raise click.BadParameter(f"Rule must be FROM_PROP=TO_PROP, got: {r}")
             match_rules.append(MatchRule(from_property=parts[0], to_property=parts[1]))
 
-    candidates = find_candidates(
-        config,
-        graph,
+    candidates = service_find_candidates(
+        instance,
         relationship,
         cast(contracts.CandidateStrategy, strategy),
         match_rules=match_rules,
@@ -485,7 +410,7 @@ def find_candidates_cmd(
 def schema() -> None:
     """Display the config schema for this instance."""
     instance = CruxibleInstance.load()
-    config = instance.load_config()
+    config = service_schema(instance)
     console.print(schema_table(config))
 
 
@@ -501,8 +426,7 @@ def schema() -> None:
 def sample(entity_type: str, limit: int) -> None:
     """Show a sample of entities of a given type."""
     instance = CruxibleInstance.load()
-    graph = instance.load_graph()
-    entities = graph.list_entities(entity_type)[:limit]
+    entities = service_sample(instance, entity_type, limit=limit)
     console.print(entities_table(entities, entity_type))
 
 
@@ -520,9 +444,7 @@ def sample(entity_type: str, limit: int) -> None:
 def evaluate(threshold: float, limit: int) -> None:
     """Assess graph quality: orphans, gaps, violations, unreviewed co-members."""
     instance = CruxibleInstance.load()
-    config = instance.load_config()
-    graph = instance.load_graph()
-    report = evaluate_graph(config, graph, confidence_threshold=threshold, max_findings=limit)
+    report = service_evaluate(instance, confidence_threshold=threshold, max_findings=limit)
 
     # Summary
     click.echo(f"Graph: {report.entity_count} entities, {report.edge_count} edges")
@@ -551,8 +473,7 @@ def evaluate(threshold: float, limit: int) -> None:
 def get_entity_cmd(entity_type: str, entity_id: str) -> None:
     """Look up a specific entity by type and ID."""
     instance = CruxibleInstance.load()
-    graph = instance.load_graph()
-    entity = graph.get_entity(entity_type, entity_id)
+    entity = service_get_entity(instance, entity_type, entity_id)
     if entity is None:
         click.echo("Not found.")
         return
@@ -582,32 +503,13 @@ def get_relationship_cmd(
 ) -> None:
     """Look up a specific relationship by its endpoints and type."""
     instance = CruxibleInstance.load()
-    graph = instance.load_graph()
-
-    # When no edge_key, check for ambiguity
-    if edge_key is None:
-        count = graph.relationship_count_between(
-            from_type,
-            from_id,
-            to_type,
-            to_id,
-            relationship,
-        )
-        if count > 1:
-            raise EdgeAmbiguityError(
-                from_type=from_type,
-                from_id=from_id,
-                to_type=to_type,
-                to_id=to_id,
-                relationship=relationship,
-            )
-
-    rel = graph.get_relationship(
-        from_type,
-        from_id,
-        to_type,
-        to_id,
-        relationship,
+    rel = service_get_relationship(
+        instance,
+        from_type=from_type,
+        from_id=from_id,
+        relationship_type=relationship,
+        to_type=to_type,
+        to_id=to_id,
         edge_key=edge_key,
     )
     if rel is None:
@@ -636,15 +538,13 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
         raise click.BadParameter("--props must be a JSON object")
 
     instance = CruxibleInstance.load()
-    config = instance.load_config()
-    graph = instance.load_graph()
-
-    validated = validate_entity(config, graph, entity_type, entity_id, properties)
-    apply_entity(graph, validated)
-    instance.save_graph(graph)
+    result = service_add_entities(
+        instance,
+        [EntityUpsertInput(entity_type=entity_type, entity_id=entity_id, properties=properties)],
+    )
 
     label = f"{entity_type}:{entity_id}"
-    if validated.is_update:
+    if result.updated:
         click.echo(f"Entity {label} updated.")
     else:
         click.echo(f"Entity {label} added.")
@@ -680,24 +580,24 @@ def add_relationship_cmd(
         raise click.BadParameter("--props must be a JSON object")
 
     instance = CruxibleInstance.load()
-    config = instance.load_config()
-    graph = instance.load_graph()
-
-    validated = validate_relationship(
-        config,
-        graph,
-        from_type,
-        from_id,
-        relationship,
-        to_type,
-        to_id,
-        properties,
+    result = service_add_relationships(
+        instance,
+        [
+            RelationshipUpsertInput(
+                from_type=from_type,
+                from_id=from_id,
+                relationship=relationship,
+                to_type=to_type,
+                to_id=to_id,
+                properties=properties,
+            )
+        ],
+        source="cli_add",
+        source_ref="add-relationship",
     )
-    apply_relationship(graph, validated, "cli_add", "add-relationship")
-    instance.save_graph(graph)
 
     edge_label = f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"
-    if validated.is_update:
+    if result.updated:
         click.echo(f"Relationship updated: {edge_label}")
     else:
         click.echo(f"Relationship added: {edge_label}")
@@ -770,10 +670,9 @@ def add_constraint_cmd(
 def list_edges(relationship: str | None, limit: int) -> None:
     """List edges in the graph."""
     instance = CruxibleInstance.load()
-    graph = instance.load_graph()
-    edges = graph.list_edges(relationship_type=relationship)[:limit]
-    console.print(edges_table(edges))
-    click.echo(f"{len(edges)} edge(s) shown.")
+    result = service_list(instance, "edges", relationship_type=relationship, limit=limit)
+    console.print(edges_table(result.items))
+    click.echo(f"{len(result.items)} edge(s) shown.")
 
 
 # ---------------------------------------------------------------------------
