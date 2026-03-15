@@ -403,6 +403,78 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_add_constraint(instance_id, name, rule, severity, description)
 
     @_tool
+    def cruxible_propose_group(
+        instance_id: str,
+        relationship_type: str,
+        members: list[contracts.MemberInput],
+        thesis_text: str = "",
+        thesis_facts: dict[str, Any] | None = None,
+        analysis_state: dict[str, Any] | None = None,
+        integrations_used: list[str] | None = None,
+        proposed_by: contracts.GroupProposedBy = "ai_review",
+        suggested_priority: str | None = None,
+    ) -> contracts.ProposeGroupToolResult:
+        """Propose a candidate group of edges for batch review.
+
+        Each member carries tri-state signals (support/contradict/unsure) from
+        declared integrations. The group carries a thesis (structured facts that
+        get hashed into a deterministic signature) and optional analysis_state
+        (opaque agent data, NOT hashed).
+
+        If a prior trusted resolution exists for the same thesis signature and
+        all signals meet the auto-resolve policy, the group is auto-resolved.
+        Otherwise it enters pending_review with a Cruxible-derived review_priority.
+        """
+        return handlers.handle_propose_group(
+            instance_id,
+            relationship_type,
+            members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            integrations_used=integrations_used,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+        )
+
+    @_tool
+    def cruxible_resolve_group(
+        instance_id: str,
+        group_id: str,
+        action: contracts.GroupAction,
+        rationale: str = "",
+        resolved_by: contracts.GroupResolvedBy = "human",
+    ) -> contracts.ResolveGroupToolResult:
+        """Resolve a candidate group by approving or rejecting it.
+
+        Approve creates edges in the graph for valid members (skipping members
+        whose edges already exist). Reject records the resolution without
+        graph mutation. Both persist the resolution for audit and future
+        auto-resolve precedent.
+        """
+        return handlers.handle_resolve_group(
+            instance_id, group_id, action, rationale=rationale, resolved_by=resolved_by
+        )
+
+    @_tool
+    def cruxible_update_trust_status(
+        instance_id: str,
+        resolution_id: str,
+        trust_status: contracts.GroupTrustStatus,
+        reason: str = "",
+    ) -> contracts.UpdateTrustStatusToolResult:
+        """Update the trust status on a confirmed approved resolution.
+
+        Trust is thesis-scoped: the latest confirmed approval for a signature
+        governs auto-resolve eligibility. Promote ``watch`` to ``trusted`` to
+        enable auto-resolve. Set ``invalidated`` to block auto-resolve and
+        escalate future proposals to critical priority.
+        """
+        return handlers.handle_update_trust_status(
+            instance_id, resolution_id, trust_status, reason=reason
+        )
+
+    @_tool
     def cruxible_get_entity(
         instance_id: str,
         entity_type: str,

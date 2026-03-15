@@ -21,6 +21,7 @@ from cruxible_core.errors import (
     InstanceNotFoundError,
 )
 from cruxible_core.feedback.types import EdgeTarget
+from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.mcp import contracts
 from cruxible_core.mcp.permissions import (
@@ -44,9 +45,12 @@ from cruxible_core.service import (
     service_init,
     service_list,
     service_outcome,
+    service_propose_group,
     service_query,
+    service_resolve_group,
     service_sample,
     service_schema,
+    service_update_trust_status,
     service_validate,
 )
 
@@ -588,4 +592,103 @@ def handle_get_relationship(
         to_id=rel.to_entity_id,
         edge_key=rel.edge_key,
         properties=rel.properties,
+    )
+
+
+def handle_propose_group(
+    instance_id: str,
+    relationship_type: str,
+    members: list[contracts.MemberInput],
+    thesis_text: str = "",
+    thesis_facts: dict[str, Any] | None = None,
+    analysis_state: dict[str, Any] | None = None,
+    integrations_used: list[str] | None = None,
+    proposed_by: contracts.GroupProposedBy = "ai_review",
+    suggested_priority: str | None = None,
+) -> contracts.ProposeGroupToolResult:
+    """Propose a candidate group for batch edge review."""
+    check_permission("cruxible_propose_group", instance_id=instance_id)
+    instance = _manager.get(instance_id)
+
+    domain_members = [
+        CandidateMember(
+            from_type=m.from_type,
+            from_id=m.from_id,
+            to_type=m.to_type,
+            to_id=m.to_id,
+            relationship_type=m.relationship_type,
+            signals=[
+                CandidateSignal(
+                    integration=s.integration,
+                    signal=s.signal,
+                    evidence=s.evidence,
+                )
+                for s in m.signals
+            ],
+            properties=m.properties,
+        )
+        for m in members
+    ]
+
+    result = service_propose_group(
+        instance,
+        relationship_type,
+        domain_members,
+        thesis_text=thesis_text,
+        thesis_facts=thesis_facts,
+        analysis_state=analysis_state,
+        integrations_used=integrations_used,
+        proposed_by=proposed_by,
+        suggested_priority=suggested_priority,
+    )
+    return contracts.ProposeGroupToolResult(
+        group_id=result.group_id,
+        signature=result.signature,
+        status=result.status,
+        review_priority=result.review_priority,
+        member_count=result.member_count,
+        prior_resolution=result.prior_resolution,
+    )
+
+
+def handle_resolve_group(
+    instance_id: str,
+    group_id: str,
+    action: contracts.GroupAction,
+    rationale: str = "",
+    resolved_by: contracts.GroupResolvedBy = "human",
+) -> contracts.ResolveGroupToolResult:
+    """Resolve a candidate group (approve or reject)."""
+    check_permission("cruxible_resolve_group", instance_id=instance_id)
+    instance = _manager.get(instance_id)
+
+    result = service_resolve_group(
+        instance,
+        group_id,
+        action,
+        rationale=rationale,
+        resolved_by=resolved_by,
+    )
+    return contracts.ResolveGroupToolResult(
+        group_id=result.group_id,
+        action=result.action,
+        edges_created=result.edges_created,
+        edges_skipped=result.edges_skipped,
+    )
+
+
+def handle_update_trust_status(
+    instance_id: str,
+    resolution_id: str,
+    trust_status: contracts.GroupTrustStatus,
+    reason: str = "",
+) -> contracts.UpdateTrustStatusToolResult:
+    """Update trust status on a resolution."""
+    check_permission("cruxible_update_trust_status", instance_id=instance_id)
+    instance = _manager.get(instance_id)
+
+    service_update_trust_status(instance, resolution_id, trust_status, reason=reason)
+    return contracts.UpdateTrustStatusToolResult(
+        resolution_id=resolution_id,
+        trust_status=trust_status,
     )

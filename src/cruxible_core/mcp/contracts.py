@@ -19,6 +19,11 @@ FeedbackSource = Literal["human", "ai_review", "system"]
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
 CandidateStrategy = Literal["property_match", "shared_neighbors"]
+GroupAction = Literal["approve", "reject"]
+GroupResolvedBy = Literal["human", "ai_review"]
+GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
+GroupProposedBy = Literal["human", "ai_review"]
+GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -36,6 +41,22 @@ class RelationshipInput(BaseModel):
 class EntityInput(BaseModel):
     entity_type: str
     entity_id: str
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class SignalInput(BaseModel):
+    integration: str
+    signal: Literal["support", "contradict", "unsure"]
+    evidence: str = ""
+
+
+class MemberInput(BaseModel):
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    relationship_type: str
+    signals: list[SignalInput] = Field(default_factory=list)
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -139,3 +160,39 @@ class GetRelationshipResult(BaseModel):
     to_id: str
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProposeGroupToolResult(BaseModel):
+    group_id: str
+    signature: str
+    status: str
+    review_priority: str
+    member_count: int
+    prior_resolution: dict[str, Any] | None = None
+
+
+class ResolveGroupToolResult(BaseModel):
+    group_id: str
+    action: str
+    edges_created: int
+    edges_skipped: int
+
+
+class UpdateTrustStatusToolResult(BaseModel):
+    resolution_id: str
+    trust_status: str
+
+
+class GetGroupToolResult(BaseModel):
+    group: dict[str, Any]
+    members: list[dict[str, Any]]
+
+
+class ListGroupsToolResult(BaseModel):
+    groups: list[dict[str, Any]]
+    total: int
+
+
+class ListResolutionsToolResult(BaseModel):
+    resolutions: list[dict[str, Any]]
+    total: int
