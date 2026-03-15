@@ -396,11 +396,13 @@ def service_feedback(
     target: EdgeTarget,
     reason: str = "",
     corrections: dict[str, Any] | None = None,
+    group_override: bool = False,
 ) -> FeedbackServiceResult:
     """Record feedback on an edge.
 
     Validates corrections, checks receipt existence, persists feedback,
-    and applies to the graph.
+    and applies to the graph. If group_override=True, stamps the edge
+    with group_override property after applying feedback.
     """
     _VALID_ACTIONS = ("approve", "reject", "correct", "flag")
     if action not in _VALID_ACTIONS:
@@ -427,6 +429,38 @@ def service_feedback(
         corrections = {k: v for k, v in corrections.items() if k != "_provenance"}
 
     graph = instance.load_graph()
+
+    # Preflight check for group_override
+    if group_override:
+        # Verify edge exists
+        rel = graph.get_relationship(
+            target.from_type,
+            target.from_id,
+            target.to_type,
+            target.to_id,
+            target.relationship,
+            edge_key=target.edge_key,
+        )
+        if rel is None:
+            raise ConfigError("group_override requires the edge to exist in the graph")
+        # Check edge ambiguity
+        if target.edge_key is None:
+            count = graph.relationship_count_between(
+                target.from_type,
+                target.from_id,
+                target.to_type,
+                target.to_id,
+                target.relationship,
+            )
+            if count > 1:
+                raise EdgeAmbiguityError(
+                    from_type=target.from_type,
+                    from_id=target.from_id,
+                    to_type=target.to_type,
+                    to_id=target.to_id,
+                    relationship=target.relationship,
+                )
+
     receipt_store = instance.get_receipt_store()
 
     try:
@@ -451,6 +485,19 @@ def service_feedback(
         feedback_store.close()
 
     applied = apply_feedback(graph, record)
+
+    # Stamp group_override on the edge after applying feedback
+    if group_override:
+        graph.update_edge_properties(
+            target.from_type,
+            target.from_id,
+            target.to_type,
+            target.to_id,
+            target.relationship,
+            {"group_override": True},
+            edge_key=target.edge_key,
+        )
+
     instance.save_graph(graph)
 
     return FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied)
