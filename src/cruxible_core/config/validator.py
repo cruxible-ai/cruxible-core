@@ -25,6 +25,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_constraints(config, warnings)
     _validate_ingestion(config, errors)
     _validate_primary_keys(config, errors)
+    _validate_matching_integrations(config, errors)
 
     if errors:
         raise ConfigError(
@@ -112,6 +113,24 @@ def _validate_ingestion(config: CoreConfig, errors: list[str]) -> None:
                 errors.append(
                     f"Ingestion mapping '{mapping_name}': relationship_type "
                     f"'{mapping.relationship_type}' not defined in relationships"
+                )
+
+
+def _validate_matching_integrations(config: CoreConfig, errors: list[str]) -> None:
+    """Strict mixed mode: non-empty global registry requires all matching keys to resolve."""
+    registry = config.integrations
+    if not registry:
+        return  # Empty registry = open mode, bare labels allowed
+
+    for rel in config.relationships:
+        if rel.matching is None:
+            continue
+        for key in rel.matching.integrations:
+            if key not in registry:
+                errors.append(
+                    f"Integration '{key}' in matching.integrations for "
+                    f"relationship '{rel.name}' not found in global "
+                    f"integrations registry"
                 )
 
 

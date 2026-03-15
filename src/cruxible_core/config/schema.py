@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import json as _json
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
@@ -60,6 +62,54 @@ class EntityTypeSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Integration & Matching Config (for candidate group resolve)
+# ---------------------------------------------------------------------------
+
+
+class IntegrationSpec(BaseModel):
+    """Global integration definition. Identity + stable contract.
+
+    Integration specs are immutable by convention: any semantic change
+    (different model, different fields, different metric) requires a new key
+    (e.g. cosine_similarity_v2). Not enforced at runtime in v0.2.0.
+    """
+
+    kind: str
+    contract: dict[str, Any] = Field(default_factory=dict)
+    notes: str = ""
+
+    @field_validator("contract")
+    @classmethod
+    def validate_contract_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Ensure contract is JSON-serializable."""
+        try:
+            _json.dumps(v, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            msg = f"contract must be JSON-serializable: {exc}"
+            raise ValueError(msg) from exc
+        return v
+
+
+class IntegrationConfig(BaseModel):
+    """Per-integration guardrails for candidate group proposals."""
+
+    role: Literal["blocking", "required", "advisory"] = "required"
+    always_review_on_unsure: bool = False
+    note: str = ""
+
+
+class MatchingConfig(BaseModel):
+    """Guardrails for candidate group proposals on a relationship type."""
+
+    integrations: dict[str, IntegrationConfig] = Field(default_factory=dict)
+    auto_resolve_when: Literal["all_support", "no_contradict"] = "all_support"
+    auto_resolve_requires_prior_trust: Literal["trusted_only", "trusted_or_watch"] = (
+        "trusted_only"
+    )
+    max_group_size: int = 1000
+
+
+# ---------------------------------------------------------------------------
 # Relationship Schema
 # ---------------------------------------------------------------------------
 
@@ -75,6 +125,7 @@ class RelationshipSchema(BaseModel):
     description: str | None = None
     inverse: str | None = None
     is_hierarchy: bool = False
+    matching: MatchingConfig | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -225,6 +276,7 @@ class CoreConfig(BaseModel):
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
     ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
+    integrations: dict[str, IntegrationSpec] = Field(default_factory=dict)
 
     def get_relationship(self, name: str) -> RelationshipSchema | None:
         """Find a relationship schema by name."""
