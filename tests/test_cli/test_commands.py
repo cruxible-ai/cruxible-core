@@ -1610,3 +1610,332 @@ class TestE2EGate:
             ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# group commands
+# ---------------------------------------------------------------------------
+
+GROUP_CONFIG_YAML = """\
+version: "1.0"
+name: group_cli_test
+description: For CLI group tests
+
+integrations:
+  check_v1:
+    kind: generic
+    contract: {}
+
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes, suspension, engine, electrical, body, interior]
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+    matching:
+      integrations:
+        check_v1:
+          role: required
+
+constraints: []
+ingestion: {}
+"""
+
+
+@pytest.fixture
+def group_instance(tmp_path: Path) -> CruxibleInstance:
+    """Instance with matching config and seeded entities for group tests."""
+    (tmp_path / "config.yaml").write_text(GROUP_CONFIG_YAML)
+    inst = CruxibleInstance.init(tmp_path, "config.yaml")
+    from cruxible_core.graph.types import EntityInstance
+
+    graph = inst.load_graph()
+    for pid in ("BP-1", "BP-2"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id=pid,
+                properties={"part_number": pid, "name": f"Part {pid}", "category": "brakes"},
+            )
+        )
+    for vid in ("V-1", "V-2"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id=vid,
+                properties={
+                    "vehicle_id": vid,
+                    "year": 2024,
+                    "make": "Honda",
+                    "model": "Civic",
+                },
+            )
+        )
+    inst.save_graph(graph)
+    return inst
+
+
+def _members_json(from_id: str = "BP-1", to_id: str = "V-1") -> str:
+    return json.dumps(
+        [
+            {
+                "from_type": "Part",
+                "from_id": from_id,
+                "to_type": "Vehicle",
+                "to_id": to_id,
+                "relationship_type": "fits",
+                "signals": [{"integration": "check_v1", "signal": "support"}],
+            }
+        ]
+    )
+
+
+class TestGroupProposeCLI:
+    def test_propose_inline(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members",
+                _members_json(),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+        )
+        assert result.exit_code == 0
+        assert "GRP-" in result.output
+        assert "proposed" in result.output
+
+    def test_propose_from_file(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        members_file = group_instance.root / "members.json"
+        members_file.write_text(_members_json())
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members-file",
+                str(members_file),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+        )
+        assert result.exit_code == 0
+        assert "proposed" in result.output
+
+
+class TestGroupResolveCLI:
+    def test_approve(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        # Propose
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members",
+                _members_json(),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+        )
+        group_id = _extract_group_id(result.output)
+
+        # Resolve
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "resolve", "--group", group_id, "--action", "approve"],
+        )
+        assert result.exit_code == 0
+        assert "approved" in result.output.lower()
+        assert "Edges created: 1" in result.output
+
+
+class TestGroupTrustCLI:
+    def test_update_trust(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        # Propose + approve
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members",
+                _members_json(),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+        )
+        group_id = _extract_group_id(result.output)
+        _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "resolve", "--group", group_id, "--action", "approve"],
+        )
+
+        # Get resolution_id
+        store = group_instance.get_group_store()
+        try:
+            group = store.get_group(group_id)
+            res_id = group.resolution_id
+        finally:
+            store.close()
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "trust", "--resolution", res_id, "--status", "trusted", "--reason", "ok"],
+        )
+        assert result.exit_code == 0
+        assert "trusted" in result.output
+
+
+class TestGroupGetCLI:
+    def test_get(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members",
+                _members_json(),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+        )
+        group_id = _extract_group_id(result.output)
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "get", "--group", group_id],
+        )
+        assert result.exit_code == 0
+        assert group_id in result.output
+
+
+class TestGroupListCLI:
+    def test_list(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members",
+                _members_json(),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+        )
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "list"],
+        )
+        assert result.exit_code == 0
+        assert "1 of 1" in result.output
+
+
+class TestGroupResolutionsCLI:
+    def test_resolutions(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members",
+                _members_json(),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+        )
+        group_id = _extract_group_id(result.output)
+        _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "resolve", "--group", group_id, "--action", "approve"],
+        )
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "resolutions"],
+        )
+        assert result.exit_code == 0
+        assert "1 of 1" in result.output
+
+
+class TestGroupHelpCLI:
+    def test_group_help(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["group", "--help"])
+        assert result.exit_code == 0
+        assert "propose" in result.output
+        assert "resolve" in result.output
+        assert "trust" in result.output
+        assert "get" in result.output
+        assert "list" in result.output
+        assert "resolutions" in result.output
+
+
+class TestFeedbackGroupOverrideCLI:
+    def test_feedback_group_override_flag(self, runner: CliRunner) -> None:
+        """--group-override flag appears in help."""
+        result = runner.invoke(cli, ["feedback", "--help"])
+        assert result.exit_code == 0
+        assert "--group-override" in result.output
+
+
+def _extract_group_id(output: str) -> str:
+    """Extract GRP-xxx from CLI output."""
+    for line in output.splitlines():
+        if "GRP-" in line:
+            for word in line.split():
+                if word.startswith("GRP-"):
+                    return word.rstrip(".")
+    raise ValueError(f"No group ID found in output: {output}")

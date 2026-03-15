@@ -17,9 +17,12 @@ from cruxible_core.cli.formatting import (
     edges_table,
     entities_table,
     feedback_table,
+    group_detail_table,
+    groups_table,
     outcomes_table,
     receipts_table,
     relationship_table,
+    resolutions_table,
     schema_table,
 )
 from cruxible_core.cli.instance import CruxibleInstance
@@ -30,6 +33,7 @@ from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget
 from cruxible_core.graph.types import REJECTED_STATUSES
+from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.mcp import contracts
 from cruxible_core.query.candidates import MatchRule
 from cruxible_core.receipt import serializer
@@ -42,15 +46,21 @@ from cruxible_core.service import (
     service_feedback,
     service_find_candidates,
     service_get_entity,
+    service_get_group,
     service_get_receipt,
     service_get_relationship,
     service_ingest,
     service_init,
     service_list,
+    service_list_groups,
+    service_list_resolutions,
     service_outcome,
+    service_propose_group,
     service_query,
+    service_resolve_group,
     service_sample,
     service_schema,
+    service_update_trust_status,
     service_validate,
 )
 
@@ -206,6 +216,12 @@ def explain(receipt_id: str, fmt: str) -> None:
     default="human",
     help="Who produced this feedback (default: human).",
 )
+@click.option(
+    "--group-override",
+    is_flag=True,
+    default=False,
+    help="Stamp edge with group_override property (edge must exist).",
+)
 @handle_errors
 def feedback_cmd(
     receipt_id: str,
@@ -219,6 +235,7 @@ def feedback_cmd(
     reason: str,
     corrections: str | None,
     source: str,
+    group_override: bool,
 ) -> None:
     """Submit feedback on a specific edge from a query result."""
     try:
@@ -246,6 +263,7 @@ def feedback_cmd(
         target=target,
         reason=reason,
         corrections=corrections_dict,
+        group_override=group_override,
     )
 
     if result.applied:
@@ -805,6 +823,217 @@ def prompt_read(prompt_name: str, arg: tuple[str, ...]) -> None:
 
     content = fn(**args_dict)
     click.echo(content)
+
+
+# ---------------------------------------------------------------------------
+# group (subgroup)
+# ---------------------------------------------------------------------------
+
+
+@click.group("group")
+def group_group() -> None:
+    """Manage candidate groups for batch edge review."""
+
+
+@group_group.command("propose")
+@click.option("--relationship", required=True, help="Relationship type for the group.")
+@click.option(
+    "--members-file",
+    type=click.Path(exists=True),
+    default=None,
+    help="JSON file with member list.",
+)
+@click.option("--members", "members_json", default=None, help="Inline JSON array of members.")
+@click.option("--thesis", default="", help="Human-readable thesis text.")
+@click.option("--thesis-facts", default=None, help="JSON object of structured thesis facts.")
+@click.option("--analysis-state", default=None, help="JSON object of opaque analysis state.")
+@click.option("--integration", multiple=True, help="Integration name used in this proposal.")
+@handle_errors
+def group_propose(
+    relationship: str,
+    members_file: str | None,
+    members_json: str | None,
+    thesis: str,
+    thesis_facts: str | None,
+    analysis_state: str | None,
+    integration: tuple[str, ...],
+) -> None:
+    """Propose a candidate group of edges for batch review."""
+    if members_file and members_json:
+        raise click.BadParameter("Provide --members-file or --members, not both.")
+    if not members_file and not members_json:
+        raise click.BadParameter("Provide --members-file or --members.")
+
+    try:
+        if members_file:
+            raw_members = json.loads(Path(members_file).read_text())
+        else:
+            raw_members = json.loads(members_json)  # type: ignore[arg-type]
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter(f"Members must be valid JSON: {exc}") from exc
+
+    if not isinstance(raw_members, list):
+        raise click.BadParameter("Members must be a JSON array.")
+
+    domain_members = [
+        CandidateMember(
+            from_type=m["from_type"],
+            from_id=m["from_id"],
+            to_type=m["to_type"],
+            to_id=m["to_id"],
+            relationship_type=m["relationship_type"],
+            signals=[
+                CandidateSignal(
+                    integration=s["integration"],
+                    signal=s["signal"],
+                    evidence=s.get("evidence", ""),
+                )
+                for s in m.get("signals", [])
+            ],
+            properties=m.get("properties", {}),
+        )
+        for m in raw_members
+    ]
+
+    try:
+        facts = json.loads(thesis_facts) if thesis_facts else None
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--thesis-facts must be valid JSON") from exc
+
+    try:
+        state = json.loads(analysis_state) if analysis_state else None
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--analysis-state must be valid JSON") from exc
+
+    instance = CruxibleInstance.load()
+    result = service_propose_group(
+        instance,
+        relationship,
+        domain_members,
+        thesis_text=thesis,
+        thesis_facts=facts,
+        analysis_state=state,
+        integrations_used=list(integration) if integration else None,
+    )
+
+    click.echo(f"Group {result.group_id} proposed.")
+    click.echo(f"  Status: {result.status}")
+    click.echo(f"  Priority: {result.review_priority}")
+    click.echo(f"  Members: {result.member_count}")
+    click.echo(f"  Signature: {result.signature[:16]}...")
+
+
+@group_group.command("resolve")
+@click.option("--group", "group_id", required=True, help="Group ID to resolve.")
+@click.option(
+    "--action",
+    required=True,
+    type=click.Choice(["approve", "reject"]),
+    help="Resolution action.",
+)
+@click.option("--rationale", default="", help="Rationale for this resolution.")
+@click.option(
+    "--source",
+    type=click.Choice(["human", "ai_review"]),
+    default="human",
+    help="Who resolved (default: human).",
+)
+@handle_errors
+def group_resolve(group_id: str, action: str, rationale: str, source: str) -> None:
+    """Resolve a candidate group (approve or reject)."""
+    instance = CruxibleInstance.load()
+    result = service_resolve_group(
+        instance,
+        group_id,
+        action,  # type: ignore[arg-type]
+        rationale=rationale,
+        resolved_by=source,  # type: ignore[arg-type]
+    )
+
+    click.echo(f"Group {result.group_id} {result.action}d.")
+    if result.action == "approve":
+        click.echo(f"  Edges created: {result.edges_created}")
+        if result.edges_skipped:
+            click.echo(f"  Edges skipped: {result.edges_skipped}")
+
+
+@group_group.command("trust")
+@click.option("--resolution", "resolution_id", required=True, help="Resolution ID.")
+@click.option(
+    "--status",
+    "trust_status",
+    required=True,
+    type=click.Choice(["watch", "trusted", "invalidated"]),
+    help="Trust status to set.",
+)
+@click.option("--reason", default="", help="Reason for trust status change.")
+@handle_errors
+def group_trust(resolution_id: str, trust_status: str, reason: str) -> None:
+    """Update trust status on a resolution."""
+    instance = CruxibleInstance.load()
+    service_update_trust_status(
+        instance,
+        resolution_id,
+        trust_status,  # type: ignore[arg-type]
+        reason=reason,
+    )
+    click.echo(f"Resolution {resolution_id} trust status set to '{trust_status}'.")
+
+
+@group_group.command("get")
+@click.option("--group", "group_id", required=True, help="Group ID.")
+@handle_errors
+def group_get(group_id: str) -> None:
+    """Get details of a candidate group."""
+    instance = CruxibleInstance.load()
+    result = service_get_group(instance, group_id)
+    console.print(group_detail_table(result.group, result.members))
+
+
+@group_group.command("list")
+@click.option("--relationship", default=None, help="Filter by relationship type.")
+@click.option(
+    "--status",
+    default=None,
+    type=click.Choice(["pending_review", "auto_resolved", "applying", "resolved"]),
+    help="Filter by status.",
+)
+@click.option("--limit", default=50, help="Max groups to show.")
+@handle_errors
+def group_list(relationship: str | None, status: str | None, limit: int) -> None:
+    """List candidate groups."""
+    instance = CruxibleInstance.load()
+    result = service_list_groups(
+        instance,
+        relationship_type=relationship,
+        status=status,
+        limit=limit,
+    )
+    console.print(groups_table(result.groups))
+    click.echo(f"{len(result.groups)} of {result.total} group(s) shown.")
+
+
+@group_group.command("resolutions")
+@click.option("--relationship", default=None, help="Filter by relationship type.")
+@click.option(
+    "--action",
+    default=None,
+    type=click.Choice(["approve", "reject"]),
+    help="Filter by action.",
+)
+@click.option("--limit", default=50, help="Max resolutions to show.")
+@handle_errors
+def group_resolutions(relationship: str | None, action: str | None, limit: int) -> None:
+    """List group resolutions."""
+    instance = CruxibleInstance.load()
+    result = service_list_resolutions(
+        instance,
+        relationship_type=relationship,
+        action=action,
+        limit=limit,
+    )
+    console.print(resolutions_table(result.resolutions))
+    click.echo(f"{len(result.resolutions)} of {result.total} resolution(s) shown.")
 
 
 # ---------------------------------------------------------------------------

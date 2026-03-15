@@ -9,6 +9,7 @@ from rich.table import Table
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.query.candidates import CandidateMatch
 
 
@@ -144,6 +145,79 @@ def edges_table(edges: list[dict[str, Any]]) -> Table:
             e.get("relationship_type", ""),
             str(e.get("edge_key", "")),
             props_str,
+        )
+
+    return table
+
+
+def groups_table(groups: list[CandidateGroup]) -> Table:
+    """Build a Rich table for a list of candidate groups."""
+    table = Table(title="Candidate Groups")
+    table.add_column("Group ID", style="cyan")
+    table.add_column("Relationship")
+    table.add_column("Status")
+    table.add_column("Priority")
+    table.add_column("Members", justify="right")
+    table.add_column("Thesis")
+
+    for g in groups:
+        table.add_row(
+            g.group_id,
+            g.relationship_type,
+            g.status,
+            g.review_priority,
+            str(g.member_count),
+            g.thesis_text[:50] if g.thesis_text else "",
+        )
+
+    return table
+
+
+def group_detail_table(group: CandidateGroup, members: list[CandidateMember]) -> Table:
+    """Build a Rich table showing group details and members."""
+    table = Table(title=f"Group {group.group_id}")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("Group ID", group.group_id)
+    table.add_row("Relationship", group.relationship_type)
+    table.add_row("Status", group.status)
+    table.add_row("Priority", group.review_priority)
+    table.add_row("Signature", group.signature[:16] + "...")
+    table.add_row("Members", str(group.member_count))
+    if group.thesis_text:
+        table.add_row("Thesis", group.thesis_text)
+    if group.resolution:
+        res = group.resolution
+        table.add_row("Resolution", res.get("action", ""))
+        table.add_row("Trust Status", res.get("trust_status", ""))
+
+    for m in members:
+        edge = f"{m.from_type}:{m.from_id} → {m.to_type}:{m.to_id}"
+        signals_str = ", ".join(f"{s.integration}={s.signal}" for s in m.signals)
+        table.add_row("  Member", f"{edge}  [{signals_str}]")
+
+    return table
+
+
+def resolutions_table(resolutions: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for group resolutions."""
+    table = Table(title="Group Resolutions")
+    table.add_column("Resolution ID", style="cyan")
+    table.add_column("Relationship")
+    table.add_column("Action")
+    table.add_column("Trust Status")
+    table.add_column("Resolved By")
+    table.add_column("Resolved At")
+
+    for r in resolutions:
+        table.add_row(
+            r.get("resolution_id", ""),
+            r.get("relationship_type", ""),
+            r.get("action", ""),
+            r.get("trust_status", ""),
+            r.get("resolved_by", ""),
+            r.get("resolved_at", ""),
         )
 
     return table
