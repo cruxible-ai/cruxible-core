@@ -23,6 +23,7 @@ from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
     EdgeAmbiguityError,
+    GroupNotFoundError,
     ReceiptNotFoundError,
 )
 from cruxible_core.evaluate import EvaluationReport, evaluate_graph
@@ -1070,3 +1071,179 @@ def _check_auto_resolve_signals(
                     return False
 
     return True
+
+
+def service_resolve_group(
+    instance: InstanceProtocol,
+    group_id: str,
+    action: Literal["approve", "reject"],
+    rationale: str = "",
+    resolved_by: Literal["human", "ai_review"] = "human",
+) -> ResolveGroupResult:
+    """Resolve a candidate group — approve creates edges, reject records decision."""
+    # 1. Validate inputs
+    _VALID_ACTIONS = ("approve", "reject")
+    if action not in _VALID_ACTIONS:
+        raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
+    _VALID_SOURCES = ("human", "ai_review")
+    if resolved_by not in _VALID_SOURCES:
+        raise ConfigError(f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_SOURCES)}")
+
+    group_store = instance.get_group_store()
+    try:
+        # 2. Load group
+        group = group_store.get_group(group_id)
+        if group is None:
+            raise GroupNotFoundError(group_id)
+
+        # 3. Status guard
+        if group.status == "resolved":
+            raise ConfigError("Group already resolved")
+        if group.status == "applying" and action != "approve":
+            raise ConfigError("Group is in applying state from a prior approve — cannot reject")
+
+        is_retry = group.status == "applying"
+
+        # 4. Load members
+        members = group_store.get_members(group_id)
+
+        # 6. Reject path — no graph mutation
+        if action == "reject":
+            with group_store.transaction():
+                res_id = group_store.save_resolution(
+                    group.relationship_type,
+                    group.signature,
+                    "reject",
+                    rationale,
+                    group.thesis_text,
+                    group.thesis_facts,
+                    group.analysis_state,
+                    resolved_by,
+                    trust_status="watch",
+                    confirmed=True,
+                )
+                group_store.update_group_status(group_id, "resolved", resolution_id=res_id)
+            return ResolveGroupResult(
+                group_id=group_id, action="reject", edges_created=0, edges_skipped=0
+            )
+
+        # 5. Approve — per-member validation
+        instance.invalidate_graph_cache()
+        config = instance.load_config()
+        graph = instance.load_graph()
+
+        valid_inputs: list[RelationshipUpsertInput] = []
+        edges_skipped = 0
+
+        for m in members:
+            # 5a. Count-based existence check
+            count = graph.relationship_count_between(
+                m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type
+            )
+            if count > 0:
+                edges_skipped += 1
+                continue
+
+            # 5b. Validate
+            try:
+                validate_relationship(
+                    config,
+                    graph,
+                    m.from_type,
+                    m.from_id,
+                    m.relationship_type,
+                    m.to_type,
+                    m.to_id,
+                    m.properties,
+                )
+            except DataValidationError:
+                edges_skipped += 1
+                continue
+
+            # 5c. Valid — add to batch
+            valid_inputs.append(
+                RelationshipUpsertInput(
+                    from_type=m.from_type,
+                    from_id=m.from_id,
+                    relationship=m.relationship_type,
+                    to_type=m.to_type,
+                    to_id=m.to_id,
+                    properties=m.properties,
+                )
+            )
+
+        # 7. Approve — store-first, then graph
+        resolution_id: str
+        if not is_retry:
+            # 7a. First attempt: create resolution
+            if not valid_inputs:
+                raise ConfigError("Cannot approve: no creatable edges (all members skipped)")
+
+            # Inherit trust from prior confirmed approval
+            prior = group_store.find_resolution(
+                group.relationship_type,
+                group.signature,
+                action="approve",
+                confirmed=True,
+            )
+            inherited_trust = "watch"
+            if prior is not None:
+                prior_trust = prior.get("trust_status", "watch")
+                if prior_trust in ("trusted", "watch"):
+                    inherited_trust = prior_trust
+
+            with group_store.transaction():
+                resolution_id = group_store.save_resolution(
+                    group.relationship_type,
+                    group.signature,
+                    "approve",
+                    rationale,
+                    group.thesis_text,
+                    group.thesis_facts,
+                    group.analysis_state,
+                    resolved_by,
+                    trust_status=inherited_trust,
+                    confirmed=False,
+                )
+                group_store.update_group_status(group_id, "applying", resolution_id=resolution_id)
+        else:
+            # 7b. Retry path: reuse existing resolution_id
+            resolution_id = group.resolution_id  # type: ignore[assignment]
+
+        # 7c. Graph write
+        edges_created = 0
+        if valid_inputs:
+            result = service_add_relationships(
+                instance,
+                valid_inputs,
+                source="group_resolve",
+                source_ref=f"group:{group_id}",
+            )
+            edges_created = result.added
+
+        # 7d. Confirm + transition to resolved
+        # Revalidate inherited trust
+        prior = group_store.find_resolution(
+            group.relationship_type,
+            group.signature,
+            action="approve",
+            confirmed=True,
+        )
+        revalidated_trust: str | None = None
+        if prior is not None:
+            prior_trust = prior.get("trust_status", "watch")
+            if prior_trust == "invalidated":
+                revalidated_trust = "watch"
+
+        with group_store.transaction():
+            group_store.confirm_resolution(resolution_id, trust_status=revalidated_trust)
+            group_store.update_group_status(group_id, "resolved")
+
+        return ResolveGroupResult(
+            group_id=group_id,
+            action="approve",
+            edges_created=edges_created,
+            edges_skipped=edges_skipped,
+        )
+    finally:
+        group_store.close()
