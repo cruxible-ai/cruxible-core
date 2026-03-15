@@ -1316,3 +1316,52 @@ def service_list_resolutions(
         return ListResolutionsResult(resolutions=resolutions, total=total)
     finally:
         group_store.close()
+
+
+def service_update_trust_status(
+    instance: InstanceProtocol,
+    resolution_id: str,
+    trust_status: Literal["trusted", "watch", "invalidated"],
+    reason: str = "",
+) -> None:
+    """Update trust_status on a confirmed approved resolution (thesis-scoped)."""
+    _VALID = ("trusted", "watch", "invalidated")
+    if trust_status not in _VALID:
+        raise ConfigError(f"Invalid trust_status '{trust_status}'. Use: {', '.join(_VALID)}")
+
+    group_store = instance.get_group_store()
+    try:
+        # 1. Load resolution
+        res = group_store.get_resolution(resolution_id)
+        if res is None:
+            raise ConfigError(f"Resolution '{resolution_id}' not found")
+
+        # 2. Approved-only guard
+        if res["action"] != "approve":
+            raise ConfigError("Trust status can only be set on approved resolutions")
+
+        # 3. Confirmed guard
+        if not res["confirmed"]:
+            raise ConfigError(
+                "Trust status can only be set on confirmed resolutions (group must be resolved)"
+            )
+
+        # 4. Latest-approval guard
+        latest = group_store.find_resolution(
+            res["relationship_type"],
+            res["group_signature"],
+            action="approve",
+            confirmed=True,
+        )
+        if latest is None or latest["resolution_id"] != resolution_id:
+            latest_id = latest["resolution_id"] if latest else "none"
+            raise ConfigError(
+                "Can only update trust on the latest confirmed approval "
+                f"for this signature. Latest: {latest_id}"
+            )
+
+        # 5. Update
+        with group_store.transaction():
+            group_store.update_resolution_trust_status(resolution_id, trust_status, reason)
+    finally:
+        group_store.close()
