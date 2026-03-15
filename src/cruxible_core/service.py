@@ -1247,3 +1247,72 @@ def service_resolve_group(
         )
     finally:
         group_store.close()
+
+
+def service_get_group(
+    instance: InstanceProtocol,
+    group_id: str,
+) -> GetGroupResult:
+    """Load a candidate group with its members and resolution details."""
+    group_store = instance.get_group_store()
+    try:
+        group = group_store.get_group(group_id)
+        if group is None:
+            raise GroupNotFoundError(group_id)
+        members = group_store.get_members(group_id)
+        # Populate transient resolution dict
+        if group.resolution_id is not None:
+            group.resolution = group_store.get_resolution(group.resolution_id)
+        return GetGroupResult(group=group, members=members)
+    finally:
+        group_store.close()
+
+
+def service_list_groups(
+    instance: InstanceProtocol,
+    relationship_type: str | None = None,
+    status: (Literal["pending_review", "auto_resolved", "applying", "resolved"] | None) = None,
+    limit: int = 50,
+) -> ListGroupsResult:
+    """List candidate groups with optional filters, sorted by review_priority."""
+    _VALID_STATUSES = ("pending_review", "auto_resolved", "applying", "resolved")
+    if status is not None and status not in _VALID_STATUSES:
+        raise ConfigError(f"Invalid status '{status}'. Use: {', '.join(_VALID_STATUSES)}")
+
+    group_store = instance.get_group_store()
+    try:
+        groups = group_store.list_groups(
+            relationship_type=relationship_type,
+            status=status,
+            limit=limit,
+        )
+        total = group_store.count_groups(
+            relationship_type=relationship_type,
+            status=status,
+        )
+        # Sort by review_priority descending (critical > review > normal)
+        priority_order = {"critical": 0, "review": 1, "normal": 2}
+        groups.sort(key=lambda g: priority_order.get(g.review_priority, 9))
+        return ListGroupsResult(groups=groups, total=total)
+    finally:
+        group_store.close()
+
+
+def service_list_resolutions(
+    instance: InstanceProtocol,
+    relationship_type: str | None = None,
+    action: Literal["approve", "reject"] | None = None,
+    limit: int = 50,
+) -> ListResolutionsResult:
+    """List resolutions — the reuse interface for agents querying prior analysis_state."""
+    group_store = instance.get_group_store()
+    try:
+        resolutions = group_store.list_resolutions(
+            relationship_type=relationship_type,
+            action=action,
+            limit=limit,
+        )
+        total = len(resolutions)
+        return ListResolutionsResult(resolutions=resolutions, total=total)
+    finally:
+        group_store.close()
