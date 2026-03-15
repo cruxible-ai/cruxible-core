@@ -197,6 +197,7 @@ def register_tools(server: FastMCP) -> list[str]:
         edge_key: int | None = None,
         reason: str = "",
         corrections: dict[str, Any] | None = None,
+        group_override: bool = False,
     ) -> contracts.FeedbackResult:
         """Record edge-level feedback tied to a receipt.
 
@@ -210,6 +211,10 @@ def register_tools(server: FastMCP) -> list[str]:
         Use `corrections` with `action="correct"` and set `edge_key` only
         when disambiguation is needed. `applied=False` means the record was
         saved but the graph edge was not updated.
+
+        Set `group_override=True` to stamp the edge with a group_override
+        property, marking it as pre-approved for group resolve. The edge
+        must already exist in the graph.
         """
         return handlers.handle_feedback(
             instance_id,
@@ -224,6 +229,7 @@ def register_tools(server: FastMCP) -> list[str]:
             edge_key,
             reason,
             corrections,
+            group_override,
         )
 
     @_tool
@@ -472,6 +478,62 @@ def register_tools(server: FastMCP) -> list[str]:
         """
         return handlers.handle_update_trust_status(
             instance_id, resolution_id, trust_status, reason=reason
+        )
+
+    @_tool
+    def cruxible_get_group(
+        instance_id: str,
+        group_id: str,
+    ) -> contracts.GetGroupToolResult:
+        """Get a candidate group by ID, including its members and resolution.
+
+        Returns the group metadata (thesis, status, review_priority) and
+        the full list of members with their signals. If the group has been
+        resolved, includes the resolution details (action, trust_status,
+        rationale).
+        """
+        return handlers.handle_get_group(instance_id, group_id)
+
+    @_tool
+    def cruxible_list_groups(
+        instance_id: str,
+        relationship_type: str | None = None,
+        status: contracts.GroupStatus | None = None,
+        limit: int = 50,
+    ) -> contracts.ListGroupsToolResult:
+        """List candidate groups with optional filters.
+
+        Results are sorted by review_priority descending (critical first).
+        Use ``status`` to filter by lifecycle state (pending_review,
+        auto_resolved, applying, resolved). Use ``relationship_type``
+        to filter by edge type.
+        """
+        return handlers.handle_list_groups(
+            instance_id,
+            relationship_type=relationship_type,
+            status=status,
+            limit=limit,
+        )
+
+    @_tool
+    def cruxible_list_resolutions(
+        instance_id: str,
+        relationship_type: str | None = None,
+        action: contracts.GroupAction | None = None,
+        limit: int = 50,
+    ) -> contracts.ListResolutionsToolResult:
+        """List group resolutions with optional filters.
+
+        Returns stored resolutions including analysis_state (for agent reuse),
+        thesis_facts, trust_status, and trust_reason. Use ``action`` to filter
+        by approve/reject. Use ``relationship_type`` to scope to a specific
+        edge type.
+        """
+        return handlers.handle_list_resolutions(
+            instance_id,
+            relationship_type=relationship_type,
+            action=action,
+            limit=limit,
         )
 
     @_tool

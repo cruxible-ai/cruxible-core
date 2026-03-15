@@ -39,11 +39,14 @@ from cruxible_core.service import (
     service_feedback,
     service_find_candidates,
     service_get_entity,
+    service_get_group,
     service_get_receipt,
     service_get_relationship,
     service_ingest,
     service_init,
     service_list,
+    service_list_groups,
+    service_list_resolutions,
     service_outcome,
     service_propose_group,
     service_query,
@@ -266,6 +269,7 @@ def handle_feedback(
     edge_key: int | None = None,
     reason: str = "",
     corrections: dict[str, Any] | None = None,
+    group_override: bool = False,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
     check_permission("cruxible_feedback", instance_id=instance_id)
@@ -287,6 +291,7 @@ def handle_feedback(
         target=target,
         reason=reason,
         corrections=corrections,
+        group_override=group_override,
     )
     return contracts.FeedbackResult(feedback_id=result.feedback_id, applied=result.applied)
 
@@ -691,4 +696,63 @@ def handle_update_trust_status(
     return contracts.UpdateTrustStatusToolResult(
         resolution_id=resolution_id,
         trust_status=trust_status,
+    )
+
+
+def handle_get_group(
+    instance_id: str,
+    group_id: str,
+) -> contracts.GetGroupToolResult:
+    """Get a candidate group with its members."""
+    check_permission("cruxible_get_group")
+    instance = _manager.get(instance_id)
+
+    result = service_get_group(instance, group_id)
+    return contracts.GetGroupToolResult(
+        group=result.group.model_dump(mode="json"),
+        members=[m.model_dump(mode="json") for m in result.members],
+    )
+
+
+def handle_list_groups(
+    instance_id: str,
+    relationship_type: str | None = None,
+    status: contracts.GroupStatus | None = None,
+    limit: int = 50,
+) -> contracts.ListGroupsToolResult:
+    """List candidate groups with optional filters."""
+    check_permission("cruxible_list_groups")
+    instance = _manager.get(instance_id)
+
+    result = service_list_groups(
+        instance,
+        relationship_type=relationship_type,
+        status=status,
+        limit=limit,
+    )
+    return contracts.ListGroupsToolResult(
+        groups=[g.model_dump(mode="json") for g in result.groups],
+        total=result.total,
+    )
+
+
+def handle_list_resolutions(
+    instance_id: str,
+    relationship_type: str | None = None,
+    action: contracts.GroupAction | None = None,
+    limit: int = 50,
+) -> contracts.ListResolutionsToolResult:
+    """List group resolutions with optional filters."""
+    check_permission("cruxible_list_resolutions")
+    instance = _manager.get(instance_id)
+
+    result = service_list_resolutions(
+        instance,
+        relationship_type=relationship_type,
+        action=action,
+        limit=limit,
+    )
+    return contracts.ListResolutionsToolResult(
+        resolutions=result.resolutions,
+        total=result.total,
     )

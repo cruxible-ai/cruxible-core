@@ -66,6 +66,15 @@ relationships:
       auto_resolve_when: all_support
       auto_resolve_requires_prior_trust: trusted_only
 
+named_queries:
+  parts_for_vehicle:
+    description: Find parts for vehicle
+    entry_point: Vehicle
+    traversal:
+      - relationship: fits
+        direction: incoming
+    returns: "list[Part]"
+
 constraints: []
 ingestion: {}
 """
@@ -381,3 +390,277 @@ class TestGroupPermissions:
             },
         )
         assert "GRAPH_WRITE" in error
+
+
+class TestGetGroup:
+    def test_get_group_returns_members(self, server, instance_id):
+        pr = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1"), _member("BP-2", "V-2")],
+                "thesis_text": "brake pads",
+                "thesis_facts": {"k": "v"},
+            },
+        )
+        result = call_tool(
+            server,
+            "cruxible_get_group",
+            {"instance_id": instance_id, "group_id": pr["group_id"]},
+        )
+        assert result["group"]["group_id"] == pr["group_id"]
+        assert len(result["members"]) == 2
+        assert result["group"]["thesis_text"] == "brake pads"
+
+    def test_get_group_not_found(self, server, instance_id):
+        error = call_tool_expect_error(
+            server,
+            "cruxible_get_group",
+            {"instance_id": instance_id, "group_id": "GRP-nonexistent"},
+        )
+        assert "GRP-nonexistent" in error
+
+
+class TestListGroups:
+    def test_list_all(self, server, instance_id):
+        call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1")],
+                "thesis_facts": {"a": 1},
+            },
+        )
+        call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-2", "V-2")],
+                "thesis_facts": {"a": 2},
+            },
+        )
+        result = call_tool(
+            server,
+            "cruxible_list_groups",
+            {"instance_id": instance_id},
+        )
+        assert result["total"] == 2
+        assert len(result["groups"]) == 2
+
+    def test_filter_by_status(self, server, instance_id):
+        pr = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1")],
+                "thesis_facts": {"a": 1},
+            },
+        )
+        call_tool(
+            server,
+            "cruxible_resolve_group",
+            {
+                "instance_id": instance_id,
+                "group_id": pr["group_id"],
+                "action": "reject",
+            },
+        )
+        pending = call_tool(
+            server,
+            "cruxible_list_groups",
+            {"instance_id": instance_id, "status": "pending_review"},
+        )
+        assert pending["total"] == 0
+        resolved = call_tool(
+            server,
+            "cruxible_list_groups",
+            {"instance_id": instance_id, "status": "resolved"},
+        )
+        assert resolved["total"] == 1
+
+
+class TestListResolutions:
+    def test_list_resolutions(self, server, instance_id):
+        pr = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1")],
+                "thesis_facts": {"k": "v"},
+                "analysis_state": {"centroid": [0.1]},
+            },
+        )
+        call_tool(
+            server,
+            "cruxible_resolve_group",
+            {
+                "instance_id": instance_id,
+                "group_id": pr["group_id"],
+                "action": "approve",
+                "rationale": "looks good",
+            },
+        )
+        result = call_tool(
+            server,
+            "cruxible_list_resolutions",
+            {"instance_id": instance_id},
+        )
+        assert result["total"] == 1
+        r = result["resolutions"][0]
+        assert r["analysis_state"] == {"centroid": [0.1]}
+        assert r["thesis_facts"] == {"k": "v"}
+        assert r["trust_status"] == "watch"
+
+    def test_filter_by_action(self, server, instance_id):
+        pr = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1")],
+                "thesis_facts": {"k": "v"},
+            },
+        )
+        call_tool(
+            server,
+            "cruxible_resolve_group",
+            {
+                "instance_id": instance_id,
+                "group_id": pr["group_id"],
+                "action": "reject",
+            },
+        )
+        approvals = call_tool(
+            server,
+            "cruxible_list_resolutions",
+            {"instance_id": instance_id, "action": "approve"},
+        )
+        assert approvals["total"] == 0
+        rejects = call_tool(
+            server,
+            "cruxible_list_resolutions",
+            {"instance_id": instance_id, "action": "reject"},
+        )
+        assert rejects["total"] == 1
+
+
+class TestReadPermissions:
+    def test_get_group_read_only(self, server, instance_id, monkeypatch):
+        """Read-only mode should allow get_group."""
+        pr = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member()],
+                "thesis_facts": {"k": "v"},
+            },
+        )
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+        result = call_tool(
+            server,
+            "cruxible_get_group",
+            {"instance_id": instance_id, "group_id": pr["group_id"]},
+        )
+        assert result["group"]["group_id"] == pr["group_id"]
+
+    def test_list_groups_read_only(self, server, instance_id, monkeypatch):
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+        result = call_tool(
+            server,
+            "cruxible_list_groups",
+            {"instance_id": instance_id},
+        )
+        assert result["total"] == 0
+
+    def test_list_resolutions_read_only(self, server, instance_id, monkeypatch):
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+        result = call_tool(
+            server,
+            "cruxible_list_resolutions",
+            {"instance_id": instance_id},
+        )
+        assert result["total"] == 0
+
+
+class TestFeedbackGroupOverride:
+    def test_feedback_with_group_override(self, server, instance_id):
+        """group_override=True via MCP stamps edge property."""
+        # Add edge first
+        call_tool(
+            server,
+            "cruxible_add_relationship",
+            {
+                "instance_id": instance_id,
+                "relationships": [
+                    {
+                        "from_type": "Part",
+                        "from_id": "BP-1",
+                        "relationship": "fits",
+                        "to_type": "Vehicle",
+                        "to_id": "V-1",
+                        "properties": {"verified": True},
+                    }
+                ],
+            },
+        )
+        # Query to get receipt
+        query_result = call_tool(
+            server,
+            "cruxible_query",
+            {
+                "instance_id": instance_id,
+                "query_name": "parts_for_vehicle",
+                "params": {"vehicle_id": "V-1"},
+            },
+        )
+        # Feedback with group_override needs a named query that returns the edge
+        # Use a simple config — the query filters on verified=true so BP-1→V-1 should appear
+        receipt_id = query_result["receipt_id"]
+        result = call_tool(
+            server,
+            "cruxible_feedback",
+            {
+                "instance_id": instance_id,
+                "receipt_id": receipt_id,
+                "action": "approve",
+                "source": "human",
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "relationship": "fits",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+                "group_override": True,
+            },
+        )
+        assert result["applied"] is True
+
+        # Verify the edge has group_override property
+        edge = call_tool(
+            server,
+            "cruxible_get_relationship",
+            {
+                "instance_id": instance_id,
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "relationship_type": "fits",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+            },
+        )
+        assert edge["properties"].get("group_override") is True

@@ -85,6 +85,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_find_candidates": PermissionMode.READ_ONLY,
     "cruxible_get_entity": PermissionMode.READ_ONLY,
     "cruxible_get_relationship": PermissionMode.READ_ONLY,
+    "cruxible_get_group": PermissionMode.READ_ONLY,
+    "cruxible_list_groups": PermissionMode.READ_ONLY,
+    "cruxible_list_resolutions": PermissionMode.READ_ONLY,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
     "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
