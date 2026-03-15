@@ -226,6 +226,14 @@ class InstanceNotFoundError(CoreError):
         super().__init__(f"Instance '{instance_id}' not found")
 
 
+class GroupNotFoundError(CoreError):
+    """Group ID not found in store."""
+
+    def __init__(self, group_id: str):
+        self.group_id = group_id
+        super().__init__(f"Group '{group_id}' not found")
+
+
 # ---------------------------------------------------------------------------
 # Permission errors
 # ---------------------------------------------------------------------------
