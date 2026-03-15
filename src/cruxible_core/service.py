@@ -8,14 +8,16 @@ permission checks, and protocol-specific concerns.
 from __future__ import annotations
 
 import json as _json
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import load_config, load_config_from_string
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import CoreConfig, MatchingConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import (
     ConfigError,
@@ -33,6 +35,8 @@ from cruxible_core.graph.operations import (
     validate_relationship,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.signature import compute_group_signature
+from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.ingest import ingest_file, ingest_from_mapping, load_data_from_string
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.candidates import CandidateMatch, MatchRule, find_candidates
@@ -767,3 +771,302 @@ def service_list(
     finally:
         feedback_store.close()
     return ListResult(items=outcome_records, total=total)
+
+
+# ---------------------------------------------------------------------------
+# Group Resolve
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProposeGroupResult:
+    group_id: str
+    signature: str
+    status: str
+    review_priority: str
+    member_count: int
+    prior_resolution: dict[str, Any] | None
+
+
+@dataclass
+class ResolveGroupResult:
+    group_id: str
+    action: str
+    edges_created: int
+    edges_skipped: int
+
+
+@dataclass
+class GetGroupResult:
+    group: CandidateGroup
+    members: list[CandidateMember]
+
+
+@dataclass
+class ListGroupsResult:
+    groups: list[CandidateGroup]
+    total: int
+
+
+@dataclass
+class ListResolutionsResult:
+    resolutions: list[dict[str, Any]]
+    total: int
+
+
+def derive_review_priority(
+    members: list[CandidateMember],
+    matching: MatchingConfig | None,
+    prior_resolution: dict[str, Any] | None,
+) -> str:
+    """Derive review_priority mechanically from universal states.
+
+    Returns: "critical", "review", or "normal".
+    Highest-severity bucket wins.
+    """
+    if matching is None:
+        # No matching config → default to review (first-time, no guardrails)
+        return "review" if prior_resolution is None else "normal"
+
+    has_critical = False
+    has_review = False
+
+    # Check prior resolution trust
+    if prior_resolution is not None:
+        if prior_resolution.get("trust_status") == "invalidated":
+            has_critical = True
+        elif prior_resolution.get("trust_status") == "watch":
+            has_review = True
+
+    # Check signals on members
+    for m in members:
+        for sig in m.signals:
+            icfg = matching.integrations.get(sig.integration)
+            if icfg is None:
+                continue
+            if icfg.role == "advisory":
+                continue  # Advisory signals ignored for priority
+
+            if sig.signal == "contradict" and icfg.role == "blocking":
+                has_critical = True
+            elif sig.signal == "unsure":
+                if icfg.always_review_on_unsure:
+                    has_review = True
+                if icfg.role in ("blocking", "required"):
+                    has_review = True
+
+    # No prior approved resolution → review
+    if prior_resolution is None:
+        has_review = True
+
+    if has_critical:
+        return "critical"
+    if has_review:
+        return "review"
+    return "normal"
+
+
+def service_propose_group(
+    instance: InstanceProtocol,
+    relationship_type: str,
+    members: list[CandidateMember],
+    thesis_text: str = "",
+    thesis_facts: dict[str, Any] | None = None,
+    analysis_state: dict[str, Any] | None = None,
+    integrations_used: list[str] | None = None,
+    proposed_by: Literal["human", "ai_review"] = "ai_review",
+    suggested_priority: str | None = None,
+) -> ProposeGroupResult:
+    """Propose a group of candidate edges for batch review/approval."""
+    config = instance.load_config()
+    thesis_facts = thesis_facts or {}
+    analysis_state = analysis_state or {}
+    integrations_used = integrations_used or []
+
+    # 1. Validate relationship_type
+    rel_schema = config.get_relationship(relationship_type)
+    if rel_schema is None:
+        raise ConfigError(f"Relationship type '{relationship_type}' not found in config")
+
+    # 2. Validate members not empty
+    if not members:
+        raise ConfigError("Members list must not be empty")
+
+    # 3. Validate each member
+    for m in members:
+        if m.relationship_type != relationship_type:
+            raise ConfigError(
+                f"Member {m.from_id}\u2192{m.to_id} has relationship_type "
+                f"'{m.relationship_type}' but group is for '{relationship_type}'"
+            )
+        if m.from_type != rel_schema.from_entity:
+            raise ConfigError(
+                f"Member {m.from_id} from_type '{m.from_type}' does not match "
+                f"relationship '{relationship_type}' which expects '{rel_schema.from_entity}'"
+            )
+        if m.to_type != rel_schema.to_entity:
+            raise ConfigError(
+                f"Member {m.to_id} to_type '{m.to_type}' does not match "
+                f"relationship '{relationship_type}' which expects '{rel_schema.to_entity}'"
+            )
+
+    # 4. thesis_facts serialization check
+    try:
+        _json.dumps(thesis_facts, sort_keys=True)
+    except TypeError as exc:
+        raise ConfigError(f"thesis_facts must be JSON-serializable: {exc}") from exc
+
+    # 5. Duplicate member check
+    seen_members: set[tuple[str, str, str, str, str]] = set()
+    for m in members:
+        key = (m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type)
+        if key in seen_members:
+            raise ConfigError(
+                f"Duplicate member: {m.from_type}:{m.from_id} \u2192 "
+                f"{m.to_type}:{m.to_id} via {m.relationship_type}"
+            )
+        seen_members.add(key)
+
+    matching = rel_schema.matching
+
+    # 6. Signal validation (all members)
+    for m in members:
+        seen_integrations: set[str] = set()
+        for sig in m.signals:
+            if sig.integration in seen_integrations:
+                raise ConfigError(
+                    f"Member {m.from_id}\u2192{m.to_id} has duplicate signals "
+                    f"from integration '{sig.integration}'"
+                )
+            seen_integrations.add(sig.integration)
+
+            if matching is not None and matching.integrations:
+                if sig.integration not in matching.integrations:
+                    declared = ", ".join(sorted(matching.integrations.keys()))
+                    raise ConfigError(
+                        f"Signal from undeclared integration '{sig.integration}'; "
+                        f"declared: {declared}"
+                    )
+
+    # 7. Config guardrails (if matching section exists)
+    if matching is not None and matching.integrations:
+        # Blocking + required integrations: every member must have a signal
+        for iname, icfg in matching.integrations.items():
+            if icfg.role in ("blocking", "required"):
+                for m in members:
+                    member_integrations = {s.integration for s in m.signals}
+                    if iname not in member_integrations:
+                        raise ConfigError(
+                            f"Member {m.from_id}\u2192{m.to_id} missing signal "
+                            f"from {icfg.role} integration '{iname}'"
+                        )
+
+        # integrations_used validation
+        for iname in integrations_used:
+            if iname not in matching.integrations:
+                raise ConfigError(f"Integration '{iname}' not declared in matching.integrations")
+
+        # max_group_size
+        if len(members) > matching.max_group_size:
+            raise ConfigError(
+                f"Group size {len(members)} exceeds max_group_size {matching.max_group_size}"
+            )
+
+    # 8. Compute signature
+    signature = compute_group_signature(relationship_type, thesis_facts)
+
+    # 9. Check for prior confirmed approved resolution
+    group_store = instance.get_group_store()
+    try:
+        prior = group_store.find_resolution(
+            relationship_type, signature, action="approve", confirmed=True
+        )
+
+        status = "pending_review"
+        if prior is not None:
+            # Trust status gate
+            if prior.get("trust_status") != "invalidated":
+                # Prior trust gate
+                trust_ok = False
+                if matching is not None:
+                    policy = matching.auto_resolve_requires_prior_trust
+                    prior_trust = prior.get("trust_status", "watch")
+                    if policy == "trusted_only" and prior_trust == "trusted":
+                        trust_ok = True
+                    elif policy == "trusted_or_watch" and prior_trust in (
+                        "trusted",
+                        "watch",
+                    ):
+                        trust_ok = True
+
+                if trust_ok and matching is not None:
+                    # Signal policy check
+                    auto_resolve = _check_auto_resolve_signals(members, matching)
+                    if auto_resolve:
+                        status = "auto_resolved"
+
+        # 10. Derive review_priority
+        review_priority = derive_review_priority(members, matching, prior)
+
+        # 11. Create and save group
+        group_id = f"GRP-{uuid.uuid4().hex[:12]}"
+        group = CandidateGroup(
+            group_id=group_id,
+            relationship_type=relationship_type,
+            signature=signature,
+            status=status,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            integrations_used=integrations_used,
+            proposed_by=proposed_by,
+            member_count=len(members),
+            review_priority=review_priority,
+            suggested_priority=suggested_priority,
+            created_at=datetime.now(timezone.utc),
+        )
+
+        with group_store.transaction():
+            group_store.save_group(group)
+            group_store.save_members(group_id, members)
+
+        return ProposeGroupResult(
+            group_id=group_id,
+            signature=signature,
+            status=status,
+            review_priority=review_priority,
+            member_count=len(members),
+            prior_resolution=prior,
+        )
+    finally:
+        group_store.close()
+
+
+def _check_auto_resolve_signals(
+    members: list[CandidateMember],
+    matching: MatchingConfig,
+) -> bool:
+    """Check if signals meet the auto_resolve_when policy.
+
+    Returns True if auto-resolve is eligible based on signals alone.
+    """
+    policy = matching.auto_resolve_when
+
+    for m in members:
+        for sig in m.signals:
+            icfg = matching.integrations.get(sig.integration)
+            if icfg is None or icfg.role == "advisory":
+                continue
+
+            # always_review_on_unsure override
+            if sig.signal == "unsure" and icfg.always_review_on_unsure:
+                return False
+
+            if policy == "all_support":
+                if sig.signal != "support":
+                    return False
+            elif policy == "no_contradict":
+                if sig.signal == "contradict" and icfg.role == "blocking":
+                    return False
+
+    return True

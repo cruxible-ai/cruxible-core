@@ -48,9 +48,7 @@ class CandidateGroup(BaseModel):
     group_id: str  # GRP-{uuid[:12]}
     relationship_type: str
     signature: str
-    status: Literal["pending_review", "auto_resolved", "applying", "resolved"] = (
-        "pending_review"
-    )
+    status: Literal["pending_review", "auto_resolved", "applying", "resolved"] = "pending_review"
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)

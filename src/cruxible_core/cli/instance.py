@@ -140,9 +140,7 @@ class CruxibleInstance:
         data = graph.to_dict()
         graph_path = self.instance_dir / "graph.json"
         try:
-            fd, tmp_path = tempfile.mkstemp(
-                dir=self.instance_dir, suffix=".tmp", prefix="graph_"
-            )
+            fd, tmp_path = tempfile.mkstemp(dir=self.instance_dir, suffix=".tmp", prefix="graph_")
             try:
                 with os.fdopen(fd, "w") as f:
                     json.dump(data, f, indent=2)

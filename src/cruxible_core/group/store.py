@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -238,9 +238,7 @@ class GroupStore:
     def save_members(self, group_id: str, members: list[CandidateMember]) -> None:
         """Batch insert candidate members. Does NOT commit."""
         for m in members:
-            signals_json = json.dumps(
-                [s.model_dump(mode="json") for s in m.signals]
-            )
+            signals_json = json.dumps([s.model_dump(mode="json") for s in m.signals])
             self._conn.execute(
                 "INSERT INTO candidate_members "
                 "(group_id, from_type, from_id, to_type, to_id, relationship_type, "
@@ -368,8 +366,7 @@ class GroupStore:
 
         where = " AND ".join(clauses)
         row = self._conn.execute(
-            f"SELECT * FROM group_resolutions WHERE {where} "
-            "ORDER BY resolved_at DESC LIMIT 1",
+            f"SELECT * FROM group_resolutions WHERE {where} ORDER BY resolved_at DESC LIMIT 1",
             tuple(params),
         ).fetchone()
         if row is None:
@@ -395,8 +392,7 @@ class GroupStore:
 
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self._conn.execute(
-            f"SELECT * FROM group_resolutions{where} "
-            "ORDER BY resolved_at DESC LIMIT ?",
+            f"SELECT * FROM group_resolutions{where} ORDER BY resolved_at DESC LIMIT ?",
             (*params, limit),
         ).fetchall()
         return [self._row_to_resolution(r) for r in rows]

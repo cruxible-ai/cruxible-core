@@ -57,7 +57,8 @@ def _member(
         to_type="Outfit",
         to_id=to_id,
         relationship_type="fits",
-        signals=signals or [CandidateSignal(integration="cosine_v1", signal="support", evidence="high sim")],
+        signals=signals
+        or [CandidateSignal(integration="cosine_v1", signal="support", evidence="high sim")],
         properties={"raw_score": 0.95},
     )
 
@@ -123,9 +124,7 @@ class TestGroupRoundTrip:
     def test_resolution_id_stored(self, store: GroupStore) -> None:
         # First create a resolution (so FK resolves)
         with store.transaction():
-            res_id = store.save_resolution(
-                "fits", "abc123", "approve", "", "", {}, {}, "human"
-            )
+            res_id = store.save_resolution("fits", "abc123", "approve", "", "", {}, {}, "human")
         g = _group(resolution_id=res_id)
         with store.transaction():
             store.save_group(g)
@@ -178,9 +177,7 @@ class TestStatusUpdate:
 
     def test_update_status_with_resolution_id(self, store: GroupStore) -> None:
         with store.transaction():
-            res_id = store.save_resolution(
-                "fits", "abc123", "approve", "", "", {}, {}, "human"
-            )
+            res_id = store.save_resolution("fits", "abc123", "approve", "", "", {}, {}, "human")
             store.save_group(_group("GRP-1"))
             store.update_group_status("GRP-1", "applying", resolution_id=res_id)
         loaded = store.get_group("GRP-1")
@@ -203,8 +200,7 @@ class TestResolutions:
     def test_save_find(self, store: GroupStore) -> None:
         with store.transaction():
             res_id = store.save_resolution(
-                "fits", "sig1", "approve", "looks good", "thesis", {"k": "v"},
-                {"state": 1}, "human"
+                "fits", "sig1", "approve", "looks good", "thesis", {"k": "v"}, {"state": 1}, "human"
             )
         res = store.find_resolution("fits", "sig1")
         assert res is not None
@@ -245,9 +241,7 @@ class TestResolutions:
             store.save_resolution(
                 "fits", "sig1", "approve", "", "", {}, {}, "human", confirmed=False
             )
-            store.save_resolution(
-                "fits", "sig1", "reject", "", "", {}, {}, "human", confirmed=True
-            )
+            store.save_resolution("fits", "sig1", "reject", "", "", {}, {}, "human", confirmed=True)
         # Only confirmed approvals
         assert store.find_resolution("fits", "sig1", action="approve", confirmed=True) is None
         # Confirmed rejects exist
@@ -255,18 +249,14 @@ class TestResolutions:
 
     def test_confirmed_defaults_false(self, store: GroupStore) -> None:
         with store.transaction():
-            res_id = store.save_resolution(
-                "fits", "sig1", "approve", "", "", {}, {}, "human"
-            )
+            res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
         res = store.get_resolution(res_id)
         assert res is not None
         assert res["confirmed"] is False
 
     def test_confirm_resolution_sets_confirmed(self, store: GroupStore) -> None:
         with store.transaction():
-            res_id = store.save_resolution(
-                "fits", "sig1", "approve", "", "", {}, {}, "human"
-            )
+            res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
             store.confirm_resolution(res_id)
         res = store.get_resolution(res_id)
         assert res is not None
@@ -275,8 +265,7 @@ class TestResolutions:
     def test_confirm_with_trust_override(self, store: GroupStore) -> None:
         with store.transaction():
             res_id = store.save_resolution(
-                "fits", "sig1", "approve", "", "", {}, {}, "human",
-                trust_status="trusted"
+                "fits", "sig1", "approve", "", "", {}, {}, "human", trust_status="trusted"
             )
             store.confirm_resolution(res_id, trust_status="watch")
         res = store.get_resolution(res_id)
@@ -304,12 +293,20 @@ class TestResolutions:
     def test_list_resolutions_returns_fields(self, store: GroupStore) -> None:
         with store.transaction():
             store.save_resolution(
-                "fits", "sig1", "approve", "ok", "thesis", {"k": 1},
-                {"state": "x"}, "human", trust_status="trusted"
+                "fits",
+                "sig1",
+                "approve",
+                "ok",
+                "thesis",
+                {"k": 1},
+                {"state": "x"},
+                "human",
+                trust_status="trusted",
             )
             store.update_resolution_trust_status(
                 store.find_resolution("fits", "sig1")["resolution_id"],
-                "trusted", "earned by review"
+                "trusted",
+                "earned by review",
             )
         resolutions = store.list_resolutions()
         assert len(resolutions) == 1
@@ -321,9 +318,7 @@ class TestResolutions:
 
     def test_update_trust_status(self, store: GroupStore) -> None:
         with store.transaction():
-            res_id = store.save_resolution(
-                "fits", "sig1", "approve", "", "", {}, {}, "human"
-            )
+            res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
             store.update_resolution_trust_status(res_id, "trusted", "promoted")
         res = store.get_resolution(res_id)
         assert res is not None

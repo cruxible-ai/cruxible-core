@@ -1,0 +1,894 @@
+"""Tests for service_propose_group and derive_review_priority."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.schema import IntegrationConfig, MatchingConfig
+from cruxible_core.errors import ConfigError
+from cruxible_core.group.signature import compute_group_signature
+from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.service import (
+    ProposeGroupResult,
+    derive_review_priority,
+    service_propose_group,
+)
+
+# ---------------------------------------------------------------------------
+# Config YAML with matching section for integration testing
+# ---------------------------------------------------------------------------
+
+MATCHING_CONFIG_YAML = """\
+version: "1.0"
+name: car_parts_matching
+description: Vehicle-to-part fitment with matching config
+
+integrations:
+  bolt_pattern_check:
+    kind: physical_compatibility
+    contract:
+      lookup_table: bolt_patterns
+    notes: "authoritative physical compatibility"
+  year_range_check:
+    kind: temporal_compatibility
+    contract:
+      field: year
+      tolerance: 2
+  description_fit_v1:
+    kind: llm_classification
+    contract:
+      model_ref: claude-sonnet-4-20250514
+  style_tags_v1:
+    kind: keyword_match
+    contract:
+      field: tags
+      method: jaccard
+
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes, suspension, engine, electrical, body, interior]
+      price:
+        type: float
+        optional: true
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+      source:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        bolt_pattern_check:
+          role: blocking
+          note: "Authoritative — physical compatibility"
+        year_range_check:
+          role: blocking
+        description_fit_v1:
+          role: required
+          always_review_on_unsure: true
+        style_tags_v1:
+          role: advisory
+      auto_resolve_when: all_support
+      auto_resolve_requires_prior_trust: trusted_only
+      max_group_size: 200
+  - name: replaces
+    from: Part
+    to: Part
+    properties:
+      direction:
+        type: string
+        enum: [upgrade, downgrade, equivalent]
+      confidence:
+        type: float
+
+constraints: []
+ingestion: {}
+"""
+
+NO_MATCHING_CONFIG_YAML = """\
+version: "1.0"
+name: car_parts_no_matching
+description: No matching section
+
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes, suspension, engine, electrical, body, interior]
+      price:
+        type: float
+        optional: true
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+      source:
+        type: string
+        optional: true
+  - name: replaces
+    from: Part
+    to: Part
+    properties:
+      direction:
+        type: string
+        enum: [upgrade, downgrade, equivalent]
+      confidence:
+        type: float
+
+constraints: []
+ingestion: {}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def matching_instance(tmp_path: Path) -> CruxibleInstance:
+    """Instance with matching config."""
+    (tmp_path / "config.yaml").write_text(MATCHING_CONFIG_YAML)
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+@pytest.fixture
+def no_matching_instance(tmp_path: Path) -> CruxibleInstance:
+    """Instance without matching config."""
+    (tmp_path / "config.yaml").write_text(NO_MATCHING_CONFIG_YAML)
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+def _member(
+    from_id: str = "BP-1001",
+    to_id: str = "V-2024-CIVIC",
+    signals: list[CandidateSignal] | None = None,
+    properties: dict[str, Any] | None = None,
+) -> CandidateMember:
+    """Helper to create a CandidateMember for fits relationship."""
+    return CandidateMember(
+        from_type="Part",
+        from_id=from_id,
+        to_type="Vehicle",
+        to_id=to_id,
+        relationship_type="fits",
+        signals=signals or [],
+        properties=properties or {},
+    )
+
+
+def _all_support_signals() -> list[CandidateSignal]:
+    """All blocking + required signals as support."""
+    return [
+        CandidateSignal(integration="bolt_pattern_check", signal="support", evidence="match"),
+        CandidateSignal(integration="year_range_check", signal="support", evidence="in range"),
+        CandidateSignal(integration="description_fit_v1", signal="support", evidence="fits"),
+    ]
+
+
+def _all_support_with_advisory() -> list[CandidateSignal]:
+    """All blocking + required + advisory signals as support."""
+    return _all_support_signals() + [
+        CandidateSignal(integration="style_tags_v1", signal="support", evidence="tags match"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Basic proposal tests
+# ---------------------------------------------------------------------------
+
+
+class TestBasicProposal:
+    def test_basic_proposal_pending(self, matching_instance: CruxibleInstance) -> None:
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_text="test thesis",
+            thesis_facts={"style": "casual"},
+        )
+        assert isinstance(result, ProposeGroupResult)
+        assert result.group_id.startswith("GRP-")
+        assert result.status == "pending_review"
+        assert result.member_count == 1
+        assert result.prior_resolution is None
+
+    def test_members_stored_with_signals(self, matching_instance: CruxibleInstance) -> None:
+        sigs = _all_support_signals()
+        members = [_member(signals=sigs)]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts={"k": "v"})
+        # Load from store to verify
+        store = matching_instance.get_group_store()
+        try:
+            stored = store.get_members(result.group_id)
+            assert len(stored) == 1
+            assert len(stored[0].signals) == 3
+            assert stored[0].signals[0].integration == "bolt_pattern_check"
+        finally:
+            store.close()
+
+    def test_multiple_members(self, matching_instance: CruxibleInstance) -> None:
+        members = [
+            _member("BP-1001", "V-1", signals=_all_support_signals()),
+            _member("BP-1002", "V-2", signals=_all_support_signals()),
+        ]
+        result = service_propose_group(
+            matching_instance, "fits", members, thesis_facts={"batch": True}
+        )
+        assert result.member_count == 2
+
+    def test_no_matching_section_open_mode(self, no_matching_instance: CruxibleInstance) -> None:
+        """No matching section → guardrails skipped, signals not required."""
+        members = [_member()]  # no signals
+        result = service_propose_group(
+            no_matching_instance, "fits", members, thesis_facts={"open": True}
+        )
+        assert result.status == "pending_review"
+        assert result.review_priority == "review"  # no prior → review
+
+
+# ---------------------------------------------------------------------------
+# Validation error tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidationErrors:
+    def test_invalid_relationship_type(self, matching_instance: CruxibleInstance) -> None:
+        with pytest.raises(ConfigError, match="not found in config"):
+            service_propose_group(matching_instance, "nonexistent", [_member()])
+
+    def test_empty_members(self, matching_instance: CruxibleInstance) -> None:
+        with pytest.raises(ConfigError, match="must not be empty"):
+            service_propose_group(matching_instance, "fits", [])
+
+    def test_member_relationship_type_mismatch(self, matching_instance: CruxibleInstance) -> None:
+        bad = CandidateMember(
+            from_type="Part",
+            from_id="BP-1",
+            to_type="Vehicle",
+            to_id="V-1",
+            relationship_type="replaces",  # wrong
+            signals=_all_support_signals(),
+        )
+        with pytest.raises(
+            ConfigError, match="has relationship_type 'replaces' but group is for 'fits'"
+        ):
+            service_propose_group(matching_instance, "fits", [bad])
+
+    def test_member_from_type_mismatch(self, matching_instance: CruxibleInstance) -> None:
+        bad = CandidateMember(
+            from_type="Vehicle",  # wrong (should be Part)
+            from_id="V-1",
+            to_type="Vehicle",
+            to_id="V-2",
+            relationship_type="fits",
+            signals=_all_support_signals(),
+        )
+        with pytest.raises(ConfigError, match="from_type 'Vehicle' does not match"):
+            service_propose_group(matching_instance, "fits", [bad])
+
+    def test_member_to_type_mismatch(self, matching_instance: CruxibleInstance) -> None:
+        bad = CandidateMember(
+            from_type="Part",
+            from_id="BP-1",
+            to_type="Part",  # wrong (should be Vehicle)
+            to_id="P-2",
+            relationship_type="fits",
+            signals=_all_support_signals(),
+        )
+        with pytest.raises(ConfigError, match="to_type 'Part' does not match"):
+            service_propose_group(matching_instance, "fits", [bad])
+
+    def test_duplicate_members(self, matching_instance: CruxibleInstance) -> None:
+        m = _member("BP-1", "V-1", signals=_all_support_signals())
+        with pytest.raises(ConfigError, match="Duplicate member"):
+            service_propose_group(matching_instance, "fits", [m, m])
+
+    def test_non_serializable_thesis_facts(self, matching_instance: CruxibleInstance) -> None:
+        members = [_member(signals=_all_support_signals())]
+        with pytest.raises(ConfigError, match="thesis_facts must be JSON-serializable"):
+            service_propose_group(
+                matching_instance,
+                "fits",
+                members,
+                thesis_facts={"bad": object()},
+            )
+
+    def test_max_group_size(self, matching_instance: CruxibleInstance) -> None:
+        # max_group_size is 200 in config
+        members = [_member(f"BP-{i}", f"V-{i}", signals=_all_support_signals()) for i in range(201)]
+        with pytest.raises(ConfigError, match="exceeds max_group_size"):
+            service_propose_group(matching_instance, "fits", members)
+
+
+# ---------------------------------------------------------------------------
+# Signal validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestSignalValidation:
+    def test_undeclared_integration_signal(self, matching_instance: CruxibleInstance) -> None:
+        sigs = _all_support_signals() + [
+            CandidateSignal(integration="unknown_integration", signal="support"),
+        ]
+        members = [_member(signals=sigs)]
+        with pytest.raises(ConfigError, match="undeclared integration 'unknown_integration'"):
+            service_propose_group(matching_instance, "fits", members)
+
+    def test_duplicate_signals_same_integration(self, matching_instance: CruxibleInstance) -> None:
+        sigs = _all_support_signals() + [
+            CandidateSignal(integration="bolt_pattern_check", signal="contradict"),
+        ]
+        members = [_member(signals=sigs)]
+        with pytest.raises(
+            ConfigError, match="duplicate signals from integration 'bolt_pattern_check'"
+        ):
+            service_propose_group(matching_instance, "fits", members)
+
+    def test_missing_blocking_signal(self, matching_instance: CruxibleInstance) -> None:
+        # Only provide year_range_check and description_fit_v1 (missing bolt_pattern_check)
+        sigs = [
+            CandidateSignal(integration="year_range_check", signal="support"),
+            CandidateSignal(integration="description_fit_v1", signal="support"),
+        ]
+        members = [_member(signals=sigs)]
+        with pytest.raises(
+            ConfigError, match="missing signal from blocking integration 'bolt_pattern_check'"
+        ):
+            service_propose_group(matching_instance, "fits", members)
+
+    def test_missing_required_signal(self, matching_instance: CruxibleInstance) -> None:
+        # Only provide blocking integrations (missing description_fit_v1 which is required)
+        sigs = [
+            CandidateSignal(integration="bolt_pattern_check", signal="support"),
+            CandidateSignal(integration="year_range_check", signal="support"),
+        ]
+        members = [_member(signals=sigs)]
+        with pytest.raises(
+            ConfigError, match="missing signal from required integration 'description_fit_v1'"
+        ):
+            service_propose_group(matching_instance, "fits", members)
+
+    def test_missing_advisory_signal_ok(self, matching_instance: CruxibleInstance) -> None:
+        """Advisory signals may be absent — no error."""
+        members = [_member(signals=_all_support_signals())]  # no style_tags_v1
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts={"test": 1})
+        assert result.group_id.startswith("GRP-")
+
+    def test_integrations_used_undeclared(self, matching_instance: CruxibleInstance) -> None:
+        members = [_member(signals=_all_support_signals())]
+        with pytest.raises(ConfigError, match="Integration 'unknown' not declared"):
+            service_propose_group(
+                matching_instance,
+                "fits",
+                members,
+                integrations_used=["unknown"],
+            )
+
+
+# ---------------------------------------------------------------------------
+# Signature tests
+# ---------------------------------------------------------------------------
+
+
+class TestSignature:
+    def test_deterministic_signature(self, matching_instance: CruxibleInstance) -> None:
+        facts = {"style": "casual", "season": "summer"}
+        members = [_member(signals=_all_support_signals())]
+        r1 = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        r2 = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-2", "V-2", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+        assert r1.signature == r2.signature
+
+    def test_different_analysis_state_same_signature(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        facts = {"color": "warm"}
+        members1 = [_member("BP-1", "V-1", signals=_all_support_signals())]
+        members2 = [_member("BP-2", "V-2", signals=_all_support_signals())]
+        r1 = service_propose_group(
+            matching_instance,
+            "fits",
+            members1,
+            thesis_facts=facts,
+            analysis_state={"centroid": [0.1, 0.2]},
+        )
+        r2 = service_propose_group(
+            matching_instance,
+            "fits",
+            members2,
+            thesis_facts=facts,
+            analysis_state={"centroid": [0.3, 0.4]},
+        )
+        assert r1.signature == r2.signature
+
+    def test_signature_matches_compute_function(self, matching_instance: CruxibleInstance) -> None:
+        facts = {"a": 1, "b": 2}
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        expected = compute_group_signature("fits", facts)
+        assert result.signature == expected
+
+
+# ---------------------------------------------------------------------------
+# Auto-resolve tests
+# ---------------------------------------------------------------------------
+
+
+def _create_prior_resolution(
+    instance: CruxibleInstance,
+    relationship_type: str = "fits",
+    thesis_facts: dict[str, Any] | None = None,
+    trust_status: str = "watch",
+    action: str = "approve",
+    confirmed: bool = True,
+) -> str:
+    """Helper: create a prior resolution directly in the store."""
+    facts = thesis_facts or {}
+    signature = compute_group_signature(relationship_type, facts)
+    store = instance.get_group_store()
+    try:
+        with store.transaction():
+            res_id = store.save_resolution(
+                relationship_type,
+                signature,
+                action,
+                "prior rationale",
+                "prior thesis",
+                facts,
+                {"prior_state": True},
+                "human",
+                trust_status=trust_status,
+                confirmed=confirmed,
+            )
+        return res_id
+    finally:
+        store.close()
+
+
+class TestAutoResolve:
+    def test_prior_trusted_all_support_auto_resolved(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        facts = {"style": "casual"}
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "auto_resolved"
+        assert result.prior_resolution is not None
+        assert result.prior_resolution["trust_status"] == "trusted"
+
+    def test_prior_trusted_blocking_contradict_pending(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        facts = {"style": "casual"}
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+        sigs = [
+            CandidateSignal(integration="bolt_pattern_check", signal="contradict"),
+            CandidateSignal(integration="year_range_check", signal="support"),
+            CandidateSignal(integration="description_fit_v1", signal="support"),
+        ]
+        members = [_member(signals=sigs)]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "pending_review"
+        assert result.prior_resolution is not None  # advisory
+
+    def test_prior_invalidated_pending(self, matching_instance: CruxibleInstance) -> None:
+        facts = {"style": "casual"}
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="invalidated")
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "pending_review"
+        assert result.review_priority == "critical"
+
+    def test_prior_watch_trusted_only_pending(self, matching_instance: CruxibleInstance) -> None:
+        """Default watch trust + trusted_only policy → no auto-resolve."""
+        facts = {"style": "casual"}
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="watch")
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "pending_review"
+
+    def test_prior_rejected_does_not_enable_auto_resolve(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        """Only approved confirmed priors count for auto-resolve."""
+        facts = {"style": "casual"}
+        _create_prior_resolution(
+            matching_instance,
+            thesis_facts=facts,
+            action="reject",
+            trust_status="watch",
+            confirmed=True,
+        )
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "pending_review"
+        # reject not visible to find_resolution(action="approve")
+        assert result.prior_resolution is None
+
+    def test_unconfirmed_prior_invisible(self, matching_instance: CruxibleInstance) -> None:
+        """Unconfirmed approval does not act as precedent."""
+        facts = {"style": "casual"}
+        _create_prior_resolution(
+            matching_instance,
+            thesis_facts=facts,
+            trust_status="trusted",
+            confirmed=False,
+        )
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "pending_review"
+        assert result.prior_resolution is None
+
+    def test_always_review_on_unsure_blocks_auto_resolve(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        """description_fit_v1 has always_review_on_unsure=True."""
+        facts = {"style": "casual"}
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+        sigs = [
+            CandidateSignal(integration="bolt_pattern_check", signal="support"),
+            CandidateSignal(integration="year_range_check", signal="support"),
+            CandidateSignal(integration="description_fit_v1", signal="unsure"),
+        ]
+        members = [_member(signals=sigs)]
+        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "pending_review"
+        assert result.review_priority == "review"
+
+
+class TestAutoResolveTrustedOrWatch:
+    """Test auto_resolve_requires_prior_trust=trusted_or_watch."""
+
+    PERMISSIVE_YAML = """\
+version: "1.0"
+name: permissive_matching
+description: trusted_or_watch policy
+
+integrations:
+  check_v1:
+    kind: generic
+    contract: {}
+
+entity_types:
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes]
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+    matching:
+      integrations:
+        check_v1:
+          role: required
+      auto_resolve_when: all_support
+      auto_resolve_requires_prior_trust: trusted_or_watch
+
+constraints: []
+ingestion: {}
+"""
+
+    @pytest.fixture
+    def permissive_instance(self, tmp_path: Path) -> CruxibleInstance:
+        (tmp_path / "config.yaml").write_text(self.PERMISSIVE_YAML)
+        return CruxibleInstance.init(tmp_path, "config.yaml")
+
+    def test_watch_plus_trusted_or_watch_auto_resolves(
+        self, permissive_instance: CruxibleInstance
+    ) -> None:
+        facts = {"k": "v"}
+        _create_prior_resolution(permissive_instance, thesis_facts=facts, trust_status="watch")
+        sigs = [CandidateSignal(integration="check_v1", signal="support")]
+        members = [_member(signals=sigs)]
+        result = service_propose_group(permissive_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "auto_resolved"
+
+
+class TestAutoResolveNoContradict:
+    """Test auto_resolve_when=no_contradict policy."""
+
+    NO_CONTRADICT_YAML = """\
+version: "1.0"
+name: no_contradict_matching
+description: no_contradict policy
+
+integrations:
+  blocker:
+    kind: generic
+    contract: {}
+  required_check:
+    kind: generic
+    contract: {}
+
+entity_types:
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes]
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+    matching:
+      integrations:
+        blocker:
+          role: blocking
+        required_check:
+          role: required
+      auto_resolve_when: no_contradict
+      auto_resolve_requires_prior_trust: trusted_only
+
+constraints: []
+ingestion: {}
+"""
+
+    @pytest.fixture
+    def nc_instance(self, tmp_path: Path) -> CruxibleInstance:
+        (tmp_path / "config.yaml").write_text(self.NO_CONTRADICT_YAML)
+        return CruxibleInstance.init(tmp_path, "config.yaml")
+
+    def test_unsure_on_required_passes_no_contradict(self, nc_instance: CruxibleInstance) -> None:
+        facts = {"k": "v"}
+        _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
+        sigs = [
+            CandidateSignal(integration="blocker", signal="support"),
+            CandidateSignal(integration="required_check", signal="unsure"),
+        ]
+        members = [_member(signals=sigs)]
+        result = service_propose_group(nc_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "auto_resolved"
+
+    def test_contradict_on_blocking_fails_no_contradict(
+        self, nc_instance: CruxibleInstance
+    ) -> None:
+        facts = {"k": "v"}
+        _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
+        sigs = [
+            CandidateSignal(integration="blocker", signal="contradict"),
+            CandidateSignal(integration="required_check", signal="support"),
+        ]
+        members = [_member(signals=sigs)]
+        result = service_propose_group(nc_instance, "fits", members, thesis_facts=facts)
+        assert result.status == "pending_review"
+
+
+# ---------------------------------------------------------------------------
+# Priority derivation tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveReviewPriority:
+    def test_blocking_contradict_critical(self) -> None:
+        matching = MatchingConfig(integrations={"blocker": IntegrationConfig(role="blocking")})
+        members = [_member(signals=[CandidateSignal(integration="blocker", signal="contradict")])]
+        assert derive_review_priority(members, matching, None) == "critical"
+
+    def test_invalidated_prior_critical(self) -> None:
+        matching = MatchingConfig(integrations={"check": IntegrationConfig(role="required")})
+        members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
+        prior = {"trust_status": "invalidated"}
+        assert derive_review_priority(members, matching, prior) == "critical"
+
+    def test_always_review_on_unsure_review(self) -> None:
+        matching = MatchingConfig(
+            integrations={"check": IntegrationConfig(role="required", always_review_on_unsure=True)}
+        )
+        members = [_member(signals=[CandidateSignal(integration="check", signal="unsure")])]
+        prior = {"trust_status": "trusted"}
+        assert derive_review_priority(members, matching, prior) == "review"
+
+    def test_unsure_on_blocking_review(self) -> None:
+        matching = MatchingConfig(integrations={"blocker": IntegrationConfig(role="blocking")})
+        members = [_member(signals=[CandidateSignal(integration="blocker", signal="unsure")])]
+        prior = {"trust_status": "trusted"}
+        assert derive_review_priority(members, matching, prior) == "review"
+
+    def test_unsure_on_required_review(self) -> None:
+        matching = MatchingConfig(integrations={"req": IntegrationConfig(role="required")})
+        members = [_member(signals=[CandidateSignal(integration="req", signal="unsure")])]
+        prior = {"trust_status": "trusted"}
+        assert derive_review_priority(members, matching, prior) == "review"
+
+    def test_no_prior_review(self) -> None:
+        matching = MatchingConfig(integrations={"check": IntegrationConfig(role="required")})
+        members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
+        assert derive_review_priority(members, matching, None) == "review"
+
+    def test_prior_watch_review(self) -> None:
+        matching = MatchingConfig(integrations={"check": IntegrationConfig(role="required")})
+        members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
+        prior = {"trust_status": "watch"}
+        assert derive_review_priority(members, matching, prior) == "review"
+
+    def test_all_support_trusted_normal(self) -> None:
+        matching = MatchingConfig(
+            integrations={
+                "blocker": IntegrationConfig(role="blocking"),
+                "req": IntegrationConfig(role="required"),
+            }
+        )
+        members = [
+            _member(
+                signals=[
+                    CandidateSignal(integration="blocker", signal="support"),
+                    CandidateSignal(integration="req", signal="support"),
+                ]
+            )
+        ]
+        prior = {"trust_status": "trusted"}
+        assert derive_review_priority(members, matching, prior) == "normal"
+
+    def test_advisory_ignored_for_priority(self) -> None:
+        """Advisory contradict does NOT escalate priority."""
+        matching = MatchingConfig(
+            integrations={
+                "req": IntegrationConfig(role="required"),
+                "adv": IntegrationConfig(role="advisory"),
+            }
+        )
+        members = [
+            _member(
+                signals=[
+                    CandidateSignal(integration="req", signal="support"),
+                    CandidateSignal(integration="adv", signal="contradict"),
+                ]
+            )
+        ]
+        prior = {"trust_status": "trusted"}
+        assert derive_review_priority(members, matching, prior) == "normal"
+
+    def test_no_matching_no_prior(self) -> None:
+        members = [_member()]
+        assert derive_review_priority(members, None, None) == "review"
+
+    def test_no_matching_with_prior(self) -> None:
+        members = [_member()]
+        assert derive_review_priority(members, None, {"trust_status": "trusted"}) == "normal"
+
+    def test_critical_beats_review(self) -> None:
+        """When both critical and review conditions exist, critical wins."""
+        matching = MatchingConfig(
+            integrations={
+                "blocker": IntegrationConfig(role="blocking"),
+                "req": IntegrationConfig(role="required"),
+            }
+        )
+        members = [
+            _member(
+                signals=[
+                    CandidateSignal(integration="blocker", signal="contradict"),
+                    CandidateSignal(integration="req", signal="unsure"),
+                ]
+            )
+        ]
+        assert derive_review_priority(members, matching, None) == "critical"
+
+
+# ---------------------------------------------------------------------------
+# suggested_priority tests
+# ---------------------------------------------------------------------------
+
+
+class TestSuggestedPriority:
+    def test_stored_but_not_governing(self, matching_instance: CruxibleInstance) -> None:
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts={"k": "v"},
+            suggested_priority="high",
+        )
+        # suggested_priority stored on group but doesn't affect review_priority
+        store = matching_instance.get_group_store()
+        try:
+            group = store.get_group(result.group_id)
+            assert group is not None
+            assert group.suggested_priority == "high"
+            # review_priority is Cruxible-derived, not influenced by suggestion
+            assert group.review_priority in ("critical", "review", "normal")
+        finally:
+            store.close()

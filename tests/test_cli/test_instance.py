@@ -277,21 +277,15 @@ class TestAtomicSaveGraph:
         current = (initialized_project.instance_dir / "graph.json").read_text()
         assert current == original_content
 
-    def test_cache_invalidated_on_exception(
-        self, initialized_project: CruxibleInstance
-    ) -> None:
+    def test_cache_invalidated_on_exception(self, initialized_project: CruxibleInstance) -> None:
         """After failed save_graph, load_graph re-reads from disk (no phantom edges)."""
         # Save initial graph
         graph = EntityGraph()
-        graph.add_entity(
-            EntityInstance(entity_type="Part", entity_id="P-1", properties={})
-        )
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
         initialized_project.save_graph(graph)
 
         # Mutate in-memory graph
-        graph.add_entity(
-            EntityInstance(entity_type="Part", entity_id="P-2", properties={})
-        )
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-2", properties={}))
 
         # Fail the save
         with patch("cruxible_core.cli.instance.json.dump", side_effect=OSError("disk full")):
@@ -307,9 +301,7 @@ class TestAtomicSaveGraph:
     ) -> None:
         """Mutate in-memory graph, invalidate cache, reload → mutations gone."""
         graph = initialized_project.load_graph()
-        graph.add_entity(
-            EntityInstance(entity_type="Part", entity_id="P-1", properties={})
-        )
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
         # Don't save — just invalidate
         initialized_project.invalidate_graph_cache()
         reloaded = initialized_project.load_graph()

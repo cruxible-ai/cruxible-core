@@ -18,9 +18,8 @@ Hierarchy:
 
 from __future__ import annotations
 
-from typing import Any, Literal
-
 import json as _json
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -103,9 +102,7 @@ class MatchingConfig(BaseModel):
 
     integrations: dict[str, IntegrationConfig] = Field(default_factory=dict)
     auto_resolve_when: Literal["all_support", "no_contradict"] = "all_support"
-    auto_resolve_requires_prior_trust: Literal["trusted_only", "trusted_or_watch"] = (
-        "trusted_only"
-    )
+    auto_resolve_requires_prior_trust: Literal["trusted_only", "trusted_or_watch"] = "trusted_only"
     max_group_size: int = 1000
 
 

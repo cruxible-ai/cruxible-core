@@ -8,8 +8,8 @@ from cruxible_core.config.schema import (
     ConstraintSchema,
     CoreConfig,
     EntityTypeSchema,
-    IntegrationConfig,
     IngestionMapping,
+    IntegrationConfig,
     IntegrationSpec,
     MatchingConfig,
     NamedQuerySchema,
@@ -405,18 +405,14 @@ class TestStrictMixedMode:
     def test_nonempty_registry_all_resolved_ok(self):
         config = self._config(
             integrations={"bolt_v1": IntegrationSpec(kind="physical")},
-            matching=MatchingConfig(
-                integrations={"bolt_v1": IntegrationConfig(role="blocking")}
-            ),
+            matching=MatchingConfig(integrations={"bolt_v1": IntegrationConfig(role="blocking")}),
         )
         validate_config(config)
 
     def test_nonempty_registry_unresolved_key_error(self):
         config = self._config(
             integrations={"bolt_v1": IntegrationSpec(kind="physical")},
-            matching=MatchingConfig(
-                integrations={"unknown": IntegrationConfig(role="blocking")}
-            ),
+            matching=MatchingConfig(integrations={"unknown": IntegrationConfig(role="blocking")}),
         )
         with pytest.raises(ConfigError, match="not found in global integrations"):
             validate_config(config)
