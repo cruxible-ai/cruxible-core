@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,7 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.group.store import GroupStore
 from cruxible_core.storage.sqlite import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -128,9 +131,33 @@ class CruxibleInstance:
         return graph
 
     def save_graph(self, graph: EntityGraph) -> None:
-        """Save the entity graph to graph.json and update the cache."""
+        """Save the entity graph to graph.json atomically.
+
+        Uses temp-file + os.replace() (atomic on POSIX). Invalidates
+        _graph_cache on exception so failed writes never leave phantom
+        edges visible to subsequent load_graph() calls.
+        """
         data = graph.to_dict()
-        (self.instance_dir / "graph.json").write_text(json.dumps(data, indent=2))
+        graph_path = self.instance_dir / "graph.json"
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.instance_dir, suffix=".tmp", prefix="graph_"
+            )
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, graph_path)
+            except Exception:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        except Exception:
+            # Invalidate cache so no caller sees phantom edges
+            self._graph_cache = None
+            raise
         self._graph_cache = graph
 
     def invalidate_graph_cache(self) -> None:
@@ -144,3 +171,7 @@ class CruxibleInstance:
     def get_feedback_store(self) -> FeedbackStore:
         """Get or create the feedback SQLite store."""
         return FeedbackStore(self.instance_dir / "feedback.db")
+
+    def get_group_store(self) -> GroupStore:
+        """Get or create the group SQLite store (shares feedback.db)."""
+        return GroupStore(self.instance_dir / "feedback.db")

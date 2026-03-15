@@ -6,11 +6,14 @@ without coupling handlers to concrete SQLite implementations.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Protocol
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.receipt.types import Receipt
 
 
@@ -46,6 +49,68 @@ class FeedbackStoreProtocol(Protocol):
     def close(self) -> None: ...
 
 
+class GroupStoreProtocol(Protocol):
+    """Minimal interface for group store operations."""
+
+    def get_group(self, group_id: str) -> CandidateGroup | None: ...
+    def list_groups(
+        self,
+        *,
+        relationship_type: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[CandidateGroup]: ...
+    def count_groups(
+        self,
+        *,
+        relationship_type: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+    def save_group(self, group: CandidateGroup) -> str: ...
+    def save_members(self, group_id: str, members: list[CandidateMember]) -> None: ...
+    def get_members(self, group_id: str) -> list[CandidateMember]: ...
+    def save_resolution(
+        self,
+        relationship_type: str,
+        signature: str,
+        action: str,
+        rationale: str,
+        thesis_text: str,
+        thesis_facts: dict[str, Any],
+        analysis_state: dict[str, Any],
+        resolved_by: str,
+        trust_status: str = "watch",
+        confirmed: bool = False,
+    ) -> str: ...
+    def confirm_resolution(
+        self, resolution_id: str, trust_status: str | None = None
+    ) -> None: ...
+    def get_resolution(self, resolution_id: str) -> dict[str, Any] | None: ...
+    def find_resolution(
+        self,
+        relationship_type: str,
+        signature: str,
+        action: str | None = None,
+        confirmed: bool | None = None,
+    ) -> dict[str, Any] | None: ...
+    def list_resolutions(
+        self,
+        *,
+        relationship_type: str | None = None,
+        action: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]: ...
+    def update_group_status(
+        self, group_id: str, status: str, resolution_id: str | None = None
+    ) -> bool: ...
+    def update_resolution_trust_status(
+        self, resolution_id: str, trust_status: str, trust_reason: str = ""
+    ) -> bool: ...
+    @contextmanager
+    def transaction(self) -> Iterator[None]: ...
+    def close(self) -> None: ...
+
+
 class InstanceProtocol(Protocol):
     """Minimal interface handlers use on a cruxible instance."""
 
@@ -53,5 +118,7 @@ class InstanceProtocol(Protocol):
     def save_config(self, config: CoreConfig) -> None: ...
     def load_graph(self) -> EntityGraph: ...
     def save_graph(self, graph: EntityGraph) -> None: ...
+    def invalidate_graph_cache(self) -> None: ...
     def get_receipt_store(self) -> ReceiptStoreProtocol: ...
     def get_feedback_store(self) -> FeedbackStoreProtocol: ...
+    def get_group_store(self) -> GroupStoreProtocol: ...
