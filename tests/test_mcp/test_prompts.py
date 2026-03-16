@@ -50,7 +50,7 @@ class TestOnboardDomain:
         result = asyncio.run(server.get_prompt("onboard_domain", {"domain": "test domain"}))
         text = result.messages[0].content.text
         assert "Prepare Data" in text
-        assert "Cross-References" in text
+        assert "Cross-Dataset Relationships" in text
         assert "prepare_data" in text
         assert "YAML Config" in text
         assert "Validate and Initialize" in text

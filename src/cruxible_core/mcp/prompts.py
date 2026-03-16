@@ -164,40 +164,39 @@ without external docs:
    (e.g. known fitments, explicit FK mappings).
 3. Stop and handle tool errors from MCP before continuing.
 
-## Step 6 — Discover Cross-References
+## Step 6 — Create Cross-Dataset Relationships
 
-For entities from free text or external sources (no CSV available):
-- Use `cruxible_add_entity` — entities must exist before adding relationships to them.
+Choose the right path based on the relationship type:
 
-For each cross-dataset relationship type in your config, ask:
-can `cruxible_find_candidates` with `property_match` express this match?
+**Classification at scale** — mapping entities from one dataset to a standard
+taxonomy using deterministic rules (keyword extraction, category lookup, etc.):
+1. Declare integration contracts in the config (`integrations` section).
+2. Add a `matching` block on the relationship with integration roles and policy.
+3. Run integrations externally to produce tri-state signals (support/unsure/contradict).
+4. Propose groups with `cruxible_propose_group` — thesis_facts drive signatures
+   and trust tracking.
+5. Resolve groups to create edges in batch with receipts and provenance.
+6. Review, refine rules, and build trust through the flywheel.
 
-If yes, use it — candidates are reproducible, auditable, and iterative:
-1. Use `cruxible_sample` to inspect entities on both sides.
-2. Use `property_match` with `iequals` on name fields to cross-reference entities
-   across types/datasets.
-3. Use `shared_neighbors` when entities share connections through an intermediary.
-4. Review candidates and persist confirmed matches with `cruxible_add_relationship`
-   — include `source`, `confidence`, and `evidence` in properties for provenance.
+This is the right path when you have two datasets, structured matching rules,
+and need batch review with earned trust. See the `classification-at-scale`
+skill doc for the full workflow.
 
-**Confidence guidelines** — always set `confidence` on every edge you add:
+**Simple cross-references** — linking entities across datasets where exact or
+case-insensitive property matching is sufficient:
+1. Use `cruxible_find_candidates` with `property_match` or `shared_neighbors`.
+2. Review candidates and persist with `cruxible_add_relationship` — include
+   `source`, `confidence`, and `evidence` in properties for provenance.
+3. Use `cruxible_feedback` to approve or reject edges after review.
 
-| Score     | Meaning                                                      |
-|-----------|--------------------------------------------------------------|
-| ≥ 0.9     | Unambiguous match — no plausible alternatives exist          |
-| 0.7 – 0.9 | Inspected and reasonable, but alternatives exist             |
-| 0.5 – 0.7 | Ambiguous — decent guess, other candidates similarly plausible |
-| < 0.5     | Speculative — likely needs human review before trusting      |
+This path works when matching logic is simple enough that `find_candidates`
+can express it directly.
 
-Be honest with yourself — if multiple candidates could fit, that is not 0.9.
-Edges below 0.7 will be surfaced for review by `cruxible_evaluate`.
-
-`cruxible_find_candidates` only does exact/iequals matching. If the domain needs
-fuzzy matching, transliteration, abbreviation handling, or other logic it can't
-express — use your own approach. Write and run custom scripts (Python, Polars,
-etc.) for bulk comparison, or manually inspect entities and use your judgment.
-Regardless of method, persist matches with `cruxible_add_relationship` and include
-`source`, `confidence`, and `evidence` in properties for provenance.
+**Manual / LLM-assisted** — for entities from free text or external sources
+where no CSV or structured matching applies:
+- Use `cruxible_add_entity` to create entities that don't come from files.
+- Use your own tools or judgment to identify matches.
+- Persist with `cruxible_add_relationship` with provenance properties.
 
 ## Step 7 — Design Named Queries
 
