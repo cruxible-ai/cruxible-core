@@ -40,13 +40,31 @@ class SQLiteStore:
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Run schema migrations for new columns."""
+        cols = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(receipts)").fetchall()
+        }
+        if "operation_type" not in cols:
+            self._conn.execute(
+                "ALTER TABLE receipts ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'query'"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_receipts_operation_type "
+                "ON receipts(operation_type)"
+            )
+            self._conn.commit()
 
     def save_receipt(self, receipt: Receipt) -> str:
         """Persist a receipt. Returns the receipt_id."""
         self._conn.execute(
             "INSERT OR REPLACE INTO receipts "
-            "(receipt_id, query_name, parameters, receipt_json, created_at, duration_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(receipt_id, query_name, parameters, receipt_json, created_at, duration_ms, "
+            "operation_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 receipt.receipt_id,
                 receipt.query_name,
@@ -54,6 +72,7 @@ class SQLiteStore:
                 receipt.model_dump_json(),
                 receipt.created_at.isoformat(),
                 receipt.duration_ms,
+                receipt.operation_type,
             ),
         )
         self._conn.execute(
@@ -89,23 +108,29 @@ class SQLiteStore:
     def list_receipts(
         self,
         query_name: str | None = None,
+        operation_type: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """List receipt summaries, optionally filtered by query name."""
+        """List receipt summaries, optionally filtered by query name or operation type."""
+        conditions: list[str] = []
+        params: list[Any] = []
         if query_name is not None:
-            rows = self._conn.execute(
-                "SELECT receipt_id, query_name, parameters, created_at, duration_ms "
-                "FROM receipts WHERE query_name = ? "
-                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (query_name, limit, offset),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT receipt_id, query_name, parameters, created_at, duration_ms "
-                "FROM receipts ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
+            conditions.append("query_name = ?")
+            params.append(query_name)
+        if operation_type is not None:
+            conditions.append("operation_type = ?")
+            params.append(operation_type)
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
+
+        rows = self._conn.execute(
+            "SELECT receipt_id, query_name, parameters, created_at, duration_ms, "
+            "operation_type "
+            f"FROM receipts{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params,
+        ).fetchall()
 
         return [
             {
@@ -114,19 +139,31 @@ class SQLiteStore:
                 "parameters": json.loads(r["parameters"]),
                 "created_at": r["created_at"],
                 "duration_ms": r["duration_ms"],
+                "operation_type": r["operation_type"],
             }
             for r in rows
         ]
 
-    def count_receipts(self, query_name: str | None = None) -> int:
-        """Count receipt records with optional query_name filter."""
-        if query_name is None:
-            row = self._conn.execute("SELECT COUNT(*) AS count FROM receipts").fetchone()
-        else:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS count FROM receipts WHERE query_name = ?",
-                (query_name,),
-            ).fetchone()
+    def count_receipts(
+        self,
+        query_name: str | None = None,
+        operation_type: str | None = None,
+    ) -> int:
+        """Count receipt records with optional filters."""
+        conditions: list[str] = []
+        params: list[Any] = []
+        if query_name is not None:
+            conditions.append("query_name = ?")
+            params.append(query_name)
+        if operation_type is not None:
+            conditions.append("operation_type = ?")
+            params.append(operation_type)
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        row = self._conn.execute(
+            f"SELECT COUNT(*) AS count FROM receipts{where}",
+            params,
+        ).fetchone()
         return int(row["count"]) if row else 0
 
     def get_receipts_for_entity(self, entity_type: str, entity_id: str) -> list[str]:

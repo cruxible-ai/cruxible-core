@@ -26,10 +26,13 @@ class ReceiptStoreProtocol(Protocol):
         self,
         *,
         query_name: str | None = None,
+        operation_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]: ...
-    def count_receipts(self, *, query_name: str | None = None) -> int: ...
+    def count_receipts(
+        self, *, query_name: str | None = None, operation_type: str | None = None
+    ) -> int: ...
     def close(self) -> None: ...
 
 

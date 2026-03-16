@@ -151,3 +151,60 @@ class TestSQLiteStore:
         assert loaded is not None
         assert loaded.query_name == "q"
         store2.close()
+
+    def test_migration_adds_operation_type(self, tmp_path):
+        """Open store, close, reopen — operation_type column exists."""
+        db_path = tmp_path / "migrate.db"
+        store1 = SQLiteStore(db_path)
+        b = ReceiptBuilder(query_name="q", parameters={})
+        store1.save_receipt(b.build(results=[]))
+        store1.close()
+
+        store2 = SQLiteStore(db_path)
+        items = store2.list_receipts()
+        assert items[0]["operation_type"] == "query"
+        store2.close()
+
+    def test_save_stores_operation_type(self, store: SQLiteStore):
+        b = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})
+        b.mark_committed()
+        receipt = b.build()
+        store.save_receipt(receipt)
+        items = store.list_receipts()
+        assert items[0]["operation_type"] == "add_entity"
+
+    def test_list_filter_by_operation_type(self, store: SQLiteStore):
+        b1 = ReceiptBuilder(query_name="q", parameters={})
+        b2 = ReceiptBuilder(operation_type="add_entity", parameters={})
+        b2.mark_committed()
+        store.save_receipt(b1.build(results=[]))
+        store.save_receipt(b2.build())
+
+        items = store.list_receipts(operation_type="add_entity")
+        assert len(items) == 1
+        assert items[0]["operation_type"] == "add_entity"
+
+    def test_count_filter_by_operation_type(self, store: SQLiteStore):
+        b1 = ReceiptBuilder(query_name="q", parameters={})
+        b2 = ReceiptBuilder(operation_type="ingest", parameters={})
+        b2.mark_committed()
+        store.save_receipt(b1.build(results=[]))
+        store.save_receipt(b2.build())
+
+        assert store.count_receipts(operation_type="ingest") == 1
+        assert store.count_receipts(operation_type="query") == 1
+
+    def test_combined_filters(self, store: SQLiteStore):
+        b1 = ReceiptBuilder(query_name="q1", parameters={})
+        b2 = ReceiptBuilder(query_name="q1", parameters={}, operation_type="add_entity")
+        b2.mark_committed()
+        store.save_receipt(b1.build(results=[]))
+        store.save_receipt(b2.build())
+
+        items = store.list_receipts(query_name="q1", operation_type="add_entity")
+        assert len(items) == 1
+
+    def test_old_receipts_default_to_query(self, store: SQLiteStore, sample_receipt: Receipt):
+        store.save_receipt(sample_receipt)
+        loaded = store.get_receipt(sample_receipt.receipt_id)
+        assert loaded.operation_type == "query"
