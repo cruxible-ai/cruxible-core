@@ -38,9 +38,7 @@ def to_markdown(receipt: Receipt) -> str:
     filters = [n for n in receipt.nodes if n.node_type == "filter_applied"]
     constraints = [n for n in receipt.nodes if n.node_type == "constraint_check"]
     validations = [n for n in receipt.nodes if n.node_type == "validation"]
-    writes = [
-        n for n in receipt.nodes if n.node_type in ("entity_write", "relationship_write")
-    ]
+    writes = [n for n in receipt.nodes if n.node_type in ("entity_write", "relationship_write")]
     feedback_nodes = [n for n in receipt.nodes if n.node_type == "feedback_applied"]
     ingest_nodes = [n for n in receipt.nodes if n.node_type == "ingest_batch"]
 

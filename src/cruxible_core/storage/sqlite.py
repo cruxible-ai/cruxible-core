@@ -44,17 +44,13 @@ class SQLiteStore:
 
     def _migrate(self) -> None:
         """Run schema migrations for new columns."""
-        cols = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(receipts)").fetchall()
-        }
+        cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(receipts)").fetchall()}
         if "operation_type" not in cols:
             self._conn.execute(
                 "ALTER TABLE receipts ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'query'"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_receipts_operation_type "
-                "ON receipts(operation_type)"
+                "CREATE INDEX IF NOT EXISTS idx_receipts_operation_type ON receipts(operation_type)"
             )
             self._conn.commit()
 

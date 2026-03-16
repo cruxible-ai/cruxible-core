@@ -635,8 +635,10 @@ class TestSerializer:
         from cruxible_core.receipt.types import ReceiptNode
 
         node = ReceiptNode(
-            node_id="n1", node_type="entity_write",
-            entity_type="Vehicle", entity_id="V-1",
+            node_id="n1",
+            node_type="entity_write",
+            entity_type="Vehicle",
+            entity_id="V-1",
             detail={"is_update": False},
         )
         assert _node_label(node) == "Write: Vehicle:V-1 (add)"
@@ -646,10 +648,13 @@ class TestSerializer:
         from cruxible_core.receipt.types import ReceiptNode
 
         node = ReceiptNode(
-            node_id="n1", node_type="relationship_write",
+            node_id="n1",
+            node_type="relationship_write",
             detail={
-                "from_id": "P-1", "to_id": "V-1",
-                "relationship": "fits", "is_update": True,
+                "from_id": "P-1",
+                "to_id": "V-1",
+                "relationship": "fits",
+                "is_update": True,
             },
         )
         assert _node_label(node) == "Write: P-1 --fits--> V-1 (update)"
@@ -659,7 +664,8 @@ class TestSerializer:
         from cruxible_core.receipt.types import ReceiptNode
 
         node = ReceiptNode(
-            node_id="n1", node_type="feedback_applied",
+            node_id="n1",
+            node_type="feedback_applied",
             detail={"action": "approve", "applied": True},
         )
         assert _node_label(node) == "Feedback: approve (applied)"
@@ -669,7 +675,8 @@ class TestSerializer:
         from cruxible_core.receipt.types import ReceiptNode
 
         node = ReceiptNode(
-            node_id="n1", node_type="ingest_batch",
+            node_id="n1",
+            node_type="ingest_batch",
             detail={"mapping": "parts_csv", "added": 10, "updated": 2},
         )
         assert _node_label(node) == "Ingest: parts_csv (10 added, 2 updated)"

@@ -12,8 +12,14 @@ from typing import Any, Literal
 from cruxible_core.receipt.types import EvidenceEdge, Receipt, ReceiptNode
 
 _EdgeType = Literal[
-    "consulted", "traversed", "filtered", "evaluated", "produced",
-    "validated", "mutated", "applied",
+    "consulted",
+    "traversed",
+    "filtered",
+    "evaluated",
+    "produced",
+    "validated",
+    "mutated",
+    "applied",
 ]
 
 

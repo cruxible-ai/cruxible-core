@@ -34,13 +34,13 @@ from cruxible_core.errors import (
 from cruxible_core.evaluate import EvaluationReport, evaluate_graph
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import (
     apply_entity,
     apply_relationship,
     validate_entity,
     validate_relationship,
 )
-from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember
@@ -199,9 +199,11 @@ def service_add_entities(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    builder = ReceiptBuilder(
-        operation_type="add_entity", parameters={"count": len(entities)}
-    ) if _create_receipt else None
+    builder = (
+        ReceiptBuilder(operation_type="add_entity", parameters={"count": len(entities)})
+        if _create_receipt
+        else None
+    )
 
     result: AddEntityResult | None = None
     _exc: CoreError | None = None
@@ -213,9 +215,7 @@ def service_add_entities(
         for i, ent in enumerate(entities, start=1):
             key = (ent.entity_type, ent.entity_id)
             if key in batch_seen:
-                errors.append(
-                    f"Entity {i}: duplicate in batch {ent.entity_type}:{ent.entity_id}"
-                )
+                errors.append(f"Entity {i}: duplicate in batch {ent.entity_type}:{ent.entity_id}")
                 if builder:
                     builder.record_validation(
                         passed=False,
@@ -225,14 +225,16 @@ def service_add_entities(
 
             try:
                 validated = validate_entity(
-                    config, graph, ent.entity_type, ent.entity_id, ent.properties,
+                    config,
+                    graph,
+                    ent.entity_type,
+                    ent.entity_id,
+                    ent.properties,
                 )
             except DataValidationError as exc:
                 errors.append(f"Entity {i}: {exc}")
                 if builder:
-                    builder.record_validation(
-                        passed=False, detail={"entity": i, "error": str(exc)}
-                    )
+                    builder.record_validation(passed=False, detail={"entity": i, "error": str(exc)})
                 continue
 
             batch_seen.add(key)
@@ -302,10 +304,14 @@ def service_add_relationships(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    builder = ReceiptBuilder(
-        operation_type="add_relationship",
-        parameters={"count": len(relationships), "source": source},
-    ) if _create_receipt else None
+    builder = (
+        ReceiptBuilder(
+            operation_type="add_relationship",
+            parameters={"count": len(relationships), "source": source},
+        )
+        if _create_receipt
+        else None
+    )
 
     result: AddRelationshipResult | None = None
     _exc: CoreError | None = None
@@ -337,16 +343,19 @@ def service_add_relationships(
 
             try:
                 validated = validate_relationship(
-                    config, graph,
-                    edge.from_type, edge.from_id, edge.relationship,
-                    edge.to_type, edge.to_id, edge.properties,
+                    config,
+                    graph,
+                    edge.from_type,
+                    edge.from_id,
+                    edge.relationship,
+                    edge.to_type,
+                    edge.to_id,
+                    edge.properties,
                 )
             except DataValidationError as exc:
                 errors.append(f"Edge {i}: {exc}")
                 if builder:
-                    builder.record_validation(
-                        passed=False, detail={"edge": i, "error": str(exc)}
-                    )
+                    builder.record_validation(passed=False, detail={"edge": i, "error": str(exc)})
                 continue
 
             batch_seen.add(key)
@@ -373,9 +382,12 @@ def service_add_relationships(
             apply_relationship(graph, validated, source, source_ref)
             if builder:
                 builder.record_relationship_write(
-                    edge.from_type, edge.from_id,
-                    edge.to_type, edge.to_id,
-                    edge.relationship, is_update=validated.is_update,
+                    edge.from_type,
+                    edge.from_id,
+                    edge.to_type,
+                    edge.to_id,
+                    edge.relationship,
+                    is_update=validated.is_update,
                 )
             if validated.is_update:
                 updated += 1
@@ -640,8 +652,7 @@ def service_feedback(
     )
 
     target_str = (
-        f"{target.from_type}:{target.from_id}:{target.relationship}"
-        f":{target.to_type}:{target.to_id}"
+        f"{target.from_type}:{target.from_id}:{target.relationship}:{target.to_type}:{target.to_id}"
     )
     builder = ReceiptBuilder(
         operation_type="feedback",
@@ -986,9 +997,7 @@ def service_list(
             summaries = store.list_receipts(
                 query_name=query_name, operation_type=operation_type, limit=limit
             )
-            total = store.count_receipts(
-                query_name=query_name, operation_type=operation_type
-            )
+            total = store.count_receipts(query_name=query_name, operation_type=operation_type)
         finally:
             store.close()
         return ListResult(items=summaries, total=total)
@@ -1329,8 +1338,9 @@ def service_resolve_group(
         raise ConfigError(f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_SOURCES)}")
 
     group_store = instance.get_group_store()
+
+    # 2. Load group — close store on failure before builder exists
     try:
-        # 2. Load group
         group = group_store.get_group(group_id)
         if group is None:
             raise GroupNotFoundError(group_id)
@@ -1345,9 +1355,25 @@ def service_resolve_group(
 
         # 4. Load members
         members = group_store.get_members(group_id)
+    except Exception:
+        group_store.close()
+        raise
 
+    # Receipt builder — after input validation, before mutation logic
+    builder = ReceiptBuilder(
+        operation_type="group_resolve",
+        parameters={"group_id": group_id, "action": action},
+    )
+
+    result: ResolveGroupResult | None = None
+    _exc: CoreError | None = None
+    try:
         # 6. Reject path — no graph mutation
         if action == "reject":
+            builder.record_validation(
+                passed=True,
+                detail={"action": "reject", "members": len(members)},
+            )
             with group_store.transaction():
                 res_id = group_store.save_resolution(
                     group.relationship_type,
@@ -1362,130 +1388,180 @@ def service_resolve_group(
                     confirmed=True,
                 )
                 group_store.update_group_status(group_id, "resolved", resolution_id=res_id)
-            return ResolveGroupResult(
+            builder.mark_committed()
+            result = ResolveGroupResult(
                 group_id=group_id, action="reject", edges_created=0, edges_skipped=0
             )
+        else:
+            # 5. Approve — per-member validation
+            instance.invalidate_graph_cache()
+            config = instance.load_config()
+            graph = instance.load_graph()
 
-        # 5. Approve — per-member validation
-        instance.invalidate_graph_cache()
-        config = instance.load_config()
-        graph = instance.load_graph()
+            valid_inputs: list[RelationshipUpsertInput] = []
+            edges_skipped = 0
 
-        valid_inputs: list[RelationshipUpsertInput] = []
-        edges_skipped = 0
-
-        for m in members:
-            # 5a. Count-based existence check
-            count = graph.relationship_count_between(
-                m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type
-            )
-            if count > 0:
-                edges_skipped += 1
-                continue
-
-            # 5b. Validate
-            try:
-                validate_relationship(
-                    config,
-                    graph,
-                    m.from_type,
-                    m.from_id,
-                    m.relationship_type,
-                    m.to_type,
-                    m.to_id,
-                    m.properties,
+            for m in members:
+                # 5a. Count-based existence check
+                count = graph.relationship_count_between(
+                    m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type
                 )
-            except DataValidationError:
-                edges_skipped += 1
-                continue
+                if count > 0:
+                    builder.record_validation(
+                        passed=False,
+                        detail={
+                            "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
+                            "reason": "edge_exists",
+                        },
+                    )
+                    edges_skipped += 1
+                    continue
 
-            # 5c. Valid — add to batch
-            valid_inputs.append(
-                RelationshipUpsertInput(
-                    from_type=m.from_type,
-                    from_id=m.from_id,
-                    relationship=m.relationship_type,
-                    to_type=m.to_type,
-                    to_id=m.to_id,
-                    properties=m.properties,
+                # 5b. Validate
+                try:
+                    validate_relationship(
+                        config,
+                        graph,
+                        m.from_type,
+                        m.from_id,
+                        m.relationship_type,
+                        m.to_type,
+                        m.to_id,
+                        m.properties,
+                    )
+                except DataValidationError:
+                    builder.record_validation(
+                        passed=False,
+                        detail={
+                            "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
+                            "reason": "validation_failed",
+                        },
+                    )
+                    edges_skipped += 1
+                    continue
+
+                builder.record_validation(
+                    passed=True,
+                    detail={
+                        "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
+                    },
                 )
-            )
 
-        # 7. Approve — store-first, then graph
-        resolution_id: str
-        if not is_retry:
-            # 7a. First attempt: create resolution
-            if not valid_inputs:
-                raise ConfigError("Cannot approve: no creatable edges (all members skipped)")
+                # 5c. Valid — add to batch
+                valid_inputs.append(
+                    RelationshipUpsertInput(
+                        from_type=m.from_type,
+                        from_id=m.from_id,
+                        relationship=m.relationship_type,
+                        to_type=m.to_type,
+                        to_id=m.to_id,
+                        properties=m.properties,
+                    )
+                )
 
-            # Inherit trust from prior confirmed approval
+            # 7. Approve — store-first, then graph
+            resolution_id: str
+            if not is_retry:
+                # 7a. First attempt: create resolution
+                if not valid_inputs:
+                    raise ConfigError("Cannot approve: no creatable edges (all members skipped)")
+
+                # Inherit trust from prior confirmed approval
+                prior = group_store.find_resolution(
+                    group.relationship_type,
+                    group.signature,
+                    action="approve",
+                    confirmed=True,
+                )
+                inherited_trust = "watch"
+                if prior is not None:
+                    prior_trust = prior.get("trust_status", "watch")
+                    if prior_trust in ("trusted", "watch"):
+                        inherited_trust = prior_trust
+
+                with group_store.transaction():
+                    resolution_id = group_store.save_resolution(
+                        group.relationship_type,
+                        group.signature,
+                        "approve",
+                        rationale,
+                        group.thesis_text,
+                        group.thesis_facts,
+                        group.analysis_state,
+                        resolved_by,
+                        trust_status=inherited_trust,
+                        confirmed=False,
+                    )
+                    group_store.update_group_status(
+                        group_id, "applying", resolution_id=resolution_id
+                    )
+            else:
+                # 7b. Retry path: reuse existing resolution_id
+                resolution_id = group.resolution_id  # type: ignore[assignment]
+
+            # Record relationship_write nodes before inner call
+            for inp in valid_inputs:
+                builder.record_relationship_write(
+                    from_type=inp.from_type,
+                    from_id=inp.from_id,
+                    to_type=inp.to_type,
+                    to_id=inp.to_id,
+                    relationship=inp.relationship,
+                    is_update=False,
+                )
+
+            # 7c. Graph write — suppress inner receipt
+            edges_created = 0
+            if valid_inputs:
+                add_result = service_add_relationships(
+                    instance,
+                    valid_inputs,
+                    source="group_resolve",
+                    source_ref=f"group:{group_id}",
+                    _create_receipt=False,
+                )
+                edges_created = add_result.added
+
+            # 7d. Confirm + transition to resolved
+            # Revalidate inherited trust
             prior = group_store.find_resolution(
                 group.relationship_type,
                 group.signature,
                 action="approve",
                 confirmed=True,
             )
-            inherited_trust = "watch"
+            revalidated_trust: str | None = None
             if prior is not None:
                 prior_trust = prior.get("trust_status", "watch")
-                if prior_trust in ("trusted", "watch"):
-                    inherited_trust = prior_trust
+                if prior_trust == "invalidated":
+                    revalidated_trust = "watch"
 
             with group_store.transaction():
-                resolution_id = group_store.save_resolution(
-                    group.relationship_type,
-                    group.signature,
-                    "approve",
-                    rationale,
-                    group.thesis_text,
-                    group.thesis_facts,
-                    group.analysis_state,
-                    resolved_by,
-                    trust_status=inherited_trust,
-                    confirmed=False,
-                )
-                group_store.update_group_status(group_id, "applying", resolution_id=resolution_id)
-        else:
-            # 7b. Retry path: reuse existing resolution_id
-            resolution_id = group.resolution_id  # type: ignore[assignment]
+                group_store.confirm_resolution(resolution_id, trust_status=revalidated_trust)
+                group_store.update_group_status(group_id, "resolved")
 
-        # 7c. Graph write
-        edges_created = 0
-        if valid_inputs:
-            result = service_add_relationships(
-                instance,
-                valid_inputs,
-                source="group_resolve",
-                source_ref=f"group:{group_id}",
+            builder.mark_committed()
+            result = ResolveGroupResult(
+                group_id=group_id,
+                action="approve",
+                edges_created=edges_created,
+                edges_skipped=edges_skipped,
             )
-            edges_created = result.added
-
-        # 7d. Confirm + transition to resolved
-        # Revalidate inherited trust
-        prior = group_store.find_resolution(
-            group.relationship_type,
-            group.signature,
-            action="approve",
-            confirmed=True,
-        )
-        revalidated_trust: str | None = None
-        if prior is not None:
-            prior_trust = prior.get("trust_status", "watch")
-            if prior_trust == "invalidated":
-                revalidated_trust = "watch"
-
-        with group_store.transaction():
-            group_store.confirm_resolution(resolution_id, trust_status=revalidated_trust)
-            group_store.update_group_status(group_id, "resolved")
-
-        return ResolveGroupResult(
-            group_id=group_id,
-            action="approve",
-            edges_created=edges_created,
-            edges_skipped=edges_skipped,
-        )
+    except CoreError as e:
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
     finally:
         group_store.close()
+        receipt = builder.build()
+        if _persist_receipt(instance, receipt):
+            if _exc is not None:
+                _exc.mutation_receipt_id = receipt.receipt_id
+            elif result is not None:
+                result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]
 
 
 def service_get_group(
