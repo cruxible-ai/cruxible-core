@@ -188,6 +188,8 @@ class ListResult:
 def service_add_entities(
     instance: InstanceProtocol,
     entities: Sequence[EntityUpsertInput],
+    *,
+    _create_receipt: bool = True,
 ) -> AddEntityResult:
     """Add or update entities in the graph (batch upsert).
 
@@ -197,48 +199,90 @@ def service_add_entities(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    errors: list[str] = []
-    batch_seen: set[tuple[str, str]] = set()
-    pending = []
+    builder = ReceiptBuilder(
+        operation_type="add_entity", parameters={"count": len(entities)}
+    ) if _create_receipt else None
 
-    for i, ent in enumerate(entities, start=1):
-        key = (ent.entity_type, ent.entity_id)
-        if key in batch_seen:
-            errors.append(f"Entity {i}: duplicate in batch {ent.entity_type}:{ent.entity_id}")
-            continue
+    result: AddEntityResult | None = None
+    _exc: CoreError | None = None
+    try:
+        errors: list[str] = []
+        batch_seen: set[tuple[str, str]] = set()
+        pending = []
 
-        try:
-            validated = validate_entity(
-                config,
-                graph,
-                ent.entity_type,
-                ent.entity_id,
-                ent.properties,
+        for i, ent in enumerate(entities, start=1):
+            key = (ent.entity_type, ent.entity_id)
+            if key in batch_seen:
+                errors.append(
+                    f"Entity {i}: duplicate in batch {ent.entity_type}:{ent.entity_id}"
+                )
+                if builder:
+                    builder.record_validation(
+                        passed=False,
+                        detail={"entity": i, "error": "duplicate in batch"},
+                    )
+                continue
+
+            try:
+                validated = validate_entity(
+                    config, graph, ent.entity_type, ent.entity_id, ent.properties,
+                )
+            except DataValidationError as exc:
+                errors.append(f"Entity {i}: {exc}")
+                if builder:
+                    builder.record_validation(
+                        passed=False, detail={"entity": i, "error": str(exc)}
+                    )
+                continue
+
+            batch_seen.add(key)
+            pending.append(validated)
+            if builder:
+                builder.record_validation(
+                    passed=True,
+                    detail={"entity_type": ent.entity_type, "entity_id": ent.entity_id},
+                )
+
+        if errors:
+            raise DataValidationError(
+                f"Entity validation failed with {len(errors)} error(s)",
+                errors=errors,
             )
-        except DataValidationError as exc:
-            errors.append(f"Entity {i}: {exc}")
-            continue
 
-        batch_seen.add(key)
-        pending.append(validated)
+        added = 0
+        updated = 0
+        for validated in pending:
+            apply_entity(graph, validated)
+            if builder:
+                builder.record_entity_write(
+                    validated.entity.entity_type,
+                    validated.entity.entity_id,
+                    is_update=validated.is_update,
+                )
+            if validated.is_update:
+                updated += 1
+            else:
+                added += 1
 
-    if errors:
-        raise DataValidationError(
-            f"Entity validation failed with {len(errors)} error(s)",
-            errors=errors,
-        )
-
-    added = 0
-    updated = 0
-    for validated in pending:
-        apply_entity(graph, validated)
-        if validated.is_update:
-            updated += 1
-        else:
-            added += 1
-
-    instance.save_graph(graph)
-    return AddEntityResult(added=added, updated=updated)
+        _save_graph(instance, graph)
+        if builder:
+            builder.mark_committed()
+        result = AddEntityResult(added=added, updated=updated)
+    except CoreError as e:
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
+    finally:
+        if builder:
+            receipt = builder.build()
+            if _persist_receipt(instance, receipt):
+                if _exc is not None:
+                    _exc.mutation_receipt_id = receipt.receipt_id
+                elif result is not None:
+                    result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]
 
 
 def service_add_relationships(
@@ -246,6 +290,8 @@ def service_add_relationships(
     relationships: Sequence[RelationshipUpsertInput],
     source: str,
     source_ref: str,
+    *,
+    _create_receipt: bool = True,
 ) -> AddRelationshipResult:
     """Add or update relationships in the graph (batch upsert).
 
@@ -256,62 +302,105 @@ def service_add_relationships(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    errors: list[str] = []
-    batch_seen: set[tuple[str, str, str, str, str]] = set()
-    pending = []
+    builder = ReceiptBuilder(
+        operation_type="add_relationship",
+        parameters={"count": len(relationships), "source": source},
+    ) if _create_receipt else None
 
-    for i, edge in enumerate(relationships, start=1):
-        key = (
-            edge.from_type,
-            edge.from_id,
-            edge.to_type,
-            edge.to_id,
-            edge.relationship,
-        )
-        if key in batch_seen:
-            errors.append(
-                f"Edge {i}: duplicate in batch "
-                f"{edge.from_type}:{edge.from_id} "
-                f"-[{edge.relationship}]-> "
-                f"{edge.to_type}:{edge.to_id}"
-            )
-            continue
+    result: AddRelationshipResult | None = None
+    _exc: CoreError | None = None
+    try:
+        errors: list[str] = []
+        batch_seen: set[tuple[str, str, str, str, str]] = set()
+        pending = []
 
-        try:
-            validated = validate_relationship(
-                config,
-                graph,
+        for i, edge in enumerate(relationships, start=1):
+            key = (
                 edge.from_type,
                 edge.from_id,
-                edge.relationship,
                 edge.to_type,
                 edge.to_id,
-                edge.properties,
+                edge.relationship,
             )
-        except DataValidationError as exc:
-            errors.append(f"Edge {i}: {exc}")
-            continue
+            if key in batch_seen:
+                errors.append(
+                    f"Edge {i}: duplicate in batch "
+                    f"{edge.from_type}:{edge.from_id} "
+                    f"-[{edge.relationship}]-> "
+                    f"{edge.to_type}:{edge.to_id}"
+                )
+                if builder:
+                    builder.record_validation(
+                        passed=False, detail={"edge": i, "error": "duplicate in batch"}
+                    )
+                continue
 
-        batch_seen.add(key)
-        pending.append(validated)
+            try:
+                validated = validate_relationship(
+                    config, graph,
+                    edge.from_type, edge.from_id, edge.relationship,
+                    edge.to_type, edge.to_id, edge.properties,
+                )
+            except DataValidationError as exc:
+                errors.append(f"Edge {i}: {exc}")
+                if builder:
+                    builder.record_validation(
+                        passed=False, detail={"edge": i, "error": str(exc)}
+                    )
+                continue
 
-    if errors:
-        raise DataValidationError(
-            f"Relationship validation failed with {len(errors)} error(s)",
-            errors=errors,
-        )
+            batch_seen.add(key)
+            pending.append((validated, edge))
+            if builder:
+                builder.record_validation(
+                    passed=True,
+                    detail={
+                        "from": f"{edge.from_type}:{edge.from_id}",
+                        "to": f"{edge.to_type}:{edge.to_id}",
+                        "relationship": edge.relationship,
+                    },
+                )
 
-    added = 0
-    updated = 0
-    for validated in pending:
-        apply_relationship(graph, validated, source, source_ref)
-        if validated.is_update:
-            updated += 1
-        else:
-            added += 1
+        if errors:
+            raise DataValidationError(
+                f"Relationship validation failed with {len(errors)} error(s)",
+                errors=errors,
+            )
 
-    instance.save_graph(graph)
-    return AddRelationshipResult(added=added, updated=updated)
+        added = 0
+        updated = 0
+        for validated, edge in pending:
+            apply_relationship(graph, validated, source, source_ref)
+            if builder:
+                builder.record_relationship_write(
+                    edge.from_type, edge.from_id,
+                    edge.to_type, edge.to_id,
+                    edge.relationship, is_update=validated.is_update,
+                )
+            if validated.is_update:
+                updated += 1
+            else:
+                added += 1
+
+        _save_graph(instance, graph)
+        if builder:
+            builder.mark_committed()
+        result = AddRelationshipResult(added=added, updated=updated)
+    except CoreError as e:
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
+    finally:
+        if builder:
+            receipt = builder.build()
+            if _persist_receipt(instance, receipt):
+                if _exc is not None:
+                    _exc.mutation_receipt_id = receipt.receipt_id
+                elif result is not None:
+                    result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]
 
 
 def service_ingest(
