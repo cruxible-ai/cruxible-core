@@ -7,7 +7,8 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import DataValidationError, IngestionError
+from cruxible_core.errors import ConfigError, DataValidationError, IngestionError
+from cruxible_core.feedback.types import EdgeTarget
 from cruxible_core.service import (
     AddEntityResult,
     AddRelationshipResult,
@@ -15,7 +16,9 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_feedback,
     service_ingest,
+    service_query,
 )
 
 
@@ -259,3 +262,90 @@ class TestIngestReceipts:
                 store.close()
             assert receipt is not None
             assert receipt.committed is False
+
+
+# ---------------------------------------------------------------------------
+# feedback receipts
+# ---------------------------------------------------------------------------
+
+
+def _edge_target() -> EdgeTarget:
+    return EdgeTarget(
+        from_type="Part",
+        from_id="BP-1001",
+        relationship="fits",
+        to_type="Vehicle",
+        to_id="V-2024-CIVIC-EX",
+    )
+
+
+class TestFeedbackReceipts:
+    def _run_query(self, instance: CruxibleInstance) -> str:
+        """Run a query and return the receipt_id for feedback."""
+        result = service_query(
+            instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert result.receipt_id is not None
+        return result.receipt_id
+
+    def test_feedback_produces_receipt(
+        self, populated_instance: CruxibleInstance
+    ):
+        receipt_id = self._run_query(populated_instance)
+        result = service_feedback(
+            populated_instance,
+            receipt_id=receipt_id,
+            action="approve",
+            source="human",
+            target=_edge_target(),
+            reason="Confirmed fitment",
+        )
+        assert result.receipt_id is not None
+
+        store = populated_instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(result.receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.operation_type == "feedback"
+        assert receipt.committed is True
+
+        node_types = {n.node_type for n in receipt.nodes}
+        assert "feedback_applied" in node_types
+
+    def test_feedback_receipt_includes_applied_status(
+        self, populated_instance: CruxibleInstance
+    ):
+        receipt_id = self._run_query(populated_instance)
+        result = service_feedback(
+            populated_instance,
+            receipt_id=receipt_id,
+            action="approve",
+            source="human",
+            target=_edge_target(),
+        )
+        store = populated_instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(result.receipt_id)
+        finally:
+            store.close()
+        # Find the feedback_applied node and check detail
+        fb_nodes = [n for n in receipt.nodes if n.node_type == "feedback_applied"]
+        assert len(fb_nodes) == 1
+        assert "applied" in fb_nodes[0].detail
+
+    def test_feedback_input_error_no_receipt(
+        self, populated_instance: CruxibleInstance
+    ):
+        """Bad action string raises ConfigError before builder created — no receipt."""
+        with pytest.raises(ConfigError):
+            service_feedback(
+                populated_instance,
+                receipt_id="RCP-doesnotmatter",
+                action="invalid_action",  # type: ignore[arg-type]
+                source="human",
+                target=_edge_target(),
+            )

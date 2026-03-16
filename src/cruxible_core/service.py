@@ -639,29 +639,54 @@ def service_feedback(
         corrections=corrections or {},
     )
 
+    target_str = (
+        f"{target.from_type}:{target.from_id}:{target.relationship}"
+        f":{target.to_type}:{target.to_id}"
+    )
+    builder = ReceiptBuilder(
+        operation_type="feedback",
+        parameters={"receipt_id": receipt_id, "action": action, "source": source},
+    )
+
+    result: FeedbackServiceResult | None = None
+    _exc: CoreError | None = None
     feedback_store = instance.get_feedback_store()
     try:
         feedback_store.save_feedback(record)
+
+        applied = apply_feedback(graph, record)
+        builder.record_feedback_applied(target_str, action, applied)
+
+        # Stamp group_override on the edge after applying feedback
+        if group_override:
+            graph.update_edge_properties(
+                target.from_type,
+                target.from_id,
+                target.to_type,
+                target.to_id,
+                target.relationship,
+                {"group_override": True},
+                edge_key=target.edge_key,
+            )
+
+        _save_graph(instance, graph)
+        builder.mark_committed()
+        result = FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied)
+    except CoreError as e:
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
     finally:
         feedback_store.close()
-
-    applied = apply_feedback(graph, record)
-
-    # Stamp group_override on the edge after applying feedback
-    if group_override:
-        graph.update_edge_properties(
-            target.from_type,
-            target.from_id,
-            target.to_type,
-            target.to_id,
-            target.relationship,
-            {"group_override": True},
-            edge_key=target.edge_key,
-        )
-
-    instance.save_graph(graph)
-
-    return FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied)
+        receipt = builder.build()
+        if _persist_receipt(instance, receipt):
+            if _exc is not None:
+                _exc.mutation_receipt_id = receipt.receipt_id
+            elif result is not None:
+                result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]
 
 
 def service_outcome(
