@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import csv
-import inspect
 import json
 from pathlib import Path
 from typing import cast
 
 import click
 from rich.console import Console
-from rich.table import Table
 
 from cruxible_core.cli.formatting import (
     candidates_table,
@@ -771,69 +769,6 @@ def export_edges(output: str, relationship: str | None, exclude_rejected: bool) 
         raise ConfigError(f"Failed to write {path}: {exc}") from exc
 
     click.echo(f"Exported {count} edge(s) to {path}")
-
-
-# ---------------------------------------------------------------------------
-# prompt (subgroup)
-# ---------------------------------------------------------------------------
-
-
-@click.group("prompt")
-def prompt_group() -> None:
-    """List or read workflow prompts."""
-
-
-@prompt_group.command("list")
-def prompt_list() -> None:
-    """List available workflow prompts."""
-    from cruxible_core.mcp.prompts import PROMPT_REGISTRY
-
-    table = Table(title="Available Prompts")
-    table.add_column("Name", style="cyan")
-    table.add_column("Description")
-    table.add_column("Args", style="green")
-
-    for name in sorted(PROMPT_REGISTRY):
-        fn, desc = PROMPT_REGISTRY[name]
-        sig = inspect.signature(fn)
-        args = ", ".join(
-            f"{p.name}: {p.annotation.__name__}" if hasattr(p.annotation, "__name__") else p.name
-            for p in sig.parameters.values()
-        )
-        table.add_row(name, desc, args or "(none)")
-
-    console.print(table)
-
-
-@prompt_group.command("read")
-@click.option("--name", "prompt_name", required=True, help="Prompt name.")
-@click.option("--arg", multiple=True, help="Prompt argument as KEY=VALUE.")
-def prompt_read(prompt_name: str, arg: tuple[str, ...]) -> None:
-    """Read a workflow prompt with the given arguments."""
-    from cruxible_core.mcp.prompts import PROMPT_REGISTRY
-
-    # Validate prompt exists
-    if prompt_name not in PROMPT_REGISTRY:
-        available = ", ".join(sorted(PROMPT_REGISTRY.keys()))
-        raise click.ClickException(f"Unknown prompt '{prompt_name}'. Available: {available}")
-
-    # Parse and validate args
-    args_dict = _parse_params(arg)
-
-    fn, _desc = PROMPT_REGISTRY[prompt_name]
-    sig = inspect.signature(fn)
-
-    required = [p.name for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
-    missing = [r for r in required if r not in args_dict]
-    if missing:
-        raise click.ClickException(f"Prompt '{prompt_name}' requires: {', '.join(missing)}")
-
-    extra = set(args_dict.keys()) - set(sig.parameters.keys())
-    if extra:
-        raise click.ClickException(f"Unknown args for '{prompt_name}': {', '.join(sorted(extra))}")
-
-    content = fn(**args_dict)
-    click.echo(content)
 
 
 # ---------------------------------------------------------------------------
