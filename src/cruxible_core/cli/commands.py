@@ -125,6 +125,8 @@ def ingest(mapping: str, file_path: str) -> None:
     if result.records_updated:
         parts.append(f"{result.records_updated} updated")
     click.echo(f"Ingested {', '.join(parts)} via mapping '{mapping}'.")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +272,8 @@ def feedback_cmd(
         click.echo(f"Feedback {result.feedback_id} applied to graph.")
     else:
         click.echo(f"Feedback {result.feedback_id} saved (edge not found in graph).")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +573,8 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
         click.echo(f"Entity {label} updated.")
     else:
         click.echo(f"Entity {label} added.")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +628,8 @@ def add_relationship_cmd(
         click.echo(f"Relationship updated: {edge_label}")
     else:
         click.echo(f"Relationship added: {edge_label}")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -958,6 +966,8 @@ def group_resolve(group_id: str, action: str, rationale: str, source: str) -> No
         click.echo(f"  Edges created: {result.edges_created}")
         if result.edges_skipped:
             click.echo(f"  Edges skipped: {result.edges_skipped}")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 @group_group.command("trust")

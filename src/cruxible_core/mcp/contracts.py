@@ -84,6 +84,7 @@ class IngestResult(BaseModel):
     mapping: str
     entity_type: str | None
     relationship_type: str | None
+    receipt_id: str | None = None
 
 
 class QueryToolResult(BaseModel):
@@ -98,6 +99,7 @@ class QueryToolResult(BaseModel):
 class FeedbackResult(BaseModel):
     feedback_id: str
     applied: bool
+    receipt_id: str | None = None
 
 
 class OutcomeResult(BaseModel):
@@ -130,11 +132,13 @@ class SampleResult(BaseModel):
 class AddRelationshipResult(BaseModel):
     added: int
     updated: int
+    receipt_id: str | None = None
 
 
 class AddEntityResult(BaseModel):
     entities_added: int
     entities_updated: int
+    receipt_id: str | None = None
 
 
 class AddConstraintResult(BaseModel):
@@ -176,6 +180,7 @@ class ResolveGroupToolResult(BaseModel):
     action: str
     edges_created: int
     edges_skipped: int
+    receipt_id: str | None = None
 
 
 class UpdateTrustStatusToolResult(BaseModel):

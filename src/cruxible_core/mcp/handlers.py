@@ -208,6 +208,7 @@ def handle_ingest(
         mapping=result.mapping,
         entity_type=result.entity_type,
         relationship_type=result.relationship_type,
+        receipt_id=result.receipt_id,
     )
 
 
@@ -293,7 +294,9 @@ def handle_feedback(
         corrections=corrections,
         group_override=group_override,
     )
-    return contracts.FeedbackResult(feedback_id=result.feedback_id, applied=result.applied)
+    return contracts.FeedbackResult(
+        feedback_id=result.feedback_id, applied=result.applied, receipt_id=result.receipt_id
+    )
 
 
 def handle_outcome(
@@ -456,7 +459,9 @@ def handle_add_relationship(
     result = service_add_relationships(
         instance, inputs, source="mcp_add", source_ref="cruxible_add_relationship"
     )
-    return contracts.AddRelationshipResult(added=result.added, updated=result.updated)
+    return contracts.AddRelationshipResult(
+        added=result.added, updated=result.updated, receipt_id=result.receipt_id
+    )
 
 
 def handle_add_entity(
@@ -476,7 +481,9 @@ def handle_add_entity(
         for ent in entities
     ]
     result = service_add_entities(instance, inputs)
-    return contracts.AddEntityResult(entities_added=result.added, entities_updated=result.updated)
+    return contracts.AddEntityResult(
+        entities_added=result.added, entities_updated=result.updated, receipt_id=result.receipt_id
+    )
 
 
 def handle_add_constraint(
@@ -681,6 +688,7 @@ def handle_resolve_group(
         action=result.action,
         edges_created=result.edges_created,
         edges_skipped=result.edges_skipped,
+        receipt_id=result.receipt_id,
     )
 
 

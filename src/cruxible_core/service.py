@@ -7,6 +7,7 @@ permission checks, and protocol-specific concerns.
 
 from __future__ import annotations
 
+import hashlib
 import json as _json
 import uuid
 from collections.abc import Sequence
@@ -15,15 +16,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+import structlog
+
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import load_config, load_config_from_string
 from cruxible_core.config.schema import CoreConfig, MatchingConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import (
     ConfigError,
+    CoreError,
     DataValidationError,
     EdgeAmbiguityError,
     GroupNotFoundError,
+    MutationError,
     ReceiptNotFoundError,
 )
 from cruxible_core.evaluate import EvaluationReport, evaluate_graph
@@ -35,6 +40,7 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember
@@ -42,7 +48,43 @@ from cruxible_core.ingest import ingest_file, ingest_from_mapping, load_data_fro
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.candidates import CandidateMatch, MatchRule, find_candidates
 from cruxible_core.query.engine import execute_query
+from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
+
+logger = structlog.get_logger()
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> bool:
+    """Best-effort receipt persistence. Returns True if saved."""
+    store = instance.get_receipt_store()
+    try:
+        store.save_receipt(receipt)
+        return True
+    except Exception:
+        logger.warning("Failed to persist receipt %s", receipt.receipt_id, exc_info=True)
+        return False
+    finally:
+        store.close()
+
+
+def _save_graph(instance: InstanceProtocol, graph: EntityGraph) -> None:
+    """Save graph, wrapping non-CoreError failures so mutation_receipt_id flows."""
+    try:
+        instance.save_graph(graph)
+    except CoreError:
+        raise
+    except Exception as exc:
+        raise MutationError(f"Failed to save graph: {exc}") from exc
+
+
+def _config_digest(config: CoreConfig) -> str:
+    """SHA-256 digest of config JSON (first 12 hex chars)."""
+    return hashlib.sha256(config.model_dump_json(exclude_none=True).encode()).hexdigest()[:12]
+
 
 # ---------------------------------------------------------------------------
 # Input types
@@ -79,12 +121,14 @@ class RelationshipUpsertInput:
 class AddEntityResult:
     added: int
     updated: int
+    receipt_id: str | None = None
 
 
 @dataclass
 class AddRelationshipResult:
     added: int
     updated: int
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -94,6 +138,7 @@ class IngestResult:
     mapping: str
     entity_type: str | None
     relationship_type: str | None
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -115,6 +160,7 @@ class QueryServiceResult:
 class FeedbackServiceResult:
     feedback_id: str
     applied: bool
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -847,6 +893,7 @@ class ResolveGroupResult:
     action: str
     edges_created: int
     edges_skipped: int
+    receipt_id: str | None = None
 
 
 @dataclass
