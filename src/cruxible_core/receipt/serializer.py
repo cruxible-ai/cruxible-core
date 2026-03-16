@@ -13,18 +13,36 @@ def to_json(receipt: Receipt) -> str:
 def to_markdown(receipt: Receipt) -> str:
     """Render a receipt as a human-readable Markdown summary."""
     lines: list[str] = []
-    lines.append(f"# Receipt {receipt.receipt_id}")
+
+    if receipt.operation_type != "query":
+        lines.append(f"# Receipt {receipt.receipt_id} ({receipt.operation_type})")
+    else:
+        lines.append(f"# Receipt {receipt.receipt_id}")
+
     lines.append("")
-    lines.append(f"**Query:** {receipt.query_name}")
+
+    if receipt.operation_type == "query":
+        lines.append(f"**Query:** {receipt.query_name}")
+    else:
+        lines.append(f"**Operation:** {receipt.operation_type}")
     lines.append(f"**Parameters:** {receipt.parameters}")
     lines.append(f"**Duration:** {receipt.duration_ms}ms")
-    lines.append(f"**Results:** {len(receipt.results)}")
+    if receipt.operation_type == "query":
+        lines.append(f"**Results:** {len(receipt.results)}")
+    if not receipt.committed:
+        lines.append("**Committed:** No")
     lines.append("")
 
     lookups = [n for n in receipt.nodes if n.node_type == "entity_lookup"]
     traversals = [n for n in receipt.nodes if n.node_type == "edge_traversal"]
     filters = [n for n in receipt.nodes if n.node_type == "filter_applied"]
     constraints = [n for n in receipt.nodes if n.node_type == "constraint_check"]
+    validations = [n for n in receipt.nodes if n.node_type == "validation"]
+    writes = [
+        n for n in receipt.nodes if n.node_type in ("entity_write", "relationship_write")
+    ]
+    feedback_nodes = [n for n in receipt.nodes if n.node_type == "feedback_applied"]
+    ingest_nodes = [n for n in receipt.nodes if n.node_type == "ingest_batch"]
 
     if lookups:
         lines.append("## Entry Points")
@@ -58,6 +76,31 @@ def to_markdown(receipt: Receipt) -> str:
             lines.append(f"- [{status}] {expr} on {n.entity_type}:{n.entity_id}")
         lines.append("")
 
+    if validations:
+        lines.append("## Validations")
+        for n in validations:
+            status = "PASS" if n.detail.get("passed") else "FAIL"
+            lines.append(f"- [{status}]")
+        lines.append("")
+
+    if writes:
+        lines.append("## Writes")
+        for n in writes:
+            lines.append(f"- {_node_label(n)}")
+        lines.append("")
+
+    if feedback_nodes:
+        lines.append("## Feedback")
+        for n in feedback_nodes:
+            lines.append(f"- {_node_label(n)}")
+        lines.append("")
+
+    if ingest_nodes:
+        lines.append("## Ingestion")
+        for n in ingest_nodes:
+            lines.append(f"- {_node_label(n)}")
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -80,6 +123,9 @@ def _node_label(node: ReceiptNode) -> str:
     if node.node_type == "query":
         return f"Query: {node.detail.get('query_name', 'query')}"
 
+    if node.node_type == "mutation":
+        return f"Mutation: {node.detail.get('operation_type', 'mutation')}"
+
     if node.node_type == "entity_lookup":
         return f"Lookup: {node.entity_type}:{node.entity_id}"
 
@@ -97,5 +143,32 @@ def _node_label(node: ReceiptNode) -> str:
 
     if node.node_type == "result":
         return f"Results: {node.detail.get('count', 0)}"
+
+    if node.node_type == "validation":
+        status = "PASS" if node.detail.get("passed") else "FAIL"
+        return f"Validation: {status}"
+
+    if node.node_type == "entity_write":
+        action = "update" if node.detail.get("is_update") else "add"
+        return f"Write: {node.entity_type}:{node.entity_id} ({action})"
+
+    if node.node_type == "relationship_write":
+        d = node.detail
+        from_id = d.get("from_id", "?")
+        to_id = d.get("to_id", "?")
+        rel = d.get("relationship", "?")
+        action = "update" if d.get("is_update") else "add"
+        return f"Write: {from_id} --{rel}--> {to_id} ({action})"
+
+    if node.node_type == "feedback_applied":
+        action = node.detail.get("action", "?")
+        status = "applied" if node.detail.get("applied") else "not applied"
+        return f"Feedback: {action} ({status})"
+
+    if node.node_type == "ingest_batch":
+        mapping = node.detail.get("mapping", "?")
+        added = node.detail.get("added", 0)
+        updated = node.detail.get("updated", 0)
+        return f"Ingest: {mapping} ({added} added, {updated} updated)"
 
     return node.node_type

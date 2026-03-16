@@ -252,6 +252,7 @@ def register_tools(server: FastMCP) -> list[str]:
         receipt_id: str | None = None,
         limit: int = 50,
         property_filter: dict[str, Any] | None = None,
+        operation_type: str | None = None,
     ) -> contracts.ListResult:
         """List `entities|edges|receipts|feedback|outcomes` with optional filters.
 
@@ -259,6 +260,7 @@ def register_tools(server: FastMCP) -> list[str]:
         `relationship_type` filters edges by type for `resource_type="edges"`.
         `property_filter` filters by exact property matches (AND semantics).
         Applies to `resource_type="entities"` and `resource_type="edges"`.
+        `operation_type` filters receipts (e.g. "query", "add_entity", "ingest").
 
         Edge items include `edge_key` for use with `cruxible_feedback` when
         multiple edges exist between the same endpoints.
@@ -272,6 +274,7 @@ def register_tools(server: FastMCP) -> list[str]:
             receipt_id=receipt_id,
             limit=limit,
             property_filter=property_filter,
+            operation_type=operation_type,
         )
 
     @_tool

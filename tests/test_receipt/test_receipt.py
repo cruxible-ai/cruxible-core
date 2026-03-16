@@ -598,3 +598,78 @@ class TestSerializer:
         assert "Query: parts_for_vehicle" in mermaid
         assert "Lookup: Vehicle:V-1" in mermaid
         assert "Filter: PASS" in mermaid
+
+    def test_to_markdown_mutation_header(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})
+        builder.record_entity_write("Vehicle", "V-1", is_update=False)
+        builder.mark_committed()
+        receipt = builder.build()
+        md = to_markdown(receipt)
+        assert "(add_entity)" in md
+        assert "**Operation:** add_entity" in md
+
+    def test_to_markdown_mutation_writes_section(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})
+        builder.record_entity_write("Vehicle", "V-1", is_update=False)
+        builder.mark_committed()
+        receipt = builder.build()
+        md = to_markdown(receipt)
+        assert "## Writes" in md
+        assert "Vehicle:V-1" in md
+
+    def test_to_mermaid_mutation_label(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={})
+        receipt = builder.build()
+        mermaid = to_mermaid(receipt)
+        assert "Mutation: add_entity" in mermaid
+
+    def test_node_label_validation(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(node_id="n1", node_type="validation", detail={"passed": True})
+        assert _node_label(node) == "Validation: PASS"
+
+    def test_node_label_entity_write(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1", node_type="entity_write",
+            entity_type="Vehicle", entity_id="V-1",
+            detail={"is_update": False},
+        )
+        assert _node_label(node) == "Write: Vehicle:V-1 (add)"
+
+    def test_node_label_relationship_write(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1", node_type="relationship_write",
+            detail={
+                "from_id": "P-1", "to_id": "V-1",
+                "relationship": "fits", "is_update": True,
+            },
+        )
+        assert _node_label(node) == "Write: P-1 --fits--> V-1 (update)"
+
+    def test_node_label_feedback_applied(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1", node_type="feedback_applied",
+            detail={"action": "approve", "applied": True},
+        )
+        assert _node_label(node) == "Feedback: approve (applied)"
+
+    def test_node_label_ingest_batch(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1", node_type="ingest_batch",
+            detail={"mapping": "parts_csv", "added": 10, "updated": 2},
+        )
+        assert _node_label(node) == "Ingest: parts_csv (10 added, 2 updated)"

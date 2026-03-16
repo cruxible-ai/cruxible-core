@@ -331,12 +331,15 @@ def list_entities(entity_type: str, limit: int) -> None:
 
 @list_group.command("receipts")
 @click.option("--query-name", default=None, help="Filter by query name.")
+@click.option("--operation-type", default=None, help="Filter by operation type.")
 @click.option("--limit", default=50, help="Max receipts to show.")
 @handle_errors
-def list_receipts(query_name: str | None, limit: int) -> None:
+def list_receipts(query_name: str | None, operation_type: str | None, limit: int) -> None:
     """List receipt summaries."""
     instance = CruxibleInstance.load()
-    result = service_list(instance, "receipts", query_name=query_name, limit=limit)
+    result = service_list(
+        instance, "receipts", query_name=query_name, operation_type=operation_type, limit=limit
+    )
     console.print(receipts_table(result.items))
     click.echo(f"{len(result.items)} receipt(s) shown.")
 

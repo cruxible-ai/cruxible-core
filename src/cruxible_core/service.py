@@ -765,6 +765,7 @@ def service_list(
     query_name: str | None = None,
     receipt_id: str | None = None,
     property_filter: dict[str, Any] | None = None,
+    operation_type: str | None = None,
     limit: int = 50,
 ) -> ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
@@ -796,8 +797,12 @@ def service_list(
     if resource == "receipts":
         store = instance.get_receipt_store()
         try:
-            summaries = store.list_receipts(query_name=query_name, limit=limit)
-            total = store.count_receipts(query_name=query_name)
+            summaries = store.list_receipts(
+                query_name=query_name, operation_type=operation_type, limit=limit
+            )
+            total = store.count_receipts(
+                query_name=query_name, operation_type=operation_type
+            )
         finally:
             store.close()
         return ListResult(items=summaries, total=total)

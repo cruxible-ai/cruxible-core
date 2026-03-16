@@ -30,14 +30,18 @@ def receipts_table(receipts: list[dict[str, Any]]) -> Table:
     """Build a Rich table for receipt summaries."""
     table = Table(title="Receipts")
     table.add_column("ID", style="cyan")
+    table.add_column("Type")
     table.add_column("Query")
     table.add_column("Created At")
     table.add_column("Duration (ms)", justify="right")
 
     for r in receipts:
+        op_type = r.get("operation_type", "query")
+        query_col = r["query_name"] if r["query_name"] else op_type
         table.add_row(
             r["receipt_id"],
-            r["query_name"],
+            op_type,
+            query_col,
             r["created_at"],
             f"{r['duration_ms']:.1f}",
         )

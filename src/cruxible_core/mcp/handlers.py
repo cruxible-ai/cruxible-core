@@ -318,6 +318,7 @@ def handle_list(
     receipt_id: str | None = None,
     limit: int = 50,
     property_filter: dict[str, Any] | None = None,
+    operation_type: str | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     check_permission("cruxible_list")
@@ -331,6 +332,7 @@ def handle_list(
         query_name=query_name,
         receipt_id=receipt_id,
         property_filter=property_filter,
+        operation_type=operation_type,
         limit=limit,
     )
 
