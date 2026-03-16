@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import DataValidationError, IngestionError
 from cruxible_core.service import (
     AddEntityResult,
     AddRelationshipResult,
@@ -15,6 +15,7 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_ingest,
 )
 
 
@@ -195,3 +196,66 @@ class TestAddRelationshipReceipts:
             store.close()
         assert receipt is not None
         assert receipt.committed is False
+
+
+# ---------------------------------------------------------------------------
+# ingest receipts
+# ---------------------------------------------------------------------------
+
+
+class TestIngestReceipts:
+    def test_ingest_produces_receipt(
+        self, initialized_instance: CruxibleInstance
+    ):
+        csv_data = "vehicle_id,year,make,model\nV-CSV-1,2025,Honda,Civic"
+        result = service_ingest(
+            initialized_instance, "vehicles", data_csv=csv_data
+        )
+        assert result.receipt_id is not None
+
+        store = initialized_instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(result.receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.operation_type == "ingest"
+        assert receipt.committed is True
+
+        node_types = {n.node_type for n in receipt.nodes}
+        assert "ingest_batch" in node_types
+
+    def test_ingest_config_digest(
+        self, initialized_instance: CruxibleInstance
+    ):
+        csv_data = "vehicle_id,year,make,model\nV-CSV-2,2025,Honda,Civic"
+        result = service_ingest(
+            initialized_instance, "vehicles", data_csv=csv_data
+        )
+        store = initialized_instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(result.receipt_id)
+        finally:
+            store.close()
+        digest = receipt.parameters.get("config_digest")
+        assert digest is not None
+        assert len(digest) == 12
+        assert all(c in "0123456789abcdef" for c in digest)
+
+    def test_ingest_failure_receipt(
+        self, initialized_instance: CruxibleInstance
+    ):
+        """Bad mapping name triggers error, receipt still persisted."""
+        with pytest.raises(Exception) as exc_info:
+            service_ingest(
+                initialized_instance, "nonexistent_mapping", data_csv="a,b\n1,2"
+            )
+        exc = exc_info.value
+        if hasattr(exc, "mutation_receipt_id") and exc.mutation_receipt_id:
+            store = initialized_instance.get_receipt_store()
+            try:
+                receipt = store.get_receipt(exc.mutation_receipt_id)
+            finally:
+                store.close()
+            assert receipt is not None
+            assert receipt.committed is False

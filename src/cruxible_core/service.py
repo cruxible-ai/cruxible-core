@@ -416,6 +416,7 @@ def service_ingest(
 
     Accepts exactly one data source. Raises ConfigError on source violations.
     """
+    # Input validation — no receipt for these
     sources = sum(x is not None for x in (file_path, data_csv, data_json, data_ndjson, upload_id))
     if sources == 0:
         raise ConfigError(
@@ -432,30 +433,55 @@ def service_ingest(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    if file_path is not None:
-        added, updated = ingest_file(config, graph, mapping_name, file_path)
-    elif data_csv is not None:
-        df = load_data_from_string(data_csv, "csv")
-        added, updated = ingest_from_mapping(config, graph, mapping_name, df)
-    elif data_ndjson is not None:
-        df = load_data_from_string(data_ndjson, "ndjson")
-        added, updated = ingest_from_mapping(config, graph, mapping_name, df)
-    else:
-        assert data_json is not None
-        if not isinstance(data_json, str):
-            data_json = _json.dumps(data_json)
-        df = load_data_from_string(data_json, "json")
-        added, updated = ingest_from_mapping(config, graph, mapping_name, df)
-
-    instance.save_graph(graph)
-    mapping = config.ingestion[mapping_name]
-    return IngestResult(
-        records_ingested=added,
-        records_updated=updated,
-        mapping=mapping_name,
-        entity_type=mapping.entity_type,
-        relationship_type=mapping.relationship_type,
+    builder = ReceiptBuilder(
+        operation_type="ingest",
+        parameters={"mapping": mapping_name, "config_digest": _config_digest(config)},
     )
+
+    result: IngestResult | None = None
+    _exc: CoreError | None = None
+    try:
+        if file_path is not None:
+            added, updated = ingest_file(config, graph, mapping_name, file_path)
+        elif data_csv is not None:
+            df = load_data_from_string(data_csv, "csv")
+            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+        elif data_ndjson is not None:
+            df = load_data_from_string(data_ndjson, "ndjson")
+            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+        else:
+            assert data_json is not None
+            if not isinstance(data_json, str):
+                data_json = _json.dumps(data_json)
+            df = load_data_from_string(data_json, "json")
+            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+
+        builder.record_ingest_batch(mapping_name, added, updated)
+        _save_graph(instance, graph)
+        builder.mark_committed()
+        mapping = config.ingestion[mapping_name]
+        result = IngestResult(
+            records_ingested=added,
+            records_updated=updated,
+            mapping=mapping_name,
+            entity_type=mapping.entity_type,
+            relationship_type=mapping.relationship_type,
+        )
+    except CoreError as e:
+        builder.record_validation(passed=False, detail={"error": str(e)})
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
+    finally:
+        receipt = builder.build()
+        if _persist_receipt(instance, receipt):
+            if _exc is not None:
+                _exc.mutation_receipt_id = receipt.receipt_id
+            elif result is not None:
+                result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
