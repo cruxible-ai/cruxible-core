@@ -313,6 +313,95 @@ class TestReceiptBuilder:
         assert len(produced_edges) == 1
         assert produced_edges[0].from_node == builder.root_id
 
+    def test_mutation_builder_creates_mutation_root(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={"count": 2})
+        receipt = builder.build()
+        root = receipt.nodes[0]
+        assert root.node_type == "mutation"
+        assert root.detail["operation_type"] == "add_entity"
+        assert receipt.operation_type == "add_entity"
+
+    def test_default_builder_creates_query_root(self):
+        builder = ReceiptBuilder(query_name="q", parameters={"a": 1})
+        receipt = builder.build(results=[])
+        root = receipt.nodes[0]
+        assert root.node_type == "query"
+        assert receipt.operation_type == "query"
+
+    def test_mutation_committed_default_false(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        receipt = builder.build()
+        assert receipt.committed is False
+
+    def test_query_committed_default_true(self):
+        builder = ReceiptBuilder(query_name="q", parameters={})
+        receipt = builder.build(results=[])
+        assert receipt.committed is True
+
+    def test_mark_committed(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        builder.mark_committed()
+        receipt = builder.build()
+        assert receipt.committed is True
+
+    def test_record_validation(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        nid = builder.record_validation(passed=True, detail={"entity": "test"})
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "validation"
+        assert node.detail["passed"] is True
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "validated"
+
+    def test_record_entity_write(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        nid = builder.record_entity_write("Vehicle", "V-1", is_update=False)
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "entity_write"
+        assert node.entity_type == "Vehicle"
+        assert node.entity_id == "V-1"
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "mutated"
+
+    def test_record_relationship_write(self):
+        builder = ReceiptBuilder(operation_type="add_relationship")
+        nid = builder.record_relationship_write(
+            "Part", "P-1", "Vehicle", "V-1", "fits", is_update=False
+        )
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "relationship_write"
+        assert node.detail["relationship"] == "fits"
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "mutated"
+
+    def test_record_feedback_applied(self):
+        builder = ReceiptBuilder(operation_type="feedback")
+        nid = builder.record_feedback_applied("P:1:fits:V:1", "approve", True)
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "feedback_applied"
+        assert node.detail["applied"] is True
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "applied"
+
+    def test_record_ingest_batch(self):
+        builder = ReceiptBuilder(operation_type="ingest")
+        nid = builder.record_ingest_batch("parts_csv", added=10, updated=2)
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "ingest_batch"
+        assert node.detail["added"] == 10
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "mutated"
+
+    def test_build_no_args_returns_empty_results(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        receipt = builder.build()
+        assert receipt.results == []
+
 
 # ---------------------------------------------------------------------------
 # Engine integration: receipts produced by execute_query
