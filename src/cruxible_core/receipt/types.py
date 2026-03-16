@@ -25,6 +25,12 @@ class ReceiptNode(BaseModel):
         "filter_applied",
         "constraint_check",
         "result",
+        "mutation",
+        "validation",
+        "entity_write",
+        "relationship_write",
+        "feedback_applied",
+        "ingest_batch",
     ]
     entity_type: str | None = None
     entity_id: str | None = None
@@ -44,6 +50,9 @@ class EvidenceEdge(BaseModel):
         "filtered",
         "evaluated",
         "produced",
+        "validated",
+        "mutated",
+        "applied",
     ]
 
 
@@ -51,10 +60,12 @@ class Receipt(BaseModel):
     """A complete receipt for a query execution."""
 
     receipt_id: str = Field(default_factory=lambda: f"RCP-{uuid.uuid4().hex[:12]}")
-    query_name: str
-    parameters: dict[str, Any]
+    query_name: str = ""
+    parameters: dict[str, Any] = Field(default_factory=dict)
     nodes: list[ReceiptNode]
     edges: list[EvidenceEdge]
-    results: list[dict[str, Any]]
+    results: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     duration_ms: float = 0.0
+    operation_type: str = "query"
+    committed: bool = True

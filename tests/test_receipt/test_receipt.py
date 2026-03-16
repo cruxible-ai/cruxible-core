@@ -136,6 +136,41 @@ def graph() -> EntityGraph:
 # ---------------------------------------------------------------------------
 
 
+class TestReceiptTypes:
+    def test_receipt_defaults_operation_type_query(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.operation_type == "query"
+        assert receipt.committed is True
+
+    def test_receipt_accepts_mutation_operation_type(self):
+        receipt = Receipt(nodes=[], edges=[], operation_type="add_entity", committed=False)
+        assert receipt.operation_type == "add_entity"
+        assert receipt.committed is False
+
+    def test_receipt_backward_compat_deserialization(self):
+        """Old JSON without operation_type/committed deserializes with defaults."""
+        old_json = (
+            '{"receipt_id":"RCP-old","query_name":"q","parameters":{},'
+            '"nodes":[],"edges":[],"results":[],"created_at":"2025-01-01T00:00:00Z",'
+            '"duration_ms":1.0}'
+        )
+        receipt = Receipt.model_validate_json(old_json)
+        assert receipt.operation_type == "query"
+        assert receipt.committed is True
+
+    def test_receipt_query_name_optional(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.query_name == ""
+
+    def test_receipt_parameters_optional(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.parameters == {}
+
+    def test_receipt_results_optional(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.results == []
+
+
 class TestReceiptBuilder:
     def test_root_node_created(self):
         builder = ReceiptBuilder(query_name="test_q", parameters={"a": 1})
