@@ -126,6 +126,7 @@ class ResolveGroupResult:
     action: str
     edges_created: int
     edges_skipped: int
+    resolution_id: str | None = None
     receipt_id: str | None = None
 
 

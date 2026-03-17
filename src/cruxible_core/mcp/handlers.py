@@ -688,6 +688,7 @@ def handle_resolve_group(
         action=result.action,
         edges_created=result.edges_created,
         edges_skipped=result.edges_skipped,
+        resolution_id=result.resolution_id,
         receipt_id=result.receipt_id,
     )
 

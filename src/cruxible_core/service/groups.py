@@ -359,7 +359,11 @@ def service_resolve_group(
                 group_store.update_group_status(group_id, "resolved", resolution_id=res_id)
             builder.mark_committed()
             result = ResolveGroupResult(
-                group_id=group_id, action="reject", edges_created=0, edges_skipped=0
+                group_id=group_id,
+                action="reject",
+                edges_created=0,
+                edges_skipped=0,
+                resolution_id=res_id,
             )
         else:
             # 5. Approve — per-member validation
@@ -515,6 +519,7 @@ def service_resolve_group(
                 action="approve",
                 edges_created=edges_created,
                 edges_skipped=edges_skipped,
+                resolution_id=resolution_id,
             )
     except CoreError as e:
         _exc = e

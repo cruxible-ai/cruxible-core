@@ -901,6 +901,8 @@ def group_resolve(group_id: str, action: str, rationale: str, source: str) -> No
         click.echo(f"  Edges created: {result.edges_created}")
         if result.edges_skipped:
             click.echo(f"  Edges skipped: {result.edges_skipped}")
+    if result.resolution_id:
+        click.echo(f"  Resolution: {result.resolution_id}")
     if result.receipt_id:
         click.echo(f"  Receipt: {result.receipt_id}")
 
