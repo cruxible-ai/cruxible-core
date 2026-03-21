@@ -8,7 +8,8 @@ from typing import Any
 
 import click
 
-from cruxible_core.errors import CoreError
+from cruxible_core.errors import ConfigError, CoreError
+from cruxible_core.server.config import resolve_server_settings
 
 
 def handle_errors(f: Any) -> Any:
@@ -27,8 +28,40 @@ def handle_errors(f: Any) -> Any:
 
 @click.group()
 @click.version_option(package_name="cruxible-core")
-def cli() -> None:
+@click.option("--server-url", default=None, help="Remote Cruxible server base URL.")
+@click.option(
+    "--server-socket",
+    default=None,
+    help="Local Cruxible server Unix socket path.",
+)
+@click.option(
+    "--instance-id",
+    default=None,
+    envvar="CRUXIBLE_INSTANCE_ID",
+    help="Opaque server-mode instance ID.",
+)
+@click.pass_context
+def cli(
+    ctx: click.Context,
+    server_url: str | None,
+    server_socket: str | None,
+    instance_id: str | None,
+) -> None:
     """Cruxible — deterministic decision engine with receipts."""
+    try:
+        settings = resolve_server_settings(server_url=server_url, server_socket=server_socket)
+    except ConfigError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    ctx.ensure_object(dict)
+    ctx.obj.update(
+        {
+            "server_url": settings.server_url,
+            "server_socket": settings.server_socket,
+            "instance_id": instance_id,
+            "require_server": settings.require_server,
+        }
+    )
 
 
 # Import and register commands after cli group is defined

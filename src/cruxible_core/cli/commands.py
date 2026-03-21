@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -25,16 +25,18 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.client import CruxibleClient
 from cruxible_core.config.constraint_rules import parse_constraint_rule
-from cruxible_core.config.schema import ConstraintSchema
+from cruxible_core.config.schema import ConstraintSchema, CoreConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
-from cruxible_core.feedback.types import EdgeTarget
-from cruxible_core.graph.types import REJECTED_STATUSES
-from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.types import REJECTED_STATUSES, EntityInstance, RelationshipInstance
+from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.mcp import contracts
-from cruxible_core.query.candidates import MatchRule
+from cruxible_core.query.candidates import CandidateMatch, MatchRule
 from cruxible_core.receipt import serializer
+from cruxible_core.server.config import get_server_token
 from cruxible_core.service import (
     EntityUpsertInput,
     RelationshipUpsertInput,
@@ -65,6 +67,79 @@ from cruxible_core.service import (
 console = Console()
 
 
+def _root_ctx_obj() -> dict[str, Any]:
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return {}
+    root = ctx.find_root()
+    root.ensure_object(dict)
+    return root.obj
+
+
+def _get_client() -> CruxibleClient | None:
+    obj = _root_ctx_obj()
+    server_url = obj.get("server_url")
+    server_socket = obj.get("server_socket")
+    if not server_url and not server_socket:
+        return None
+    client = obj.get("_client")
+    if isinstance(client, CruxibleClient):
+        return client
+    client = CruxibleClient(
+        base_url=server_url,
+        socket_path=server_socket,
+        token=get_server_token(),
+    )
+    obj["_client"] = client
+    return client
+
+
+def _require_instance_id() -> str:
+    obj = _root_ctx_obj()
+    instance_id = obj.get("instance_id")
+    if not instance_id:
+        raise click.UsageError("--instance-id is required in server mode")
+    return str(instance_id)
+
+
+def _raise_server_mode_unsupported(command_name: str) -> None:
+    raise click.UsageError(
+        f"{command_name} is not available in server mode. Use it locally or wait for v2."
+    )
+
+
+def _read_text_or_error(path_str: str) -> str:
+    path = Path(path_str)
+    try:
+        return path.read_text()
+    except OSError as exc:
+        raise ConfigError(f"Failed to read {path}: {exc}") from exc
+
+
+def _entities_from_payload(items: list[dict[str, Any]]) -> list[EntityInstance]:
+    return [EntityInstance.model_validate(item) for item in items]
+
+
+def _feedback_from_payload(items: list[dict[str, Any]]) -> list[FeedbackRecord]:
+    return [FeedbackRecord.model_validate(item) for item in items]
+
+
+def _outcomes_from_payload(items: list[dict[str, Any]]) -> list[OutcomeRecord]:
+    return [OutcomeRecord.model_validate(item) for item in items]
+
+
+def _candidates_from_payload(items: list[dict[str, Any]]) -> list[CandidateMatch]:
+    return [CandidateMatch.model_validate(item) for item in items]
+
+
+def _groups_from_payload(items: list[dict[str, Any]]) -> list[CandidateGroup]:
+    return [CandidateGroup.model_validate(item) for item in items]
+
+
+def _members_from_payload(items: list[dict[str, Any]]) -> list[CandidateMember]:
+    return [CandidateMember.model_validate(item) for item in items]
+
+
 # ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
@@ -72,15 +147,28 @@ console = Console()
 
 @click.command()
 @click.option("--config", "config_path", required=True, help="Path to config YAML file.")
+@click.option("--root-dir", default=None, help="Root directory for the instance.")
 @click.option("--data-dir", default=None, help="Directory for data files.")
 @handle_errors
-def init(config_path: str, data_dir: str | None) -> None:
+def init(config_path: str, root_dir: str | None, data_dir: str | None) -> None:
     """Initialize a new .cruxible/ instance in the current directory."""
-    root = Path.cwd()
+    client = _get_client()
+    if client is not None:
+        if root_dir is None:
+            raise click.UsageError("--root-dir is required in server mode")
+        config_yaml = _read_text_or_error(config_path)
+        result = client.init(root_dir=root_dir, config_yaml=config_yaml, data_dir=data_dir)
+        click.echo(f"Instance {result.status}.")
+        click.echo(f"Instance ID: {result.instance_id}")
+        for warning in result.warnings:
+            click.secho(f"  Warning: {warning}", fg="yellow")
+        return
+
+    root = Path(root_dir) if root_dir is not None else Path.cwd()
     result = service_init(root, config_path=config_path, data_dir=data_dir)
     click.echo(f"Initialized .cruxible/ in {root}")
-    for w in result.warnings:
-        click.secho(f"  Warning: {w}", fg="yellow")
+    for warning in result.warnings:
+        click.secho(f"  Warning: {warning}", fg="yellow")
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +181,19 @@ def init(config_path: str, data_dir: str | None) -> None:
 @handle_errors
 def validate(config_path: str) -> None:
     """Validate a config YAML file without creating an instance."""
+    client = _get_client()
+    if client is not None:
+        result = client.validate(config_yaml=_read_text_or_error(config_path))
+        click.echo(f"Config '{result.name}' is valid.")
+        click.echo(
+            f"  {len(result.entity_types)} entity types, "
+            f"{len(result.relationships)} relationships, "
+            f"{len(result.named_queries)} queries"
+        )
+        for warning in result.warnings:
+            click.secho(f"  Warning: {warning}", fg="yellow")
+        return
+
     result = service_validate(config_path=config_path)
     config = result.config
     click.echo(f"Config '{config.name}' is valid.")
@@ -101,8 +202,8 @@ def validate(config_path: str) -> None:
         f"{len(config.relationships)} relationships, "
         f"{len(config.named_queries)} queries"
     )
-    for w in result.warnings:
-        click.secho(f"  Warning: {w}", fg="yellow")
+    for warning in result.warnings:
+        click.secho(f"  Warning: {warning}", fg="yellow")
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +217,12 @@ def validate(config_path: str) -> None:
 @handle_errors
 def ingest(mapping: str, file_path: str) -> None:
     """Ingest data from a file using a named mapping."""
-    instance = CruxibleInstance.load()
-    result = service_ingest(instance, mapping, file_path=file_path)
+    client = _get_client()
+    if client is not None:
+        result = client.ingest(_require_instance_id(), mapping, file_path=file_path)
+    else:
+        instance = CruxibleInstance.load()
+        result = service_ingest(instance, mapping, file_path=file_path)
 
     parts = [f"{result.records_ingested} added"]
     if result.records_updated:
@@ -139,8 +244,24 @@ def ingest(mapping: str, file_path: str) -> None:
 @handle_errors
 def query(query_name: str, param: tuple[str, ...], limit: int | None) -> None:
     """Execute a named query and save the receipt."""
-    instance = CruxibleInstance.load()
     params = _parse_params(param)
+    client = _get_client()
+    if client is not None:
+        result = client.query(_require_instance_id(), query_name, params, limit=limit)
+        results = _entities_from_payload(result.results)
+        total = result.total_results
+        if limit is not None and len(results) > limit:
+            results = results[:limit]
+            console.print(entities_table(results, query_name))
+            click.echo(f"\nShowing {limit} of {total} results (use --limit to adjust).")
+        else:
+            console.print(entities_table(results, query_name))
+            click.echo(f"\n{total} result(s), {result.steps_executed} step(s) executed.")
+        if result.receipt_id:
+            click.echo(f"Receipt: {result.receipt_id}")
+        return
+
+    instance = CruxibleInstance.load()
     result = service_query(instance, query_name, params)
 
     # Display results (apply limit if set)
@@ -174,6 +295,8 @@ def query(query_name: str, param: tuple[str, ...], limit: int | None) -> None:
 @handle_errors
 def explain(receipt_id: str, fmt: str) -> None:
     """Explain a query result using its receipt."""
+    if _get_client() is not None:
+        _raise_server_mode_unsupported("explain")
     instance = CruxibleInstance.load()
     receipt = service_get_receipt(instance, receipt_id)
 
@@ -254,17 +377,35 @@ def feedback_cmd(
         edge_key=edge_key,
     )
 
-    instance = CruxibleInstance.load()
-    result = service_feedback(
-        instance,
-        receipt_id=receipt_id,
-        action=cast(contracts.FeedbackAction, action),
-        source=cast(contracts.FeedbackSource, source),
-        target=target,
-        reason=reason,
-        corrections=corrections_dict,
-        group_override=group_override,
-    )
+    client = _get_client()
+    if client is not None:
+        result = client.feedback(
+            _require_instance_id(),
+            receipt_id=receipt_id,
+            action=cast(contracts.FeedbackAction, action),
+            source=cast(contracts.FeedbackSource, source),
+            from_type=from_type,
+            from_id=from_id,
+            relationship=relationship,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+            reason=reason,
+            corrections=corrections_dict,
+            group_override=group_override,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_feedback(
+            instance,
+            receipt_id=receipt_id,
+            action=cast(contracts.FeedbackAction, action),
+            source=cast(contracts.FeedbackSource, source),
+            target=target,
+            reason=reason,
+            corrections=corrections_dict,
+            group_override=group_override,
+        )
 
     if result.applied:
         click.echo(f"Feedback {result.feedback_id} applied to graph.")
@@ -299,13 +440,22 @@ def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None
     if detail_dict is not None and not isinstance(detail_dict, dict):
         raise click.BadParameter("--detail must be a JSON object")
 
-    instance = CruxibleInstance.load()
-    result = service_outcome(
-        instance,
-        receipt_id=receipt_id,
-        outcome=cast(contracts.OutcomeValue, outcome_value),
-        detail=detail_dict,
-    )
+    client = _get_client()
+    if client is not None:
+        result = client.outcome(
+            _require_instance_id(),
+            receipt_id=receipt_id,
+            outcome=cast(contracts.OutcomeValue, outcome_value),
+            detail=detail_dict,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_outcome(
+            instance,
+            receipt_id=receipt_id,
+            outcome=cast(contracts.OutcomeValue, outcome_value),
+            detail=detail_dict,
+        )
     click.echo(f"Outcome {result.outcome_id} recorded.")
 
 
@@ -325,6 +475,19 @@ def list_group() -> None:
 @handle_errors
 def list_entities(entity_type: str, limit: int) -> None:
     """List entities of a given type."""
+    client = _get_client()
+    if client is not None:
+        result = client.list(
+            _require_instance_id(),
+            resource_type="entities",
+            entity_type=entity_type,
+            limit=limit,
+        )
+        entities = _entities_from_payload(result.items)
+        console.print(entities_table(entities, entity_type))
+        click.echo(f"{len(entities)} entity(ies) shown.")
+        return
+
     instance = CruxibleInstance.load()
     result = service_list(instance, "entities", entity_type=entity_type, limit=limit)
     console.print(entities_table(result.items, entity_type))
@@ -338,6 +501,19 @@ def list_entities(entity_type: str, limit: int) -> None:
 @handle_errors
 def list_receipts(query_name: str | None, operation_type: str | None, limit: int) -> None:
     """List receipt summaries."""
+    client = _get_client()
+    if client is not None:
+        result = client.list(
+            _require_instance_id(),
+            resource_type="receipts",
+            query_name=query_name,
+            operation_type=operation_type,
+            limit=limit,
+        )
+        console.print(receipts_table(result.items))
+        click.echo(f"{len(result.items)} receipt(s) shown.")
+        return
+
     instance = CruxibleInstance.load()
     result = service_list(
         instance, "receipts", query_name=query_name, operation_type=operation_type, limit=limit
@@ -352,6 +528,19 @@ def list_receipts(query_name: str | None, operation_type: str | None, limit: int
 @handle_errors
 def list_feedback(receipt_id: str | None, limit: int) -> None:
     """List feedback records."""
+    client = _get_client()
+    if client is not None:
+        result = client.list(
+            _require_instance_id(),
+            resource_type="feedback",
+            receipt_id=receipt_id,
+            limit=limit,
+        )
+        records = _feedback_from_payload(result.items)
+        console.print(feedback_table(records))
+        click.echo(f"{len(records)} record(s) shown.")
+        return
+
     instance = CruxibleInstance.load()
     result = service_list(instance, "feedback", receipt_id=receipt_id, limit=limit)
     console.print(feedback_table(result.items))
@@ -364,6 +553,19 @@ def list_feedback(receipt_id: str | None, limit: int) -> None:
 @handle_errors
 def list_outcomes(receipt_id: str | None, limit: int) -> None:
     """List outcome records."""
+    client = _get_client()
+    if client is not None:
+        result = client.list(
+            _require_instance_id(),
+            resource_type="outcomes",
+            receipt_id=receipt_id,
+            limit=limit,
+        )
+        records = _outcomes_from_payload(result.items)
+        console.print(outcomes_table(records))
+        click.echo(f"{len(records)} record(s) shown.")
+        return
+
     instance = CruxibleInstance.load()
     result = service_list(instance, "outcomes", receipt_id=receipt_id, limit=limit)
     console.print(outcomes_table(result.items))
@@ -399,8 +601,6 @@ def find_candidates_cmd(
     limit: int,
 ) -> None:
     """Find candidate relationships using a deterministic strategy."""
-    instance = CruxibleInstance.load()
-
     match_rules = None
     if rule:
         match_rules = []
@@ -410,6 +610,24 @@ def find_candidates_cmd(
                 raise click.BadParameter(f"Rule must be FROM_PROP=TO_PROP, got: {r}")
             match_rules.append(MatchRule(from_property=parts[0], to_property=parts[1]))
 
+    client = _get_client()
+    if client is not None:
+        result = client.find_candidates(
+            _require_instance_id(),
+            relationship_type=relationship,
+            strategy=cast(contracts.CandidateStrategy, strategy),
+            match_rules=(
+                [item.model_dump(mode="json") for item in match_rules] if match_rules else None
+            ),
+            via_relationship=via_relationship,
+            limit=limit,
+        )
+        candidates = _candidates_from_payload(result.candidates)
+        console.print(candidates_table(candidates))
+        click.echo(f"{len(candidates)} candidate(s) found.")
+        return
+
+    instance = CruxibleInstance.load()
     candidates = service_find_candidates(
         instance,
         relationship,
@@ -432,8 +650,12 @@ def find_candidates_cmd(
 @handle_errors
 def schema() -> None:
     """Display the config schema for this instance."""
-    instance = CruxibleInstance.load()
-    config = service_schema(instance)
+    client = _get_client()
+    if client is not None:
+        config = CoreConfig.model_validate(client.schema(_require_instance_id()))
+    else:
+        instance = CruxibleInstance.load()
+        config = service_schema(instance)
     console.print(schema_table(config))
 
 
@@ -448,8 +670,13 @@ def schema() -> None:
 @handle_errors
 def sample(entity_type: str, limit: int) -> None:
     """Show a sample of entities of a given type."""
-    instance = CruxibleInstance.load()
-    entities = service_sample(instance, entity_type, limit=limit)
+    client = _get_client()
+    if client is not None:
+        result = client.sample(_require_instance_id(), entity_type, limit=limit)
+        entities = _entities_from_payload(result.entities)
+    else:
+        instance = CruxibleInstance.load()
+        entities = service_sample(instance, entity_type, limit=limit)
     console.print(entities_table(entities, entity_type))
 
 
@@ -466,22 +693,40 @@ def sample(entity_type: str, limit: int) -> None:
 @handle_errors
 def evaluate(threshold: float, limit: int) -> None:
     """Assess graph quality: orphans, gaps, violations, unreviewed co-members."""
-    instance = CruxibleInstance.load()
-    report = service_evaluate(instance, confidence_threshold=threshold, max_findings=limit)
+    client = _get_client()
+    if client is not None:
+        report = client.evaluate(
+            _require_instance_id(),
+            confidence_threshold=threshold,
+            max_findings=limit,
+        )
+        findings = report.findings
+        entity_count = report.entity_count
+        edge_count = report.edge_count
+        summary = report.summary
+    else:
+        instance = CruxibleInstance.load()
+        report = service_evaluate(instance, confidence_threshold=threshold, max_findings=limit)
+        findings = [finding.model_dump(mode="json") for finding in report.findings]
+        entity_count = report.entity_count
+        edge_count = report.edge_count
+        summary = report.summary
 
     # Summary
-    click.echo(f"Graph: {report.entity_count} entities, {report.edge_count} edges")
-    click.echo(f"Findings: {len(report.findings)}")
-    if report.summary:
-        for category, count in sorted(report.summary.items()):
+    click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
+    click.echo(f"Findings: {len(findings)}")
+    if summary:
+        for category, count in sorted(summary.items()):
             click.echo(f"  {category}: {count}")
 
     # Findings
-    for finding in report.findings:
+    for finding in findings:
+        severity = finding["severity"]
+        message = finding["message"]
         severity_color = {"error": "red", "warning": "yellow", "info": "blue"}.get(
-            finding.severity, "white"
+            severity, "white"
         )
-        click.secho(f"  [{finding.severity.upper()}] {finding.message}", fg=severity_color)
+        click.secho(f"  [{severity.upper()}] {message}", fg=severity_color)
 
 
 # ---------------------------------------------------------------------------
@@ -495,11 +740,23 @@ def evaluate(threshold: float, limit: int) -> None:
 @handle_errors
 def get_entity_cmd(entity_type: str, entity_id: str) -> None:
     """Look up a specific entity by type and ID."""
-    instance = CruxibleInstance.load()
-    entity = service_get_entity(instance, entity_type, entity_id)
-    if entity is None:
-        click.echo("Not found.")
-        return
+    client = _get_client()
+    if client is not None:
+        result = client.get_entity(_require_instance_id(), entity_type, entity_id)
+        if not result.found:
+            click.echo("Not found.")
+            return
+        entity = EntityInstance(
+            entity_type=result.entity_type,
+            entity_id=result.entity_id,
+            properties=result.properties,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        entity = service_get_entity(instance, entity_type, entity_id)
+        if entity is None:
+            click.echo("Not found.")
+            return
     console.print(entities_table([entity], entity_type))
 
 
@@ -525,19 +782,43 @@ def get_relationship_cmd(
     edge_key: int | None,
 ) -> None:
     """Look up a specific relationship by its endpoints and type."""
-    instance = CruxibleInstance.load()
-    rel = service_get_relationship(
-        instance,
-        from_type=from_type,
-        from_id=from_id,
-        relationship_type=relationship,
-        to_type=to_type,
-        to_id=to_id,
-        edge_key=edge_key,
-    )
-    if rel is None:
-        click.echo("Not found.")
-        return
+    client = _get_client()
+    if client is not None:
+        result = client.get_relationship(
+            _require_instance_id(),
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+        )
+        if not result.found:
+            click.echo("Not found.")
+            return
+        rel = RelationshipInstance(
+            relationship_type=result.relationship_type,
+            from_entity_type=result.from_type,
+            from_entity_id=result.from_id,
+            to_entity_type=result.to_type,
+            to_entity_id=result.to_id,
+            edge_key=result.edge_key,
+            properties=result.properties,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        rel = service_get_relationship(
+            instance,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+        )
+        if rel is None:
+            click.echo("Not found.")
+            return
     console.print(relationship_table(rel))
 
 
@@ -560,11 +841,30 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
     if not isinstance(properties, dict):
         raise click.BadParameter("--props must be a JSON object")
 
-    instance = CruxibleInstance.load()
-    result = service_add_entities(
-        instance,
-        [EntityUpsertInput(entity_type=entity_type, entity_id=entity_id, properties=properties)],
-    )
+    client = _get_client()
+    if client is not None:
+        result = client.add_entities(
+            _require_instance_id(),
+            [
+                contracts.EntityInput(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    properties=properties,
+                )
+            ],
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_add_entities(
+            instance,
+            [
+                EntityUpsertInput(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    properties=properties,
+                )
+            ],
+        )
 
     label = f"{entity_type}:{entity_id}"
     if result.updated:
@@ -604,22 +904,38 @@ def add_relationship_cmd(
     if not isinstance(properties, dict):
         raise click.BadParameter("--props must be a JSON object")
 
-    instance = CruxibleInstance.load()
-    result = service_add_relationships(
-        instance,
-        [
-            RelationshipUpsertInput(
-                from_type=from_type,
-                from_id=from_id,
-                relationship=relationship,
-                to_type=to_type,
-                to_id=to_id,
-                properties=properties,
-            )
-        ],
-        source="cli_add",
-        source_ref="add-relationship",
-    )
+    client = _get_client()
+    if client is not None:
+        result = client.add_relationships(
+            _require_instance_id(),
+            [
+                contracts.RelationshipInput(
+                    from_type=from_type,
+                    from_id=from_id,
+                    relationship=relationship,
+                    to_type=to_type,
+                    to_id=to_id,
+                    properties=properties,
+                )
+            ],
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipUpsertInput(
+                    from_type=from_type,
+                    from_id=from_id,
+                    relationship=relationship,
+                    to_type=to_type,
+                    to_id=to_id,
+                    properties=properties,
+                )
+            ],
+            source="cli_add",
+            source_ref="add-relationship",
+        )
 
     edge_label = f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"
     if result.updated:
@@ -653,6 +969,20 @@ def add_constraint_cmd(
     description: str | None,
 ) -> None:
     """Add a constraint rule to the config."""
+    client = _get_client()
+    if client is not None:
+        result = client.add_constraint(
+            _require_instance_id(),
+            name=name,
+            rule=rule,
+            severity=cast(contracts.ConstraintSeverity, severity),
+            description=description,
+        )
+        click.echo(f"Constraint '{result.name}' added to config.")
+        for warning in result.warnings:
+            click.secho(f"  Warning: {warning}", fg="yellow")
+        return
+
     instance = CruxibleInstance.load()
     config = instance.load_config()
 
@@ -696,6 +1026,18 @@ def add_constraint_cmd(
 @handle_errors
 def list_edges(relationship: str | None, limit: int) -> None:
     """List edges in the graph."""
+    client = _get_client()
+    if client is not None:
+        result = client.list(
+            _require_instance_id(),
+            resource_type="edges",
+            relationship_type=relationship,
+            limit=limit,
+        )
+        console.print(edges_table(result.items))
+        click.echo(f"{len(result.items)} edge(s) shown.")
+        return
+
     instance = CruxibleInstance.load()
     result = service_list(instance, "edges", relationship_type=relationship, limit=limit)
     console.print(edges_table(result.items))
@@ -730,6 +1072,8 @@ def export_group() -> None:
 @handle_errors
 def export_edges(output: str, relationship: str | None, exclude_rejected: bool) -> None:
     """Export all edges to CSV."""
+    if _get_client() is not None:
+        _raise_server_mode_unsupported("export edges")
     instance = CruxibleInstance.load()
     graph = instance.load_graph()
 
@@ -821,26 +1165,6 @@ def group_propose(
     if not isinstance(raw_members, list):
         raise click.BadParameter("Members must be a JSON array.")
 
-    domain_members = [
-        CandidateMember(
-            from_type=m["from_type"],
-            from_id=m["from_id"],
-            to_type=m["to_type"],
-            to_id=m["to_id"],
-            relationship_type=m["relationship_type"],
-            signals=[
-                CandidateSignal(
-                    integration=s["integration"],
-                    signal=s["signal"],
-                    evidence=s.get("evidence", ""),
-                )
-                for s in m.get("signals", [])
-            ],
-            properties=m.get("properties", {}),
-        )
-        for m in raw_members
-    ]
-
     try:
         facts = json.loads(thesis_facts) if thesis_facts else None
     except json.JSONDecodeError as exc:
@@ -851,16 +1175,66 @@ def group_propose(
     except json.JSONDecodeError as exc:
         raise click.BadParameter("--analysis-state must be valid JSON") from exc
 
-    instance = CruxibleInstance.load()
-    result = service_propose_group(
-        instance,
-        relationship,
-        domain_members,
-        thesis_text=thesis,
-        thesis_facts=facts,
-        analysis_state=state,
-        integrations_used=list(integration) if integration else None,
-    )
+    client = _get_client()
+    if client is not None:
+        members = [
+            contracts.MemberInput(
+                from_type=m["from_type"],
+                from_id=m["from_id"],
+                to_type=m["to_type"],
+                to_id=m["to_id"],
+                relationship_type=m["relationship_type"],
+                signals=[
+                    contracts.SignalInput(
+                        integration=s["integration"],
+                        signal=s["signal"],
+                        evidence=s.get("evidence", ""),
+                    )
+                    for s in m.get("signals", [])
+                ],
+                properties=m.get("properties", {}),
+            )
+            for m in raw_members
+        ]
+        result = client.propose_group(
+            _require_instance_id(),
+            relationship_type=relationship,
+            members=members,
+            thesis_text=thesis,
+            thesis_facts=facts,
+            analysis_state=state,
+            integrations_used=list(integration) if integration else None,
+        )
+    else:
+        domain_members = [
+            CandidateMember(
+                from_type=m["from_type"],
+                from_id=m["from_id"],
+                to_type=m["to_type"],
+                to_id=m["to_id"],
+                relationship_type=m["relationship_type"],
+                signals=[
+                    CandidateSignal(
+                        integration=s["integration"],
+                        signal=s["signal"],
+                        evidence=s.get("evidence", ""),
+                    )
+                    for s in m.get("signals", [])
+                ],
+                properties=m.get("properties", {}),
+            )
+            for m in raw_members
+        ]
+        instance = CruxibleInstance.load()
+        result = service_propose_group(
+            instance,
+            relationship,
+            domain_members,
+            thesis_text=thesis,
+            thesis_facts=facts,
+            analysis_state=state,
+            integrations_used=list(integration) if integration else None,
+        )
 
     click.echo(f"Group {result.group_id} proposed.")
     click.echo(f"  Status: {result.status}")
@@ -887,14 +1261,24 @@ def group_propose(
 @handle_errors
 def group_resolve(group_id: str, action: str, rationale: str, source: str) -> None:
     """Resolve a candidate group (approve or reject)."""
-    instance = CruxibleInstance.load()
-    result = service_resolve_group(
-        instance,
-        group_id,
-        action,  # type: ignore[arg-type]
-        rationale=rationale,
-        resolved_by=source,  # type: ignore[arg-type]
-    )
+    client = _get_client()
+    if client is not None:
+        result = client.resolve_group(
+            _require_instance_id(),
+            group_id,
+            action=cast(contracts.GroupAction, action),
+            rationale=rationale,
+            resolved_by=cast(contracts.GroupResolvedBy, source),
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_resolve_group(
+            instance,
+            group_id,
+            action,  # type: ignore[arg-type]
+            rationale=rationale,
+            resolved_by=source,  # type: ignore[arg-type]
+        )
 
     click.echo(f"Group {result.group_id} {result.action}d.")
     if result.action == "approve":
@@ -920,13 +1304,22 @@ def group_resolve(group_id: str, action: str, rationale: str, source: str) -> No
 @handle_errors
 def group_trust(resolution_id: str, trust_status: str, reason: str) -> None:
     """Update trust status on a resolution."""
-    instance = CruxibleInstance.load()
-    service_update_trust_status(
-        instance,
-        resolution_id,
-        trust_status,  # type: ignore[arg-type]
-        reason=reason,
-    )
+    client = _get_client()
+    if client is not None:
+        client.update_trust_status(
+            _require_instance_id(),
+            resolution_id,
+            trust_status=cast(contracts.GroupTrustStatus, trust_status),
+            reason=reason,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        service_update_trust_status(
+            instance,
+            resolution_id,
+            trust_status,  # type: ignore[arg-type]
+            reason=reason,
+        )
     click.echo(f"Resolution {resolution_id} trust status set to '{trust_status}'.")
 
 
@@ -935,6 +1328,17 @@ def group_trust(resolution_id: str, trust_status: str, reason: str) -> None:
 @handle_errors
 def group_get(group_id: str) -> None:
     """Get details of a candidate group."""
+    client = _get_client()
+    if client is not None:
+        result = client.get_group(_require_instance_id(), group_id)
+        console.print(
+            group_detail_table(
+                CandidateGroup.model_validate(result.group),
+                _members_from_payload(result.members),
+            )
+        )
+        return
+
     instance = CruxibleInstance.load()
     result = service_get_group(instance, group_id)
     console.print(group_detail_table(result.group, result.members))
@@ -952,6 +1356,19 @@ def group_get(group_id: str) -> None:
 @handle_errors
 def group_list(relationship: str | None, status: str | None, limit: int) -> None:
     """List candidate groups."""
+    client = _get_client()
+    if client is not None:
+        result = client.list_groups(
+            _require_instance_id(),
+            relationship_type=relationship,
+            status=cast(contracts.GroupStatus | None, status),
+            limit=limit,
+        )
+        groups = _groups_from_payload(result.groups)
+        console.print(groups_table(groups))
+        click.echo(f"{len(groups)} of {result.total} group(s) shown.")
+        return
+
     instance = CruxibleInstance.load()
     result = service_list_groups(
         instance,
@@ -975,6 +1392,18 @@ def group_list(relationship: str | None, status: str | None, limit: int) -> None
 @handle_errors
 def group_resolutions(relationship: str | None, action: str | None, limit: int) -> None:
     """List group resolutions."""
+    client = _get_client()
+    if client is not None:
+        result = client.list_resolutions(
+            _require_instance_id(),
+            relationship_type=relationship,
+            action=cast(contracts.GroupAction | None, action),
+            limit=limit,
+        )
+        console.print(resolutions_table(result.resolutions))
+        click.echo(f"{len(result.resolutions)} of {result.total} resolution(s) shown.")
+        return
+
     instance = CruxibleInstance.load()
     result = service_list_resolutions(
         instance,

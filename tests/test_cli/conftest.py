@@ -9,6 +9,8 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.mcp.handlers import reset_client_cache
+from cruxible_core.server.registry import reset_registry
 
 CAR_PARTS_YAML = """\
 version: "1.0"
@@ -95,6 +97,23 @@ ingestion:
     from_column: part_number
     to_column: vehicle_id
 """
+
+
+@pytest.fixture(autouse=True)
+def reset_server_mode_env(monkeypatch):
+    """Clear server-mode env and caches between CLI tests."""
+    monkeypatch.delenv("CRUXIBLE_REQUIRE_SERVER", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_STATE_DIR", raising=False)
+    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
+    reset_client_cache()
+    reset_registry()
+    yield
+    reset_client_cache()
+    reset_registry()
 
 
 @pytest.fixture
