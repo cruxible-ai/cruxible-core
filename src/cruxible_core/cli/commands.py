@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import click
+import yaml
 from rich.console import Console
 
 from cruxible_core.cli.formatting import (
@@ -54,12 +55,16 @@ from cruxible_core.service import (
     service_list,
     service_list_groups,
     service_list_resolutions,
+    service_lock,
     service_outcome,
+    service_plan,
     service_propose_group,
     service_query,
     service_resolve_group,
+    service_run,
     service_sample,
     service_schema,
+    service_test,
     service_update_trust_status,
     service_validate,
 )
@@ -114,6 +119,23 @@ def _read_text_or_error(path_str: str) -> str:
         return path.read_text()
     except OSError as exc:
         raise ConfigError(f"Failed to read {path}: {exc}") from exc
+
+
+def _read_input_payload(path_str: str) -> dict[str, Any]:
+    path = Path(path_str)
+    try:
+        raw = path.read_text()
+    except OSError as exc:
+        raise ConfigError(f"Failed to read {path}: {exc}") from exc
+
+    try:
+        payload = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Failed to parse input file {path}: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise ConfigError(f"Input file {path} must contain a top-level mapping")
+    return payload
 
 
 def _entities_from_payload(items: list[dict[str, Any]]) -> list[EntityInstance]:
@@ -204,6 +226,91 @@ def validate(config_path: str) -> None:
     )
     for warning in result.warnings:
         click.secho(f"  Warning: {warning}", fg="yellow")
+
+
+# ---------------------------------------------------------------------------
+# lock / plan / run / test
+# ---------------------------------------------------------------------------
+
+
+@click.command("lock")
+@handle_errors
+def lock_cmd() -> None:
+    """Generate a workflow lock file for the current instance config."""
+    if _get_client() is not None:
+        _raise_server_mode_unsupported("lock")
+
+    instance = CruxibleInstance.load()
+    result = service_lock(instance)
+    click.echo(f"Wrote lock file to {result.lock_path}")
+    click.echo(
+        f"  digest={result.config_digest} providers={result.providers_locked} "
+        f"artifacts={result.artifacts_locked}"
+    )
+
+
+@click.command("plan")
+@click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option(
+    "--input-file",
+    required=True,
+    type=click.Path(exists=True),
+    help="JSON or YAML file providing workflow input.",
+)
+@handle_errors
+def plan_cmd(workflow_name: str, input_file: str) -> None:
+    """Compile a workflow plan for the current instance."""
+    if _get_client() is not None:
+        _raise_server_mode_unsupported("plan")
+
+    instance = CruxibleInstance.load()
+    result = service_plan(instance, workflow_name, _read_input_payload(input_file))
+    click.echo(result.plan.model_dump_json(indent=2))
+
+
+@click.command("run")
+@click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option(
+    "--input-file",
+    required=True,
+    type=click.Path(exists=True),
+    help="JSON or YAML file providing workflow input.",
+)
+@handle_errors
+def run_cmd(workflow_name: str, input_file: str) -> None:
+    """Execute a workflow for the current instance."""
+    if _get_client() is not None:
+        _raise_server_mode_unsupported("run")
+
+    instance = CruxibleInstance.load()
+    result = service_run(instance, workflow_name, _read_input_payload(input_file))
+    click.echo(f"Workflow {result.workflow} completed.")
+    click.echo(f"Receipt ID: {result.receipt_id}")
+    if result.query_receipt_ids:
+        click.echo(f"Query receipt IDs: {', '.join(result.query_receipt_ids)}")
+    if result.trace_ids:
+        click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
+    click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+
+
+@click.command("test")
+@click.option("--name", "test_name", default=None, help="Run only a named workflow test.")
+@handle_errors
+def test_cmd(test_name: str | None) -> None:
+    """Execute config-defined workflow tests for the current instance."""
+    if _get_client() is not None:
+        _raise_server_mode_unsupported("test")
+
+    instance = CruxibleInstance.load()
+    result = service_test(instance, test_name=test_name)
+    click.echo(f"Tests: {result.passed} passed, {result.failed} failed, {result.total} total")
+    for case in result.cases:
+        status = "PASS" if case.passed else "FAIL"
+        click.echo(f"[{status}] {case.name} ({case.workflow})")
+        if case.error:
+            click.echo(f"  {case.error}")
+        elif case.receipt_id:
+            click.echo(f"  receipt={case.receipt_id}")
 
 
 # ---------------------------------------------------------------------------

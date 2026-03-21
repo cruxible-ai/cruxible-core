@@ -78,3 +78,27 @@ def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
     )
     assert result.exit_code == 2
     assert "not available in server mode" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args"),
+    [
+        ["lock"],
+        ["plan", "--workflow", "wf", "--input-file", "/tmp/input.yaml"],
+        ["run", "--workflow", "wf", "--input-file", "/tmp/input.yaml"],
+        ["test"],
+    ],
+)
+def test_workflow_commands_are_rejected_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+    args: list[str],
+):
+    input_path = tmp_path / "input.yaml"
+    input_path.write_text("sku: SKU-123\n")
+    resolved_args = [str(input_path) if arg == "/tmp/input.yaml" else arg for arg in args]
+    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: object())
+    result = runner.invoke(cli, ["--server-url", "http://server", *resolved_args])
+    assert result.exit_code == 2
+    assert "not available in server mode" in result.output

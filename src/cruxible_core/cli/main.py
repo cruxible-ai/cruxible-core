@@ -80,15 +80,23 @@ from cruxible_core.cli.commands import (  # noqa: E402
     ingest,
     init,
     list_group,
+    lock_cmd,
     outcome_cmd,
+    plan_cmd,
     query,
+    run_cmd,
     sample,
     schema,
+    test_cmd,
     validate,
 )
 
 cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]
+cli.add_command(lock_cmd)  # type: ignore[has-type]
+cli.add_command(plan_cmd)  # type: ignore[has-type]
+cli.add_command(run_cmd)  # type: ignore[has-type]
+cli.add_command(test_cmd)  # type: ignore[has-type]
 cli.add_command(ingest)  # type: ignore[has-type]
 cli.add_command(query)  # type: ignore[has-type]
 cli.add_command(explain)  # type: ignore[has-type]
