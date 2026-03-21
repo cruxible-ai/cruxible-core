@@ -1,10 +1,9 @@
 """Handler implementations for MCP tools.
 
-Each handler takes typed arguments and returns a contract model instance.
-The InstanceManager holds live CruxibleInstance references.
-
-Most handlers are thin wrappers: permission check → instance get →
-map inputs → service call → map result to contract.
+Each public handler keeps the existing MCP signature but can delegate to a
+governed server when server mode is configured. Local helpers contain the
+current library-mode logic so FastAPI routes can call them directly without
+recursing back through the HTTP client.
 """
 
 from __future__ import annotations
@@ -13,13 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.client import CruxibleClient
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import ConstraintSchema
 from cruxible_core.config.validator import validate_config
-from cruxible_core.errors import (
-    ConfigError,
-    InstanceNotFoundError,
-)
+from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.types import EdgeTarget
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -30,6 +27,8 @@ from cruxible_core.mcp.permissions import (
     validate_root_dir,
 )
 from cruxible_core.query.candidates import MatchRule
+from cruxible_core.server.config import get_server_token, resolve_server_settings
+from cruxible_core.server.registry import LOCAL_FILESYSTEM_BACKEND, get_registry
 from cruxible_core.service import (
     EntityUpsertInput,
     RelationshipUpsertInput,
@@ -68,9 +67,22 @@ class InstanceManager:
         self._instances[instance_id] = instance
 
     def get(self, instance_id: str) -> InstanceProtocol:
-        if instance_id not in self._instances:
-            raise InstanceNotFoundError(instance_id)
-        return self._instances[instance_id]
+        instance = self._instances.get(instance_id)
+        if instance is not None:
+            return instance
+
+        record = get_registry().get(instance_id)
+        if record is not None and record.backend == LOCAL_FILESYSTEM_BACKEND:
+            loaded = CruxibleInstance.load(Path(record.location))
+            self.register(instance_id, loaded)
+            return loaded
+
+        try:
+            loaded = CruxibleInstance.load(Path(instance_id))
+        except InstanceNotFoundError as exc:
+            raise InstanceNotFoundError(instance_id) from exc
+        self.register(instance_id, loaded)
+        return loaded
 
     def list_ids(self) -> list[str]:
         return list(self._instances.keys())
@@ -80,14 +92,48 @@ class InstanceManager:
 
 
 _manager = InstanceManager()
+_client_cache: CruxibleClient | None = None
+_client_cache_key: tuple[str | None, str | None, str | None] | None = None
+
+
+def get_manager() -> InstanceManager:
+    """Return the process-global instance manager."""
+    return _manager
+
+
+def reset_client_cache() -> None:
+    """Clear cached client state. Used by tests."""
+    global _client_cache, _client_cache_key
+    if _client_cache is not None:
+        _client_cache.close()
+    _client_cache = None
+    _client_cache_key = None
+
+
+def _get_client() -> CruxibleClient | None:
+    """Return a configured HTTP client in server mode."""
+    global _client_cache, _client_cache_key
+
+    settings = resolve_server_settings()
+    if not settings.enabled:
+        reset_client_cache()
+        return None
+
+    token = get_server_token()
+    cache_key = (settings.server_url, settings.server_socket, token)
+    if _client_cache is None or _client_cache_key != cache_key:
+        reset_client_cache()
+        _client_cache = CruxibleClient(
+            base_url=settings.server_url,
+            socket_path=settings.server_socket,
+            token=token,
+        )
+        _client_cache_key = cache_key
+    return _client_cache
 
 
 def _check_config_compatibility(instance: InstanceProtocol) -> list[str]:
-    """Check if graph contents are compatible with the current config.
-
-    Warns when entity or relationship types exist in the graph but are
-    missing from the config (e.g. after a config edit removed a type).
-    """
+    """Check if graph contents are compatible with the current config."""
     warnings: list[str] = []
     config = instance.load_config()
     graph = instance.load_graph()
@@ -113,7 +159,7 @@ def _check_config_compatibility(instance: InstanceProtocol) -> list[str]:
     return warnings
 
 
-def handle_init(
+def _handle_init_local(
     root_dir: str,
     config_path: str | None = None,
     config_yaml: str | None = None,
@@ -124,7 +170,6 @@ def handle_init(
 
     has_config = config_path is not None or config_yaml is not None
 
-    # Permission gate first — any config input signals create intent
     if has_config:
         check_permission(
             "cruxible_init",
@@ -132,12 +177,10 @@ def handle_init(
             required_mode=PermissionMode.ADMIN,
         )
 
-    # MCP-specific: validate_root_dir stays here (not in service layer)
     validate_root_dir(root_dir)
     root = Path(root_dir)
     instance_json = root / CruxibleInstance.INSTANCE_DIR / "instance.json"
 
-    # Reload path — MCP-specific (InstanceManager lookup + compatibility check)
     if instance_json.exists():
         if has_config:
             raise ConfigError(
@@ -152,7 +195,6 @@ def handle_init(
         warnings = _check_config_compatibility(instance)
         return contracts.InitResult(instance_id=instance_id, status="loaded", warnings=warnings)
 
-    # Create path — delegates to service layer
     result = service_init(
         root_dir, config_path=config_path, config_yaml=config_yaml, data_dir=data_dir
     )
@@ -161,7 +203,25 @@ def handle_init(
     return contracts.InitResult(instance_id=instance_id, status="initialized")
 
 
-def handle_validate(
+def handle_init(
+    root_dir: str,
+    config_path: str | None = None,
+    config_yaml: str | None = None,
+    data_dir: str | None = None,
+) -> contracts.InitResult:
+    """Initialize a new cruxible instance, or reload an existing one."""
+    client = _get_client()
+    if client is not None:
+        return client.init(
+            root_dir=root_dir,
+            config_path=config_path,
+            config_yaml=config_yaml,
+            data_dir=data_dir,
+        )
+    return _handle_init_local(root_dir, config_path, config_yaml, data_dir)
+
+
+def _handle_validate_local(
     config_path: str | None = None,
     config_yaml: str | None = None,
 ) -> contracts.ValidateResult:
@@ -180,7 +240,18 @@ def handle_validate(
     )
 
 
-def handle_ingest(
+def handle_validate(
+    config_path: str | None = None,
+    config_yaml: str | None = None,
+) -> contracts.ValidateResult:
+    """Validate a config file or inline YAML string."""
+    client = _get_client()
+    if client is not None:
+        return client.validate(config_path=config_path, config_yaml=config_yaml)
+    return _handle_validate_local(config_path, config_yaml)
+
+
+def _handle_ingest_local(
     instance_id: str,
     mapping_name: str,
     file_path: str | None = None,
@@ -212,7 +283,39 @@ def handle_ingest(
     )
 
 
-def handle_query(
+def handle_ingest(
+    instance_id: str,
+    mapping_name: str,
+    file_path: str | None = None,
+    data_csv: str | None = None,
+    data_json: str | list[dict[str, Any]] | None = None,
+    data_ndjson: str | None = None,
+    upload_id: str | None = None,
+) -> contracts.IngestResult:
+    """Ingest a data file or inline data into the graph."""
+    client = _get_client()
+    if client is not None:
+        return client.ingest(
+            instance_id,
+            mapping_name,
+            file_path=file_path,
+            data_csv=data_csv,
+            data_json=data_json,
+            data_ndjson=data_ndjson,
+            upload_id=upload_id,
+        )
+    return _handle_ingest_local(
+        instance_id,
+        mapping_name,
+        file_path=file_path,
+        data_csv=data_csv,
+        data_json=data_json,
+        data_ndjson=data_ndjson,
+        upload_id=upload_id,
+    )
+
+
+def _handle_query_local(
     instance_id: str,
     query_name: str,
     params: dict[str, Any] | None = None,
@@ -226,12 +329,9 @@ def handle_query(
     instance = _manager.get(instance_id)
     result = service_query(instance, query_name, params or {})
 
-    # Limit/truncation is a caller concern — stays in handler
     total = result.total_results
     truncated = limit is not None and total > limit
     visible = result.results[:limit] if truncated else result.results
-
-    # Omit inline receipt whenever limit is set — agent opted into bounded output
     include_receipt = limit is None
 
     return contracts.QueryToolResult(
@@ -246,10 +346,20 @@ def handle_query(
     )
 
 
-def handle_receipt(
+def handle_query(
     instance_id: str,
-    receipt_id: str,
-) -> dict[str, Any]:
+    query_name: str,
+    params: dict[str, Any] | None = None,
+    limit: int | None = None,
+) -> contracts.QueryToolResult:
+    """Execute a named query."""
+    client = _get_client()
+    if client is not None:
+        return client.query(instance_id, query_name, params, limit=limit)
+    return _handle_query_local(instance_id, query_name, params, limit=limit)
+
+
+def _handle_receipt_local(instance_id: str, receipt_id: str) -> dict[str, Any]:
     """Retrieve a stored receipt by ID."""
     check_permission("cruxible_receipt")
     instance = _manager.get(instance_id)
@@ -257,7 +367,15 @@ def handle_receipt(
     return receipt.model_dump(mode="json")
 
 
-def handle_feedback(
+def handle_receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
+    """Retrieve a stored receipt by ID."""
+    client = _get_client()
+    if client is not None:
+        return client.receipt(instance_id, receipt_id)
+    return _handle_receipt_local(instance_id, receipt_id)
+
+
+def _handle_feedback_local(
     instance_id: str,
     receipt_id: str,
     action: contracts.FeedbackAction,
@@ -299,7 +417,57 @@ def handle_feedback(
     )
 
 
-def handle_outcome(
+def handle_feedback(
+    instance_id: str,
+    receipt_id: str,
+    action: contracts.FeedbackAction,
+    source: contracts.FeedbackSource,
+    from_type: str,
+    from_id: str,
+    relationship: str,
+    to_type: str,
+    to_id: str,
+    edge_key: int | None = None,
+    reason: str = "",
+    corrections: dict[str, Any] | None = None,
+    group_override: bool = False,
+) -> contracts.FeedbackResult:
+    """Record feedback on an edge."""
+    client = _get_client()
+    if client is not None:
+        return client.feedback(
+            instance_id,
+            receipt_id=receipt_id,
+            action=action,
+            source=source,
+            from_type=from_type,
+            from_id=from_id,
+            relationship=relationship,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+            reason=reason,
+            corrections=corrections,
+            group_override=group_override,
+        )
+    return _handle_feedback_local(
+        instance_id,
+        receipt_id,
+        action,
+        source,
+        from_type,
+        from_id,
+        relationship,
+        to_type,
+        to_id,
+        edge_key=edge_key,
+        reason=reason,
+        corrections=corrections,
+        group_override=group_override,
+    )
+
+
+def _handle_outcome_local(
     instance_id: str,
     receipt_id: str,
     outcome: contracts.OutcomeValue,
@@ -312,7 +480,20 @@ def handle_outcome(
     return contracts.OutcomeResult(outcome_id=result.outcome_id)
 
 
-def handle_list(
+def handle_outcome(
+    instance_id: str,
+    receipt_id: str,
+    outcome: contracts.OutcomeValue,
+    detail: dict[str, Any] | None = None,
+) -> contracts.OutcomeResult:
+    """Record an outcome for a query."""
+    client = _get_client()
+    if client is not None:
+        return client.outcome(instance_id, receipt_id=receipt_id, outcome=outcome, detail=detail)
+    return _handle_outcome_local(instance_id, receipt_id, outcome, detail)
+
+
+def _handle_list_local(
     instance_id: str,
     resource_type: contracts.ResourceType,
     entity_type: str | None = None,
@@ -339,20 +520,56 @@ def handle_list(
         limit=limit,
     )
 
-    # Serialize typed items at the MCP edge
     if resource_type in ("entities", "feedback", "outcomes"):
         items = [
             item.model_dump(mode="json") if hasattr(item, "model_dump") else item
             for item in result.items
         ]
     else:
-        # edges and receipts are already dicts
         items = result.items
 
     return contracts.ListResult(items=items, total=result.total)
 
 
-def handle_find_candidates(
+def handle_list(
+    instance_id: str,
+    resource_type: contracts.ResourceType,
+    entity_type: str | None = None,
+    relationship_type: str | None = None,
+    query_name: str | None = None,
+    receipt_id: str | None = None,
+    limit: int = 50,
+    property_filter: dict[str, Any] | None = None,
+    operation_type: str | None = None,
+) -> contracts.ListResult:
+    """List entities, edges, receipts, feedback, or outcomes."""
+    client = _get_client()
+    if client is not None:
+        return client.list(
+            instance_id,
+            resource_type=resource_type,
+            entity_type=entity_type,
+            relationship_type=relationship_type,
+            query_name=query_name,
+            receipt_id=receipt_id,
+            limit=limit,
+            property_filter=property_filter,
+            operation_type=operation_type,
+        )
+    return _handle_list_local(
+        instance_id,
+        resource_type,
+        entity_type=entity_type,
+        relationship_type=relationship_type,
+        query_name=query_name,
+        receipt_id=receipt_id,
+        limit=limit,
+        property_filter=property_filter,
+        operation_type=operation_type,
+    )
+
+
+def _handle_find_candidates_local(
     instance_id: str,
     relationship_type: str,
     strategy: contracts.CandidateStrategy,
@@ -367,11 +584,7 @@ def handle_find_candidates(
     check_permission("cruxible_find_candidates")
     instance = _manager.get(instance_id)
 
-    # Convert dicts to MatchRule at the MCP edge
-    rules = None
-    if match_rules:
-        rules = [MatchRule.model_validate(r) for r in match_rules]
-
+    rules = [MatchRule.model_validate(r) for r in match_rules] if match_rules else None
     candidates = service_find_candidates(
         instance,
         relationship_type,
@@ -390,7 +603,45 @@ def handle_find_candidates(
     )
 
 
-def handle_evaluate(
+def handle_find_candidates(
+    instance_id: str,
+    relationship_type: str,
+    strategy: contracts.CandidateStrategy,
+    match_rules: list[dict[str, str]] | None = None,
+    via_relationship: str | None = None,
+    min_overlap: float = 0.5,
+    min_confidence: float = 0.5,
+    limit: int = 20,
+    min_distinct_neighbors: int = 2,
+) -> contracts.CandidatesResult:
+    """Find candidate relationships."""
+    client = _get_client()
+    if client is not None:
+        return client.find_candidates(
+            instance_id,
+            relationship_type=relationship_type,
+            strategy=strategy,
+            match_rules=match_rules,
+            via_relationship=via_relationship,
+            min_overlap=min_overlap,
+            min_confidence=min_confidence,
+            limit=limit,
+            min_distinct_neighbors=min_distinct_neighbors,
+        )
+    return _handle_find_candidates_local(
+        instance_id,
+        relationship_type,
+        strategy,
+        match_rules=match_rules,
+        via_relationship=via_relationship,
+        min_overlap=min_overlap,
+        min_confidence=min_confidence,
+        limit=limit,
+        min_distinct_neighbors=min_distinct_neighbors,
+    )
+
+
+def _handle_evaluate_local(
     instance_id: str,
     confidence_threshold: float = 0.5,
     max_findings: int = 100,
@@ -413,7 +664,30 @@ def handle_evaluate(
     )
 
 
-def handle_schema(instance_id: str) -> dict[str, Any]:
+def handle_evaluate(
+    instance_id: str,
+    confidence_threshold: float = 0.5,
+    max_findings: int = 100,
+    exclude_orphan_types: list[str] | None = None,
+) -> contracts.EvaluateResult:
+    """Evaluate graph quality."""
+    client = _get_client()
+    if client is not None:
+        return client.evaluate(
+            instance_id,
+            confidence_threshold=confidence_threshold,
+            max_findings=max_findings,
+            exclude_orphan_types=exclude_orphan_types,
+        )
+    return _handle_evaluate_local(
+        instance_id,
+        confidence_threshold=confidence_threshold,
+        max_findings=max_findings,
+        exclude_orphan_types=exclude_orphan_types,
+    )
+
+
+def _handle_schema_local(instance_id: str) -> dict[str, Any]:
     """Get config schema details."""
     check_permission("cruxible_schema")
     instance = _manager.get(instance_id)
@@ -421,7 +695,15 @@ def handle_schema(instance_id: str) -> dict[str, Any]:
     return config.model_dump(mode="json")
 
 
-def handle_sample(
+def handle_schema(instance_id: str) -> dict[str, Any]:
+    """Get config schema details."""
+    client = _get_client()
+    if client is not None:
+        return client.schema(instance_id)
+    return _handle_schema_local(instance_id)
+
+
+def _handle_sample_local(
     instance_id: str,
     entity_type: str,
     limit: int = 5,
@@ -437,9 +719,24 @@ def handle_sample(
     )
 
 
-def handle_add_relationship(
+def handle_sample(
+    instance_id: str,
+    entity_type: str,
+    limit: int = 5,
+) -> contracts.SampleResult:
+    """Sample entities of a given type."""
+    client = _get_client()
+    if client is not None:
+        return client.sample(instance_id, entity_type, limit=limit)
+    return _handle_sample_local(instance_id, entity_type, limit=limit)
+
+
+def _handle_add_relationship_impl(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
+    *,
+    provenance_source: str,
+    provenance_source_ref: str,
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
     check_permission("cruxible_add_relationship", instance_id=instance_id)
@@ -457,14 +754,43 @@ def handle_add_relationship(
         for edge in relationships
     ]
     result = service_add_relationships(
-        instance, inputs, source="mcp_add", source_ref="cruxible_add_relationship"
+        instance,
+        inputs,
+        source=provenance_source,
+        source_ref=provenance_source_ref,
     )
     return contracts.AddRelationshipResult(
-        added=result.added, updated=result.updated, receipt_id=result.receipt_id
+        added=result.added,
+        updated=result.updated,
+        receipt_id=result.receipt_id,
     )
 
 
-def handle_add_entity(
+def _handle_add_relationship_local(
+    instance_id: str,
+    relationships: list[contracts.RelationshipInput],
+) -> contracts.AddRelationshipResult:
+    """Add or update one or more relationships in the graph (upsert)."""
+    return _handle_add_relationship_impl(
+        instance_id,
+        relationships,
+        provenance_source="mcp_add",
+        provenance_source_ref="cruxible_add_relationship",
+    )
+
+
+def handle_add_relationship(
+    instance_id: str,
+    relationships: list[contracts.RelationshipInput],
+) -> contracts.AddRelationshipResult:
+    """Add or update one or more relationships in the graph (upsert)."""
+    client = _get_client()
+    if client is not None:
+        return client.add_relationships(instance_id, relationships)
+    return _handle_add_relationship_local(instance_id, relationships)
+
+
+def _handle_add_entity_local(
     instance_id: str,
     entities: list[contracts.EntityInput],
 ) -> contracts.AddEntityResult:
@@ -482,11 +808,24 @@ def handle_add_entity(
     ]
     result = service_add_entities(instance, inputs)
     return contracts.AddEntityResult(
-        entities_added=result.added, entities_updated=result.updated, receipt_id=result.receipt_id
+        entities_added=result.added,
+        entities_updated=result.updated,
+        receipt_id=result.receipt_id,
     )
 
 
-def handle_add_constraint(
+def handle_add_entity(
+    instance_id: str,
+    entities: list[contracts.EntityInput],
+) -> contracts.AddEntityResult:
+    """Add or update one or more entities in the graph (upsert)."""
+    client = _get_client()
+    if client is not None:
+        return client.add_entities(instance_id, entities)
+    return _handle_add_entity_local(instance_id, entities)
+
+
+def _handle_add_constraint_local(
     instance_id: str,
     name: str,
     rule: str,
@@ -498,12 +837,10 @@ def handle_add_constraint(
     instance = _manager.get(instance_id)
     config = instance.load_config()
 
-    # Check for duplicate constraint name
     for existing in config.constraints:
         if existing.name == name:
             raise ConfigError(f"Constraint '{name}' already exists in config")
 
-    # Validate rule syntax
     parsed = parse_constraint_rule(rule)
     if parsed is None:
         raise ConfigError(
@@ -513,8 +850,6 @@ def handle_add_constraint(
 
     warnings: list[str] = []
     rel_name, from_prop, to_prop = parsed
-
-    # Validate property names against schema
     rel_schema = config.get_relationship(rel_name)
     if rel_schema is None:
         warnings.append(f"Relationship '{rel_name}' not found in config schema")
@@ -530,7 +865,6 @@ def handle_add_constraint(
                 f"Property '{to_prop}' not found on entity type '{rel_schema.to_entity}'"
             )
 
-    # Create and append constraint
     constraint = ConstraintSchema(
         name=name,
         rule=rule,
@@ -539,11 +873,7 @@ def handle_add_constraint(
     )
     config.constraints.append(constraint)
 
-    # Run cross-reference validation
-    config_warnings = validate_config(config)
-    warnings.extend(config_warnings)
-
-    # Write back to YAML
+    warnings.extend(validate_config(config))
     instance.save_config(config)
 
     return contracts.AddConstraintResult(
@@ -554,7 +884,27 @@ def handle_add_constraint(
     )
 
 
-def handle_get_entity(
+def handle_add_constraint(
+    instance_id: str,
+    name: str,
+    rule: str,
+    severity: contracts.ConstraintSeverity = "warning",
+    description: str | None = None,
+) -> contracts.AddConstraintResult:
+    """Add a constraint rule to the config and write back to YAML."""
+    client = _get_client()
+    if client is not None:
+        return client.add_constraint(
+            instance_id,
+            name=name,
+            rule=rule,
+            severity=severity,
+            description=description,
+        )
+    return _handle_add_constraint_local(instance_id, name, rule, severity, description)
+
+
+def _handle_get_entity_local(
     instance_id: str,
     entity_type: str,
     entity_id: str,
@@ -573,7 +923,19 @@ def handle_get_entity(
     )
 
 
-def handle_get_relationship(
+def handle_get_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+) -> contracts.GetEntityResult:
+    """Look up a specific entity by type and ID."""
+    client = _get_client()
+    if client is not None:
+        return client.get_entity(instance_id, entity_type, entity_id)
+    return _handle_get_entity_local(instance_id, entity_type, entity_id)
+
+
+def _handle_get_relationship_local(
     instance_id: str,
     from_type: str,
     from_id: str,
@@ -609,7 +971,39 @@ def handle_get_relationship(
     )
 
 
-def handle_propose_group(
+def handle_get_relationship(
+    instance_id: str,
+    from_type: str,
+    from_id: str,
+    relationship_type: str,
+    to_type: str,
+    to_id: str,
+    edge_key: int | None = None,
+) -> contracts.GetRelationshipResult:
+    """Look up a specific relationship by its endpoints and type."""
+    client = _get_client()
+    if client is not None:
+        return client.get_relationship(
+            instance_id,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship_type,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+        )
+    return _handle_get_relationship_local(
+        instance_id,
+        from_type,
+        from_id,
+        relationship_type,
+        to_type,
+        to_id,
+        edge_key=edge_key,
+    )
+
+
+def _handle_propose_group_local(
     instance_id: str,
     relationship_type: str,
     members: list[contracts.MemberInput],
@@ -665,7 +1059,45 @@ def handle_propose_group(
     )
 
 
-def handle_resolve_group(
+def handle_propose_group(
+    instance_id: str,
+    relationship_type: str,
+    members: list[contracts.MemberInput],
+    thesis_text: str = "",
+    thesis_facts: dict[str, Any] | None = None,
+    analysis_state: dict[str, Any] | None = None,
+    integrations_used: list[str] | None = None,
+    proposed_by: contracts.GroupProposedBy = "ai_review",
+    suggested_priority: str | None = None,
+) -> contracts.ProposeGroupToolResult:
+    """Propose a candidate group for batch edge review."""
+    client = _get_client()
+    if client is not None:
+        return client.propose_group(
+            instance_id,
+            relationship_type=relationship_type,
+            members=members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            integrations_used=integrations_used,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+        )
+    return _handle_propose_group_local(
+        instance_id,
+        relationship_type,
+        members,
+        thesis_text=thesis_text,
+        thesis_facts=thesis_facts,
+        analysis_state=analysis_state,
+        integrations_used=integrations_used,
+        proposed_by=proposed_by,
+        suggested_priority=suggested_priority,
+    )
+
+
+def _handle_resolve_group_local(
     instance_id: str,
     group_id: str,
     action: contracts.GroupAction,
@@ -693,7 +1125,33 @@ def handle_resolve_group(
     )
 
 
-def handle_update_trust_status(
+def handle_resolve_group(
+    instance_id: str,
+    group_id: str,
+    action: contracts.GroupAction,
+    rationale: str = "",
+    resolved_by: contracts.GroupResolvedBy = "human",
+) -> contracts.ResolveGroupToolResult:
+    """Resolve a candidate group (approve or reject)."""
+    client = _get_client()
+    if client is not None:
+        return client.resolve_group(
+            instance_id,
+            group_id,
+            action=action,
+            rationale=rationale,
+            resolved_by=resolved_by,
+        )
+    return _handle_resolve_group_local(
+        instance_id,
+        group_id,
+        action,
+        rationale=rationale,
+        resolved_by=resolved_by,
+    )
+
+
+def _handle_update_trust_status_local(
     instance_id: str,
     resolution_id: str,
     trust_status: contracts.GroupTrustStatus,
@@ -710,7 +1168,25 @@ def handle_update_trust_status(
     )
 
 
-def handle_get_group(
+def handle_update_trust_status(
+    instance_id: str,
+    resolution_id: str,
+    trust_status: contracts.GroupTrustStatus,
+    reason: str = "",
+) -> contracts.UpdateTrustStatusToolResult:
+    """Update trust status on a resolution."""
+    client = _get_client()
+    if client is not None:
+        return client.update_trust_status(
+            instance_id,
+            resolution_id,
+            trust_status=trust_status,
+            reason=reason,
+        )
+    return _handle_update_trust_status_local(instance_id, resolution_id, trust_status, reason)
+
+
+def _handle_get_group_local(
     instance_id: str,
     group_id: str,
 ) -> contracts.GetGroupToolResult:
@@ -725,7 +1201,18 @@ def handle_get_group(
     )
 
 
-def handle_list_groups(
+def handle_get_group(
+    instance_id: str,
+    group_id: str,
+) -> contracts.GetGroupToolResult:
+    """Get a candidate group with its members."""
+    client = _get_client()
+    if client is not None:
+        return client.get_group(instance_id, group_id)
+    return _handle_get_group_local(instance_id, group_id)
+
+
+def _handle_list_groups_local(
     instance_id: str,
     relationship_type: str | None = None,
     status: contracts.GroupStatus | None = None,
@@ -747,7 +1234,25 @@ def handle_list_groups(
     )
 
 
-def handle_list_resolutions(
+def handle_list_groups(
+    instance_id: str,
+    relationship_type: str | None = None,
+    status: contracts.GroupStatus | None = None,
+    limit: int = 50,
+) -> contracts.ListGroupsToolResult:
+    """List candidate groups with optional filters."""
+    client = _get_client()
+    if client is not None:
+        return client.list_groups(
+            instance_id,
+            relationship_type=relationship_type,
+            status=status,
+            limit=limit,
+        )
+    return _handle_list_groups_local(instance_id, relationship_type, status, limit)
+
+
+def _handle_list_resolutions_local(
     instance_id: str,
     relationship_type: str | None = None,
     action: contracts.GroupAction | None = None,
@@ -767,3 +1272,21 @@ def handle_list_resolutions(
         resolutions=result.resolutions,
         total=result.total,
     )
+
+
+def handle_list_resolutions(
+    instance_id: str,
+    relationship_type: str | None = None,
+    action: contracts.GroupAction | None = None,
+    limit: int = 50,
+) -> contracts.ListResolutionsToolResult:
+    """List group resolutions with optional filters."""
+    client = _get_client()
+    if client is not None:
+        return client.list_resolutions(
+            instance_id,
+            relationship_type=relationship_type,
+            action=action,
+            limit=limit,
+        )
+    return _handle_list_resolutions_local(instance_id, relationship_type, action, limit)
