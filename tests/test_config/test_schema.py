@@ -5,7 +5,9 @@ from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config_from_string, save_config
 from cruxible_core.config.schema import (
+    AssertSpec,
     ConstraintSchema,
+    ContractSchema,
     CoreConfig,
     EntityTypeSchema,
     IngestionMapping,
@@ -14,8 +16,14 @@ from cruxible_core.config.schema import (
     MatchingConfig,
     NamedQuerySchema,
     PropertySchema,
+    ProviderArtifactSchema,
+    ProviderSchema,
     RelationshipSchema,
     TraversalStep,
+    WorkflowSchema,
+    WorkflowStepSchema,
+    WorkflowTestExpectSchema,
+    WorkflowTestSchema,
 )
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -133,6 +141,62 @@ class TestConstraintSchema:
     def test_error_severity(self):
         c = ConstraintSchema(name="test", rule="a == b", severity="error")
         assert c.severity == "error"
+
+
+class TestWorkflowSchema:
+    def test_query_step_requires_alias(self):
+        with pytest.raises(ValidationError, match="require 'as'"):
+            WorkflowStepSchema(id="context", query="get_context")
+
+    def test_provider_step_forbids_params(self):
+        with pytest.raises(ValidationError, match="may not define 'params'"):
+            WorkflowStepSchema(
+                id="lift",
+                provider="predictor",
+                params={"sku": "x"},
+                input={"sku": "x"},
+                **{"as": "lift"},
+            )
+
+    def test_assert_step_shape(self):
+        step = WorkflowStepSchema(
+            id="gate",
+            **{
+                "assert": AssertSpec(left="$steps.score", op="gte", right=0.5, message="Too low"),
+            },
+        )
+        assert step.assert_spec is not None
+        assert step.assert_spec.op == "gte"
+
+    def test_workflow_requires_contract_in(self):
+        workflow = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="context",
+                    query="get_context",
+                    params={"sku": "$input.sku"},
+                    **{"as": "context"},
+                )
+            ],
+            returns="context",
+        )
+        assert workflow.contract_in == "PromoInput"
+
+
+class TestWorkflowTests:
+    def test_expectation_normalizes_provider_list(self):
+        expect = WorkflowTestExpectSchema(receipt_contains_provider="lift_predictor")
+        assert expect.required_providers == ["lift_predictor"]
+
+    def test_workflow_test_schema(self):
+        test_case = WorkflowTestSchema(
+            name="smoke",
+            workflow="evaluate_promo",
+            input={"sku": "SKU-1"},
+        )
+        assert test_case.name == "smoke"
+        assert test_case.expect.required_providers == []
 
 
 class TestIngestionMapping:
@@ -286,6 +350,68 @@ class TestCoreConfig:
             relationships=[],
         )
         assert config.integrations == {}
+
+    def test_execution_sections_default_empty(self):
+        config = CoreConfig(
+            name="test",
+            entity_types={
+                "Thing": EntityTypeSchema(
+                    properties={"id": PropertySchema(type="string", primary_key=True)}
+                )
+            },
+            relationships=[],
+        )
+        assert config.contracts == {}
+        assert config.artifacts == {}
+        assert config.providers == {}
+        assert config.workflows == {}
+        assert config.tests == []
+
+    def test_execution_sections_round_trip(self):
+        config = CoreConfig(
+            name="test",
+            entity_types={
+                "Thing": EntityTypeSchema(
+                    properties={"id": PropertySchema(type="string", primary_key=True)}
+                )
+            },
+            relationships=[],
+            contracts={"ThingInput": ContractSchema(fields={"id": PropertySchema(type="string")})},
+            artifacts={
+                "artifact": ProviderArtifactSchema(
+                    kind="model", uri="file:///tmp/model", sha256="abc"
+                )
+            },
+            providers={
+                "loader": ProviderSchema(
+                    kind="function",
+                    contract_in="ThingInput",
+                    contract_out="ThingInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="ThingInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="load",
+                            provider="loader",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+            tests=[WorkflowTestSchema(name="smoke", workflow="wf", input={"id": "1"})],
+        )
+        assert "ThingInput" in config.contracts
+        assert "artifact" in config.artifacts
+        assert "loader" in config.providers
+        assert "wf" in config.workflows
+        assert config.tests[0].name == "smoke"
 
 
 # ---------------------------------------------------------------------------

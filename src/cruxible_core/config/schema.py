@@ -1,8 +1,8 @@
 """Pydantic models for Cruxible Core config YAML validation.
 
 The config defines a decision domain: entity types, relationships,
-named queries, constraints, and ingestion mappings. AI agents generate
-these configs; Core validates and executes against them.
+named queries, constraints, ingestion mappings, and optional execution
+artifacts such as contracts, providers, workflows, and workflow tests.
 
 Hierarchy:
     CoreConfig
@@ -13,7 +13,12 @@ Hierarchy:
     ├── named_queries: dict[str, NamedQuerySchema]
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
-    └── ingestion: dict[str, IngestionMapping]
+    ├── ingestion: dict[str, IngestionMapping]
+    ├── contracts: dict[str, ContractSchema]
+    ├── artifacts: dict[str, ProviderArtifactSchema]
+    ├── providers: dict[str, ProviderSchema]
+    ├── workflows: dict[str, WorkflowSchema]
+    └── tests: list[WorkflowTestSchema]
 """
 
 from __future__ import annotations
@@ -200,6 +205,144 @@ class ConstraintSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Workflow / Provider Contracts
+# ---------------------------------------------------------------------------
+
+
+class ContractSchema(BaseModel):
+    """Typed payload contract for provider or workflow inputs."""
+
+    description: str | None = None
+    fields: dict[str, PropertySchema]
+
+
+class ProviderArtifactSchema(BaseModel):
+    """Pinned external artifact referenced by a provider."""
+
+    kind: str
+    uri: str
+    sha256: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProviderSchema(BaseModel):
+    """Versioned executable leaf used by workflow provider steps."""
+
+    kind: Literal["function", "model", "tool"]
+    description: str | None = None
+    contract_in: str
+    contract_out: str
+    ref: str
+    version: str
+    deterministic: bool = True
+    artifact: str | None = None
+    runtime: str = "python"
+    side_effects: bool = False
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssertSpec(BaseModel):
+    """Structured workflow guard condition."""
+
+    left: Any
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte"]
+    right: Any
+    message: str
+
+
+class WorkflowStepSchema(BaseModel):
+    """Single step in a declarative workflow."""
+
+    id: str
+    query: str | None = None
+    provider: str | None = None
+    assert_spec: AssertSpec | None = Field(alias="assert", default=None)
+    params: dict[str, Any] = Field(default_factory=dict)
+    input: dict[str, Any] = Field(default_factory=dict)
+    as_: str | None = Field(alias="as", default=None)
+
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def validate_step_shape(self) -> WorkflowStepSchema:
+        kinds = sum(
+            candidate is not None
+            for candidate in (
+                self.query,
+                self.provider,
+                self.assert_spec,
+            )
+        )
+        if kinds != 1:
+            msg = "Workflow step must define exactly one of 'query', 'provider', or 'assert'"
+            raise ValueError(msg)
+
+        if self.query is not None:
+            if self.as_ is None:
+                msg = "Query workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "Query workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.provider is not None:
+            if self.as_ is None:
+                msg = "Provider workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "Provider workflow steps may not define 'params'"
+                raise ValueError(msg)
+            return self
+
+        if self.as_ is not None:
+            msg = "Assert workflow steps may not define 'as'"
+            raise ValueError(msg)
+        if self.params:
+            msg = "Assert workflow steps may not define 'params'"
+            raise ValueError(msg)
+        if self.input:
+            msg = "Assert workflow steps may not define 'input'"
+            raise ValueError(msg)
+        return self
+
+
+class WorkflowSchema(BaseModel):
+    """Declarative composition of query and provider steps."""
+
+    description: str | None = None
+    contract_in: str
+    steps: list[WorkflowStepSchema]
+    returns: str
+
+
+class WorkflowTestExpectSchema(BaseModel):
+    """Minimal assertions for config-defined workflow tests."""
+
+    output_equals: Any | None = None
+    output_contains: dict[str, Any] | None = None
+    receipt_contains_provider: str | list[str] | None = None
+    error_contains: str | None = None
+
+    @property
+    def required_providers(self) -> list[str]:
+        if self.receipt_contains_provider is None:
+            return []
+        if isinstance(self.receipt_contains_provider, str):
+            return [self.receipt_contains_provider]
+        return self.receipt_contains_provider
+
+
+class WorkflowTestSchema(BaseModel):
+    """Fixture for exercising a workflow with expected outputs/evidence."""
+
+    name: str
+    workflow: str
+    input: dict[str, Any] = Field(default_factory=dict)
+    expect: WorkflowTestExpectSchema = Field(default_factory=WorkflowTestExpectSchema)
+
+
+# ---------------------------------------------------------------------------
 # Ingestion Mapping
 # ---------------------------------------------------------------------------
 
@@ -274,6 +417,11 @@ class CoreConfig(BaseModel):
     constraints: list[ConstraintSchema] = Field(default_factory=list)
     ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
     integrations: dict[str, IntegrationSpec] = Field(default_factory=dict)
+    contracts: dict[str, ContractSchema] = Field(default_factory=dict)
+    artifacts: dict[str, ProviderArtifactSchema] = Field(default_factory=dict)
+    providers: dict[str, ProviderSchema] = Field(default_factory=dict)
+    workflows: dict[str, WorkflowSchema] = Field(default_factory=dict)
+    tests: list[WorkflowTestSchema] = Field(default_factory=list)
 
     def get_relationship(self, name: str) -> RelationshipSchema | None:
         """Find a relationship schema by name."""

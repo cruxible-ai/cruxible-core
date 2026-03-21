@@ -7,13 +7,19 @@ from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import (
+    ContractSchema,
     CoreConfig,
     EntityTypeSchema,
     IngestionMapping,
     NamedQuerySchema,
     PropertySchema,
+    ProviderArtifactSchema,
+    ProviderSchema,
     RelationshipSchema,
     TraversalStep,
+    WorkflowSchema,
+    WorkflowStepSchema,
+    WorkflowTestSchema,
 )
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -208,6 +214,119 @@ class TestValidatePrimaryKeys:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any("primary_key" in e for e in exc_info.value.errors)
+
+
+class TestValidateWorkflowExecution:
+    def _workflow_config(self, **overrides) -> CoreConfig:
+        defaults = dict(
+            contracts={
+                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
+            },
+            artifacts={
+                "artifact": ProviderArtifactSchema(
+                    kind="model", uri="file:///tmp/model", sha256="abc"
+                )
+            },
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                    artifact="artifact",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+            tests=[WorkflowTestSchema(name="smoke", workflow="wf", input={"id": "1"})],
+        )
+        defaults.update(overrides)
+        return _minimal_config(**defaults)
+
+    def test_missing_provider_contract(self):
+        config = self._workflow_config(contracts={})
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("contract_in" in error for error in exc_info.value.errors)
+
+    def test_missing_provider_artifact(self):
+        config = self._workflow_config(
+            artifacts={},
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                    artifact="artifact",
+                )
+            },
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("artifact 'artifact'" in error for error in exc_info.value.errors)
+
+    def test_invalid_workflow_returns_alias(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="missing",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("returns alias" in error for error in exc_info.value.errors)
+
+    def test_invalid_workflow_reference_future_alias(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$steps.missing.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("unknown or future step alias" in error for error in exc_info.value.errors)
+
+    def test_missing_test_workflow(self):
+        config = self._workflow_config(tests=[WorkflowTestSchema(name="smoke", workflow="nope")])
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("workflow 'nope'" in error for error in exc_info.value.errors)
 
 
 class TestConfigErrorStr:
