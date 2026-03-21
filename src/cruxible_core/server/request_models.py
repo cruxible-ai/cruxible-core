@@ -1,0 +1,110 @@
+"""Typed HTTP request models matching MCP handler signatures."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel
+
+from cruxible_core.mcp import contracts
+
+
+class InitRequest(BaseModel):
+    root_dir: str
+    config_path: str | None = None
+    config_yaml: str | None = None
+    data_dir: str | None = None
+
+
+class ValidateRequest(BaseModel):
+    config_path: str | None = None
+    config_yaml: str | None = None
+
+
+class QueryRequest(BaseModel):
+    query_name: str
+    params: dict[str, Any] | None = None
+    limit: int | None = None
+
+
+class IngestRequest(BaseModel):
+    mapping_name: str
+    data_csv: str | None = None
+    data_json: str | list[dict[str, Any]] | None = None
+    data_ndjson: str | None = None
+    upload_id: str | None = None
+
+
+class AddEntitiesRequest(BaseModel):
+    entities: list[contracts.EntityInput]
+
+
+class AddRelationshipsRequest(BaseModel):
+    relationships: list[contracts.RelationshipInput]
+
+
+class FeedbackRequest(BaseModel):
+    receipt_id: str
+    action: contracts.FeedbackAction
+    source: contracts.FeedbackSource
+    from_type: str
+    from_id: str
+    relationship: str
+    to_type: str
+    to_id: str
+    edge_key: int | None = None
+    reason: str = ""
+    corrections: dict[str, Any] | None = None
+    group_override: bool = False
+
+
+class OutcomeRequest(BaseModel):
+    receipt_id: str
+    outcome: contracts.OutcomeValue
+    detail: dict[str, Any] | None = None
+
+
+class FindCandidatesRequest(BaseModel):
+    relationship_type: str
+    strategy: contracts.CandidateStrategy
+    match_rules: list[dict[str, str]] | None = None
+    via_relationship: str | None = None
+    min_overlap: float = 0.5
+    min_confidence: float = 0.5
+    limit: int = 20
+    min_distinct_neighbors: int = 2
+
+
+class ProposeGroupRequest(BaseModel):
+    relationship_type: str
+    members: list[contracts.MemberInput]
+    thesis_text: str = ""
+    thesis_facts: dict[str, Any] | None = None
+    analysis_state: dict[str, Any] | None = None
+    integrations_used: list[str] | None = None
+    proposed_by: contracts.GroupProposedBy = "ai_review"
+    suggested_priority: str | None = None
+
+
+class ResolveGroupRequest(BaseModel):
+    action: contracts.GroupAction
+    rationale: str = ""
+    resolved_by: contracts.GroupResolvedBy = "human"
+
+
+class UpdateTrustStatusRequest(BaseModel):
+    trust_status: contracts.GroupTrustStatus
+    reason: str = ""
+
+
+class EvaluateRequest(BaseModel):
+    confidence_threshold: float = 0.5
+    max_findings: int = 100
+    exclude_orphan_types: list[str] | None = None
+
+
+class AddConstraintRequest(BaseModel):
+    name: str
+    rule: str
+    severity: contracts.ConstraintSeverity = "warning"
+    description: str | None = None

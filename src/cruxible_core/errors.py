@@ -166,6 +166,11 @@ class EdgeAmbiguityError(GraphError):
         to_id: str,
         relationship: str,
     ):
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        self.relationship = relationship
         super().__init__(
             "Ambiguous edge target for "
             f"{from_type}:{from_id}:{relationship}:{to_type}:{to_id}; "

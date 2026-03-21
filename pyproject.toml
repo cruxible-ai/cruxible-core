@@ -31,20 +31,29 @@ dependencies = [
     "structlog>=24.0",
     "click>=8.0",
     "rich>=13.0",
+    "httpx>=0.24",
 ]
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0"]
+server = [
+    "fastapi>=0.100",
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.20",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
     "ruff>=0.7",
     "mypy>=1.10",
+    "fastapi>=0.100",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
 cruxible = "cruxible_core.cli.main:cli"
 cruxible-mcp = "cruxible_core.mcp.server:main"
+cruxible-server = "cruxible_core.server.app:main"
 
 [project.urls]
 Homepage = "https://github.com/cruxible-ai/cruxible-core"
