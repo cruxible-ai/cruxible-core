@@ -6,6 +6,7 @@ permission checks, and protocol-specific concerns.
 """
 
 from cruxible_core.service.analysis import service_evaluate, service_find_candidates
+from cruxible_core.service.execution import service_lock, service_plan, service_run, service_test
 from cruxible_core.service.feedback import service_feedback, service_outcome
 from cruxible_core.service.groups import (
     derive_review_priority,
@@ -43,11 +44,15 @@ from cruxible_core.service.types import (
     ListGroupsResult,
     ListResolutionsResult,
     ListResult,
+    LockServiceResult,
     OutcomeServiceResult,
+    PlanServiceResult,
     ProposeGroupResult,
     QueryServiceResult,
     RelationshipUpsertInput,
     ResolveGroupResult,
+    RunServiceResult,
+    TestServiceResult,
     ValidateServiceResult,
 )
 
@@ -60,15 +65,24 @@ __all__ = [
     "GetGroupResult",
     "IngestResult",
     "InitResult",
+    "LockServiceResult",
     "ListGroupsResult",
     "ListResolutionsResult",
     "ListResult",
     "OutcomeServiceResult",
+    "PlanServiceResult",
     "ProposeGroupResult",
     "QueryServiceResult",
     "RelationshipUpsertInput",
     "ResolveGroupResult",
+    "RunServiceResult",
+    "TestServiceResult",
     "ValidateServiceResult",
+    # Execution
+    "service_lock",
+    "service_plan",
+    "service_run",
+    "service_test",
     # Analysis
     "service_evaluate",
     "service_find_candidates",

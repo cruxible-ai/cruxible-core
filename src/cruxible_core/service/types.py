@@ -9,7 +9,9 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
 
 # ---------------------------------------------------------------------------
 # Input types
@@ -103,6 +105,38 @@ class InitResult:
 class ListResult:
     items: list[Any]
     total: int
+
+
+@dataclass
+class LockServiceResult:
+    lock_path: str
+    config_digest: str
+    providers_locked: int
+    artifacts_locked: int
+
+
+@dataclass
+class PlanServiceResult:
+    plan: CompiledPlan
+
+
+@dataclass
+class RunServiceResult:
+    workflow: str
+    output: Any
+    receipt_id: str
+    query_receipt_ids: list[str] = field(default_factory=list)
+    trace_ids: list[str] = field(default_factory=list)
+    receipt: Receipt | None = None
+    traces: list[ExecutionTrace] = field(default_factory=list)
+
+
+@dataclass
+class TestServiceResult:
+    total: int
+    passed: int
+    failed: int
+    cases: list[WorkflowTestCaseResult] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
