@@ -46,6 +46,12 @@ class ReceiptBuilder:
                 detail={"query_name": query_name, "parameters": self._parameters},
             )
             self._committed = True
+        elif operation_type == "workflow":
+            self._root_id = self._add_node(
+                node_type="workflow",
+                detail={"workflow_name": query_name, "parameters": self._parameters},
+            )
+            self._committed = True
         else:
             self._root_id = self._add_node(
                 node_type="mutation",
@@ -158,6 +164,21 @@ class ReceiptBuilder:
         )
         for pid in parent_ids or [self._root_id]:
             self._add_edge(pid, node_id, "produced")
+        return node_id
+
+    def record_plan_step(
+        self,
+        step_id: str,
+        kind: str,
+        detail: dict[str, Any] | None = None,
+        parent_id: str | None = None,
+    ) -> str:
+        """Record a workflow plan step with step-specific detail."""
+        node_id = self._add_node(
+            node_type="plan_step",
+            detail={"step_id": step_id, "kind": kind, **(detail or {})},
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "produced")
         return node_id
 
     def mark_committed(self) -> None:

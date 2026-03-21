@@ -23,6 +23,8 @@ def to_markdown(receipt: Receipt) -> str:
 
     if receipt.operation_type == "query":
         lines.append(f"**Query:** {receipt.query_name}")
+    elif receipt.operation_type == "workflow":
+        lines.append(f"**Workflow:** {receipt.query_name}")
     else:
         lines.append(f"**Operation:** {receipt.operation_type}")
     lines.append(f"**Parameters:** {receipt.parameters}")
@@ -38,6 +40,7 @@ def to_markdown(receipt: Receipt) -> str:
     filters = [n for n in receipt.nodes if n.node_type == "filter_applied"]
     constraints = [n for n in receipt.nodes if n.node_type == "constraint_check"]
     validations = [n for n in receipt.nodes if n.node_type == "validation"]
+    plan_steps = [n for n in receipt.nodes if n.node_type == "plan_step"]
     writes = [n for n in receipt.nodes if n.node_type in ("entity_write", "relationship_write")]
     feedback_nodes = [n for n in receipt.nodes if n.node_type == "feedback_applied"]
     ingest_nodes = [n for n in receipt.nodes if n.node_type == "ingest_batch"]
@@ -81,6 +84,12 @@ def to_markdown(receipt: Receipt) -> str:
             lines.append(f"- [{status}]")
         lines.append("")
 
+    if plan_steps:
+        lines.append("## Plan Steps")
+        for n in plan_steps:
+            lines.append(f"- {_node_label(n)}")
+        lines.append("")
+
     if writes:
         lines.append("## Writes")
         for n in writes:
@@ -121,6 +130,9 @@ def _node_label(node: ReceiptNode) -> str:
     if node.node_type == "query":
         return f"Query: {node.detail.get('query_name', 'query')}"
 
+    if node.node_type == "workflow":
+        return f"Workflow: {node.detail.get('workflow_name', 'workflow')}"
+
     if node.node_type == "mutation":
         return f"Mutation: {node.detail.get('operation_type', 'mutation')}"
 
@@ -141,6 +153,11 @@ def _node_label(node: ReceiptNode) -> str:
 
     if node.node_type == "result":
         return f"Results: {node.detail.get('count', 0)}"
+
+    if node.node_type == "plan_step":
+        step_id = node.detail.get("step_id", "?")
+        kind = node.detail.get("kind", "?")
+        return f"Step {step_id} ({kind})"
 
     if node.node_type == "validation":
         status = "PASS" if node.detail.get("passed") else "FAIL"

@@ -2,6 +2,7 @@
 
 import pytest
 
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.storage.sqlite import SQLiteStore
@@ -208,3 +209,55 @@ class TestSQLiteStore:
         store.save_receipt(sample_receipt)
         loaded = store.get_receipt(sample_receipt.receipt_id)
         assert loaded.operation_type == "query"
+
+    def test_save_and_get_trace(self, store: SQLiteStore):
+        trace = ExecutionTrace(
+            workflow_name="evaluate_promo",
+            step_id="lift",
+            provider_name="lift_predictor",
+            provider_version="1.2.0",
+            provider_ref="tests.support.workflow_test_providers.lift_predictor",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+            artifact_name="promo_model",
+            artifact_sha256="abc123",
+            input_payload={"sku": "SKU-123"},
+            output_payload={"predicted_lift_pct": 0.12},
+        )
+
+        trace_id = store.save_trace(trace)
+        loaded = store.get_trace(trace_id)
+
+        assert loaded is not None
+        assert loaded.trace_id == trace.trace_id
+        assert loaded.provider_name == "lift_predictor"
+        assert loaded.output_payload["predicted_lift_pct"] == 0.12
+
+    def test_list_traces(self, store: SQLiteStore):
+        trace_a = ExecutionTrace(
+            workflow_name="wf_a",
+            step_id="step",
+            provider_name="provider_a",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.lift_predictor",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+        )
+        trace_b = ExecutionTrace(
+            workflow_name="wf_b",
+            step_id="step",
+            provider_name="provider_b",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.margin_calculator",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+        )
+        store.save_trace(trace_a)
+        store.save_trace(trace_b)
+
+        listed = store.list_traces(workflow_name="wf_a")
+        assert len(listed) == 1
+        assert listed[0]["provider_name"] == "provider_a"

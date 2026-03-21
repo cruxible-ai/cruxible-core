@@ -214,6 +214,27 @@ class TestReceiptBuilder:
         assert receipt.edges[0].to_node == node_id
         assert receipt.edges[0].edge_type == "consulted"
 
+    def test_workflow_root_and_plan_step(self):
+        builder = ReceiptBuilder(
+            query_name="evaluate_promo",
+            parameters={"sku": "SKU-123"},
+            operation_type="workflow",
+        )
+        step_id = builder.record_plan_step(
+            "lift",
+            "provider",
+            detail={"provider_name": "lift_predictor", "trace_id": "TRC-123"},
+        )
+        receipt = builder.build(results=[{"output": {"decision": "approve"}}])
+
+        assert receipt.operation_type == "workflow"
+        assert receipt.nodes[0].node_type == "workflow"
+        assert receipt.nodes[0].detail["workflow_name"] == "evaluate_promo"
+        plan_step = next(node for node in receipt.nodes if node.node_id == step_id)
+        assert plan_step.node_type == "plan_step"
+        assert plan_step.detail["kind"] == "provider"
+        assert plan_step.detail["trace_id"] == "TRC-123"
+
     def test_record_traversal(self):
         builder = ReceiptBuilder(query_name="q", parameters={})
         builder.record_traversal(

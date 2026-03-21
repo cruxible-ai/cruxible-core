@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Protocol
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.types import CandidateGroup, CandidateMember
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 
 
@@ -22,6 +24,16 @@ class ReceiptStoreProtocol(Protocol):
 
     def save_receipt(self, receipt: Receipt) -> str: ...
     def get_receipt(self, receipt_id: str) -> Receipt | None: ...
+    def save_trace(self, trace: ExecutionTrace) -> str: ...
+    def get_trace(self, trace_id: str) -> ExecutionTrace | None: ...
+    def list_traces(
+        self,
+        *,
+        workflow_name: str | None = None,
+        provider_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
     def list_receipts(
         self,
         *,
@@ -115,6 +127,7 @@ class GroupStoreProtocol(Protocol):
 class InstanceProtocol(Protocol):
     """Minimal interface handlers use on a cruxible instance."""
 
+    def get_config_path(self) -> Path: ...
     def load_config(self) -> CoreConfig: ...
     def save_config(self, config: CoreConfig) -> None: ...
     def load_graph(self) -> EntityGraph: ...

@@ -1,4 +1,4 @@
-"""SQLite backend for receipt persistence."""
+"""SQLite backend for receipt and execution-trace persistence."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 
 _SCHEMA = """\
@@ -29,11 +30,31 @@ CREATE TABLE IF NOT EXISTS receipt_entities (
 );
 CREATE INDEX IF NOT EXISTS idx_receipt_entities_lookup
 ON receipt_entities(entity_type, entity_id);
+
+CREATE TABLE IF NOT EXISTS execution_traces (
+    trace_id TEXT PRIMARY KEY,
+    workflow_name TEXT NOT NULL,
+    step_id TEXT NOT NULL,
+    provider_name TEXT NOT NULL,
+    provider_version TEXT NOT NULL,
+    provider_ref TEXT NOT NULL,
+    runtime TEXT NOT NULL,
+    deterministic INTEGER NOT NULL,
+    side_effects INTEGER NOT NULL,
+    artifact_name TEXT,
+    artifact_sha256 TEXT,
+    trace_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_execution_traces_workflow
+ON execution_traces(workflow_name);
+CREATE INDEX IF NOT EXISTS idx_execution_traces_provider
+ON execution_traces(provider_name);
 """
 
 
 class SQLiteStore:
-    """Stores and retrieves receipts from a SQLite database."""
+    """Stores and retrieves receipts and execution traces from SQLite."""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
         self._db_path = str(db_path)
@@ -101,6 +122,42 @@ class SQLiteStore:
             return None
         return Receipt.model_validate_json(row["receipt_json"])
 
+    def save_trace(self, trace: ExecutionTrace) -> str:
+        """Persist an execution trace. Returns the trace_id."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO execution_traces "
+            "(trace_id, workflow_name, step_id, provider_name, provider_version, provider_ref, "
+            "runtime, deterministic, side_effects, artifact_name, artifact_sha256, trace_json, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                trace.trace_id,
+                trace.workflow_name,
+                trace.step_id,
+                trace.provider_name,
+                trace.provider_version,
+                trace.provider_ref,
+                trace.runtime,
+                int(trace.deterministic),
+                int(trace.side_effects),
+                trace.artifact_name,
+                trace.artifact_sha256,
+                trace.model_dump_json(),
+                trace.started_at.isoformat(),
+            ),
+        )
+        self._conn.commit()
+        return trace.trace_id
+
+    def get_trace(self, trace_id: str) -> ExecutionTrace | None:
+        """Load an execution trace by ID."""
+        row = self._conn.execute(
+            "SELECT trace_json FROM execution_traces WHERE trace_id = ?",
+            (trace_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return ExecutionTrace.model_validate_json(row["trace_json"])
+
     def list_receipts(
         self,
         query_name: str | None = None,
@@ -138,6 +195,44 @@ class SQLiteStore:
                 "operation_type": r["operation_type"],
             }
             for r in rows
+        ]
+
+    def list_traces(
+        self,
+        workflow_name: str | None = None,
+        provider_name: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List execution-trace summaries with optional workflow/provider filters."""
+        conditions: list[str] = []
+        params: list[Any] = []
+        if workflow_name is not None:
+            conditions.append("workflow_name = ?")
+            params.append(workflow_name)
+        if provider_name is not None:
+            conditions.append("provider_name = ?")
+            params.append(provider_name)
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
+        rows = self._conn.execute(
+            "SELECT trace_id, workflow_name, step_id, provider_name, provider_version, "
+            "runtime, created_at "
+            f"FROM execution_traces{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params,
+        ).fetchall()
+        return [
+            {
+                "trace_id": row["trace_id"],
+                "workflow_name": row["workflow_name"],
+                "step_id": row["step_id"],
+                "provider_name": row["provider_name"],
+                "provider_version": row["provider_version"],
+                "runtime": row["runtime"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
         ]
 
     def count_receipts(

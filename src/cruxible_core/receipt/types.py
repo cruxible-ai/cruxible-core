@@ -20,11 +20,13 @@ class ReceiptNode(BaseModel):
     node_id: str
     node_type: Literal[
         "query",
+        "workflow",
         "entity_lookup",
         "edge_traversal",
         "filter_applied",
         "constraint_check",
         "result",
+        "plan_step",
         "mutation",
         "validation",
         "entity_write",

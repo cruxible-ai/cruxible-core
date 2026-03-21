@@ -99,17 +99,18 @@ class CruxibleInstance:
 
     def load_config(self) -> CoreConfig:
         """Load the CoreConfig from the stored config path."""
-        config_path = Path(self.metadata["config_path"])
-        if not config_path.is_absolute():
-            config_path = self.root / config_path
-        return load_config(config_path)
+        return load_config(self.get_config_path())
 
     def save_config(self, config: CoreConfig) -> None:
         """Save the CoreConfig back to the YAML file on disk."""
+        save_config(config, self.get_config_path())
+
+    def get_config_path(self) -> Path:
+        """Return the resolved config path for the instance."""
         config_path = Path(self.metadata["config_path"])
         if not config_path.is_absolute():
             config_path = self.root / config_path
-        save_config(config, config_path)
+        return config_path
 
     def load_graph(self) -> EntityGraph:
         """Load the entity graph from graph.json. Returns cached graph if available."""
