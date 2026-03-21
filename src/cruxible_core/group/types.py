@@ -57,6 +57,10 @@ class CandidateGroup(BaseModel):
     member_count: int = 0
     review_priority: Literal["critical", "review", "normal"] = "normal"
     suggested_priority: str | None = None
+    source_workflow_name: str | None = None
+    source_workflow_receipt_id: str | None = None
+    source_trace_ids: list[str] = Field(default_factory=list)
+    source_step_ids: list[str] = Field(default_factory=list)
     resolution_id: str | None = None
     resolution: dict[str, Any] | None = None  # transient — populated on load
     created_at: datetime

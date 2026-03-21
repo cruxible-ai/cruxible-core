@@ -250,6 +250,15 @@ class AssertSpec(BaseModel):
     message: str
 
 
+class WorkflowProposalOutputSchema(BaseModel):
+    """Optional bridge from workflow output into a governed proposal type."""
+
+    kind: Literal["relationship_group"]
+    relationship_type: str
+    source_alias: str | None = None
+    proposed_by: Literal["human", "ai_review"] = "ai_review"
+
+
 class WorkflowStepSchema(BaseModel):
     """Single step in a declarative workflow."""
 
@@ -314,6 +323,7 @@ class WorkflowSchema(BaseModel):
     contract_in: str
     steps: list[WorkflowStepSchema]
     returns: str
+    proposal_output: WorkflowProposalOutputSchema | None = None
 
 
 class WorkflowTestExpectSchema(BaseModel):
@@ -410,6 +420,7 @@ class CoreConfig(BaseModel):
     name: str
     description: str | None = None
     cruxible_version: str | None = None
+    kind: Literal["ontology", "world_model"] = "world_model"
 
     entity_types: dict[str, EntityTypeSchema]
     relationships: list[RelationshipSchema]

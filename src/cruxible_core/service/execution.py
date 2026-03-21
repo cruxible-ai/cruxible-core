@@ -5,10 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.service.groups import service_propose_group
 from cruxible_core.service.types import (
     LockServiceResult,
     PlanServiceResult,
+    ProposeWorkflowResult,
     RunServiceResult,
     TestServiceResult,
 )
@@ -20,7 +23,7 @@ from cruxible_core.workflow import (
     load_lock,
     write_lock,
 )
-from cruxible_core.workflow.types import WorkflowTestCaseResult
+from cruxible_core.workflow.types import RelationshipGroupProposalPayload, WorkflowTestCaseResult
 
 
 def service_lock(instance: InstanceProtocol) -> LockServiceResult:
@@ -63,6 +66,83 @@ def service_run(
         receipt_id=result.receipt.receipt_id,
         query_receipt_ids=result.query_receipt_ids,
         trace_ids=[trace.trace_id for trace in result.traces],
+        receipt=result.receipt,
+        traces=result.traces,
+    )
+
+
+def service_propose_workflow(
+    instance: InstanceProtocol,
+    workflow_name: str,
+    input_payload: dict[str, Any],
+) -> ProposeWorkflowResult:
+    """Execute a workflow and bridge its declared output into a candidate group."""
+    config = instance.load_config()
+    workflow = config.workflows.get(workflow_name)
+    if workflow is None:
+        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+    if workflow.proposal_output is None:
+        raise ConfigError(
+            f"Workflow '{workflow_name}' does not declare proposal_output and cannot propose state"
+        )
+    if workflow.proposal_output.kind != "relationship_group":
+        raise ConfigError(
+            "Workflow "
+            f"'{workflow_name}' proposal_output kind '{workflow.proposal_output.kind}' "
+            "is not supported"
+        )
+
+    result = execute_workflow(instance, config, workflow_name, input_payload)
+    source_alias = workflow.proposal_output.source_alias or workflow.returns
+    if source_alias not in result.step_outputs:
+        raise QueryExecutionError(
+            f"Workflow '{workflow_name}' proposal source alias '{source_alias}' was not produced"
+        )
+
+    proposal_payload = RelationshipGroupProposalPayload.model_validate(
+        result.step_outputs[source_alias]
+    )
+    relationship_type = workflow.proposal_output.relationship_type
+    members = [
+        CandidateMember(
+            from_type=member.from_type,
+            from_id=member.from_id,
+            to_type=member.to_type,
+            to_id=member.to_id,
+            relationship_type=relationship_type,
+            signals=member.signals,
+            properties=member.properties,
+        )
+        for member in proposal_payload.members
+    ]
+
+    source_step_id = result.alias_step_ids.get(source_alias)
+    source_trace_ids = result.step_trace_ids.get(source_step_id, []) if source_step_id else []
+    group_result = service_propose_group(
+        instance,
+        relationship_type,
+        members,
+        thesis_text=proposal_payload.thesis_text,
+        thesis_facts=proposal_payload.thesis_facts,
+        analysis_state=proposal_payload.analysis_state,
+        integrations_used=proposal_payload.integrations_used,
+        proposed_by=workflow.proposal_output.proposed_by,
+        suggested_priority=proposal_payload.suggested_priority,
+        source_workflow_name=workflow_name,
+        source_workflow_receipt_id=result.receipt.receipt_id,
+        source_trace_ids=source_trace_ids,
+        source_step_ids=[source_step_id] if source_step_id is not None else [],
+    )
+    return ProposeWorkflowResult(
+        workflow=result.workflow,
+        output=result.output,
+        receipt_id=result.receipt.receipt_id,
+        group_id=group_result.group_id,
+        group_status=group_result.status,
+        review_priority=group_result.review_priority,
+        query_receipt_ids=result.query_receipt_ids,
+        trace_ids=[trace.trace_id for trace in result.traces],
+        prior_resolution=group_result.prior_resolution,
         receipt=result.receipt,
         traces=result.traces,
     )

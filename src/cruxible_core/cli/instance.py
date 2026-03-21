@@ -10,10 +10,13 @@ Manages the local instance directory structure:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import shutil
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,11 +24,13 @@ from typing import Any
 from cruxible_core import __version__
 from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import InstanceNotFoundError
+from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.store import GroupStore
+from cruxible_core.snapshot.types import WorldSnapshot
 from cruxible_core.storage.sqlite import SQLiteStore
+from cruxible_core.workflow.compiler import LOCK_FILE_NAME, compute_lock_config_digest
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +106,14 @@ class CruxibleInstance:
         """Load the CoreConfig from the stored config path."""
         return load_config(self.get_config_path())
 
+    def get_root_path(self) -> Path:
+        """Return the instance root directory."""
+        return self.root
+
+    def get_instance_dir(self) -> Path:
+        """Return the .cruxible directory for the instance."""
+        return self.instance_dir
+
     def save_config(self, config: CoreConfig) -> None:
         """Save the CoreConfig back to the YAML file on disk."""
         save_config(config, self.get_config_path())
@@ -162,6 +175,122 @@ class CruxibleInstance:
     def invalidate_graph_cache(self) -> None:
         """Clear the in-memory graph cache, forcing next load_graph to read from disk."""
         self._graph_cache = None
+
+    def _metadata_path(self) -> Path:
+        return self.instance_dir / "instance.json"
+
+    def _write_metadata(self) -> None:
+        self._metadata_path().write_text(json.dumps(self.metadata, indent=2, sort_keys=True))
+
+    def _snapshots_dir(self) -> Path:
+        path = self.instance_dir / "snapshots"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _snapshot_dir(self, snapshot_id: str) -> Path:
+        return self._snapshots_dir() / snapshot_id
+
+    def create_snapshot(self, label: str | None = None) -> WorldSnapshot:
+        """Persist an immutable full snapshot of the current graph + config state."""
+        snapshot_id = f"snap_{uuid.uuid4().hex[:16]}"
+        snapshot_dir = self._snapshot_dir(snapshot_id)
+        snapshot_dir.mkdir(parents=True, exist_ok=False)
+
+        config = self.load_config()
+        config_path = self.get_config_path()
+        graph = self.load_graph()
+        graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True)
+        graph_sha256 = f"sha256:{hashlib.sha256(graph_json.encode()).hexdigest()}"
+
+        (snapshot_dir / "graph.json").write_text(graph_json)
+        (snapshot_dir / "config.yaml").write_text(config_path.read_text())
+
+        lock_path = config_path.parent / LOCK_FILE_NAME
+        lock_digest: str | None = None
+        if lock_path.exists():
+            lock_bytes = lock_path.read_bytes()
+            lock_digest = f"sha256:{hashlib.sha256(lock_bytes).hexdigest()}"
+            shutil.copy2(lock_path, snapshot_dir / LOCK_FILE_NAME)
+
+        snapshot = WorldSnapshot(
+            snapshot_id=snapshot_id,
+            created_at=datetime.now(timezone.utc),
+            label=label,
+            config_digest=compute_lock_config_digest(config),
+            lock_digest=lock_digest,
+            graph_sha256=graph_sha256,
+            parent_snapshot_id=self.metadata.get("head_snapshot_id"),
+            origin_snapshot_id=self.metadata.get("origin_snapshot_id"),
+        )
+        (snapshot_dir / "snapshot.json").write_text(
+            json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True)
+        )
+
+        self.metadata["head_snapshot_id"] = snapshot_id
+        if snapshot.origin_snapshot_id is not None:
+            self.metadata["origin_snapshot_id"] = snapshot.origin_snapshot_id
+        self._write_metadata()
+        return snapshot
+
+    def get_snapshot(self, snapshot_id: str) -> WorldSnapshot | None:
+        """Load snapshot metadata by ID."""
+        snapshot_path = self._snapshot_dir(snapshot_id) / "snapshot.json"
+        if not snapshot_path.exists():
+            return None
+        raw = json.loads(snapshot_path.read_text())
+        return WorldSnapshot.model_validate(raw)
+
+    def list_snapshots(self) -> list[WorldSnapshot]:
+        """List local snapshots in reverse chronological order."""
+        snapshots: list[WorldSnapshot] = []
+        for path in self._snapshots_dir().glob("*/snapshot.json"):
+            raw = json.loads(path.read_text())
+            snapshots.append(WorldSnapshot.model_validate(raw))
+        return sorted(
+            snapshots,
+            key=lambda item: (item.created_at, item.snapshot_id),
+            reverse=True,
+        )
+
+    @classmethod
+    def fork_from_snapshot(
+        cls,
+        source_instance: CruxibleInstance,
+        snapshot_id: str,
+        root_dir: str | Path,
+    ) -> tuple[CruxibleInstance, WorldSnapshot]:
+        """Create a new local instance rooted at a chosen snapshot."""
+        snapshot = source_instance.get_snapshot(snapshot_id)
+        if snapshot is None:
+            raise ConfigError(f"Snapshot '{snapshot_id}' not found")
+
+        root = Path(root_dir)
+        instance_json = root / cls.INSTANCE_DIR / "instance.json"
+        if instance_json.exists():
+            raise ConfigError(f"Instance already exists at {root}")
+
+        root.mkdir(parents=True, exist_ok=True)
+        config_target = root / "config.yaml"
+        if config_target.exists():
+            raise ConfigError(f"config.yaml already exists at {root}")
+
+        snapshot_dir = source_instance._snapshot_dir(snapshot_id)
+        shutil.copy2(snapshot_dir / "config.yaml", config_target)
+        instance = cls.init(root, "config.yaml")
+
+        graph_data = json.loads((snapshot_dir / "graph.json").read_text())
+        instance.save_graph(EntityGraph.from_dict(graph_data))
+
+        snapshot_lock = snapshot_dir / LOCK_FILE_NAME
+        if snapshot_lock.exists():
+            shutil.copy2(snapshot_lock, instance.get_config_path().parent / LOCK_FILE_NAME)
+
+        instance.metadata["head_snapshot_id"] = snapshot.snapshot_id
+        instance.metadata["origin_snapshot_id"] = (
+            snapshot.origin_snapshot_id or snapshot.snapshot_id
+        )
+        instance._write_metadata()
+        return instance, snapshot
 
     def get_receipt_store(self) -> SQLiteStore:
         """Get or create the receipt SQLite store."""

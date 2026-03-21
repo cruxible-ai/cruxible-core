@@ -28,6 +28,39 @@ def margin_calculator(input_payload: dict[str, Any], context: ProviderContext) -
     }
 
 
+def campaign_recommendations(
+    input_payload: dict[str, Any], _context: ProviderContext
+) -> dict[str, Any]:
+    """Return a deterministic relationship-group proposal payload."""
+    region = input_payload["region"]
+    members = [
+        {
+            "from_type": "Campaign",
+            "from_id": input_payload["campaign_id"],
+            "to_type": "Product",
+            "to_id": "SKU-123",
+            "signals": [{"integration": "catalog", "signal": "support", "evidence": region}],
+            "properties": {"reason": f"{region} bestseller"},
+        },
+        {
+            "from_type": "Campaign",
+            "from_id": input_payload["campaign_id"],
+            "to_type": "Product",
+            "to_id": "SKU-456",
+            "signals": [{"integration": "catalog", "signal": "support", "evidence": region}],
+            "properties": {"reason": f"{region} fallback"},
+        },
+    ]
+    return {
+        "members": members,
+        "thesis_text": "Recommend products for regional campaign",
+        "thesis_facts": {"campaign_id": input_payload["campaign_id"], "region": region},
+        "analysis_state": {"source": "campaign_recommendations"},
+        "integrations_used": ["catalog"],
+        "suggested_priority": "high",
+    }
+
+
 def broken_provider(_input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
     """Return an invalid output shape for contract failure tests."""
     return {"unexpected": "value"}

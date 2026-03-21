@@ -6,7 +6,13 @@ permission checks, and protocol-specific concerns.
 """
 
 from cruxible_core.service.analysis import service_evaluate, service_find_candidates
-from cruxible_core.service.execution import service_lock, service_plan, service_run, service_test
+from cruxible_core.service.execution import (
+    service_lock,
+    service_plan,
+    service_propose_workflow,
+    service_run,
+    service_test,
+)
 from cruxible_core.service.feedback import service_feedback, service_outcome
 from cruxible_core.service.groups import (
     derive_review_priority,
@@ -33,11 +39,17 @@ from cruxible_core.service.queries import (
     service_schema,
     service_validate,
 )
+from cruxible_core.service.snapshots import (
+    service_create_snapshot,
+    service_fork_snapshot,
+    service_list_snapshots,
+)
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
     EntityUpsertInput,
     FeedbackServiceResult,
+    ForkSnapshotResult,
     GetGroupResult,
     IngestResult,
     InitResult,
@@ -48,10 +60,13 @@ from cruxible_core.service.types import (
     OutcomeServiceResult,
     PlanServiceResult,
     ProposeGroupResult,
+    ProposeWorkflowResult,
     QueryServiceResult,
     RelationshipUpsertInput,
     ResolveGroupResult,
     RunServiceResult,
+    SnapshotCreateResult,
+    SnapshotListResult,
     TestServiceResult,
     ValidateServiceResult,
 )
@@ -62,6 +77,7 @@ __all__ = [
     "AddRelationshipResult",
     "EntityUpsertInput",
     "FeedbackServiceResult",
+    "ForkSnapshotResult",
     "GetGroupResult",
     "IngestResult",
     "InitResult",
@@ -71,18 +87,25 @@ __all__ = [
     "ListResult",
     "OutcomeServiceResult",
     "PlanServiceResult",
+    "ProposeWorkflowResult",
     "ProposeGroupResult",
     "QueryServiceResult",
     "RelationshipUpsertInput",
     "ResolveGroupResult",
     "RunServiceResult",
+    "SnapshotCreateResult",
+    "SnapshotListResult",
     "TestServiceResult",
     "ValidateServiceResult",
     # Execution
     "service_lock",
     "service_plan",
+    "service_propose_workflow",
     "service_run",
     "service_test",
+    "service_create_snapshot",
+    "service_fork_snapshot",
+    "service_list_snapshots",
     # Analysis
     "service_evaluate",
     "service_find_candidates",

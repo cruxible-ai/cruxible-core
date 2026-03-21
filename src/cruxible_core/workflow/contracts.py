@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Any, Callable
 
@@ -99,5 +100,12 @@ def _normalize_value(value: Any, schema: PropertySchema) -> Any:
                 raise ValueError("must be an ISO date string (YYYY-MM-DD)") from exc
             return value
         raise ValueError("must be an ISO date string")
+
+    if type_name == "json":
+        try:
+            json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("must be JSON-serializable") from exc
+        return value
 
     raise ValueError(f"unsupported contract type '{type_name}'")

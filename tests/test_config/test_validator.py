@@ -17,6 +17,7 @@ from cruxible_core.config.schema import (
     ProviderSchema,
     RelationshipSchema,
     TraversalStep,
+    WorkflowProposalOutputSchema,
     WorkflowSchema,
     WorkflowStepSchema,
     WorkflowTestSchema,
@@ -327,6 +328,71 @@ class TestValidateWorkflowExecution:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any("workflow 'nope'" in error for error in exc_info.value.errors)
+
+    def test_proposal_output_rejects_unknown_relationship(self):
+        config = self._workflow_config()
+        config.workflows["wf"].proposal_output = WorkflowProposalOutputSchema(
+            kind="relationship_group",
+            relationship_type="missing",
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "proposal_output relationship_type 'missing'" in error
+            for error in exc_info.value.errors
+        )
+
+    def test_proposal_output_rejects_unknown_source_alias(self):
+        config = self._workflow_config()
+        config.workflows["wf"].proposal_output = WorkflowProposalOutputSchema(
+            kind="relationship_group",
+            relationship_type="links",
+            source_alias="missing",
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "proposal_output source_alias 'missing'" in error for error in exc_info.value.errors
+        )
+
+
+class TestValidateKinds:
+    def test_ontology_rejects_world_model_execution_blocks(self):
+        config = _minimal_config(
+            kind="ontology",
+            contracts={
+                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
+            },
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "kind 'ontology' may not define workflows" in error for error in exc_info.value.errors
+        )
 
 
 class TestConfigErrorStr:

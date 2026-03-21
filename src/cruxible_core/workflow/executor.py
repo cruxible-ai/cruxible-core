@@ -36,6 +36,8 @@ def execute_workflow(
     )
 
     step_outputs: dict[str, Any] = {}
+    alias_step_ids: dict[str, str] = {}
+    step_trace_ids: dict[str, list[str]] = {}
     query_receipt_ids: list[str] = []
     traces: list[ExecutionTrace] = []
 
@@ -64,6 +66,8 @@ def execute_workflow(
                 "total_results": query_result.total_results,
                 "steps_executed": query_result.steps_executed,
             }
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
             receipt_builder.record_plan_step(
                 compiled_step.step_id,
                 "query",
@@ -150,6 +154,7 @@ def execute_workflow(
                 )
                 _persist_trace(instance, trace)
                 traces.append(trace)
+                step_trace_ids.setdefault(compiled_step.step_id, []).append(trace.trace_id)
                 receipt_builder.record_plan_step(
                     compiled_step.step_id,
                     "provider",
@@ -181,6 +186,9 @@ def execute_workflow(
             _persist_trace(instance, trace)
             traces.append(trace)
             step_outputs[compiled_step.as_name or compiled_step.step_id] = provider_output
+            step_trace_ids.setdefault(compiled_step.step_id, []).append(trace.trace_id)
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
             receipt_builder.record_plan_step(
                 compiled_step.step_id,
                 "provider",
@@ -234,6 +242,9 @@ def execute_workflow(
         receipt=receipt,
         query_receipt_ids=query_receipt_ids,
         traces=traces,
+        step_outputs=step_outputs,
+        alias_step_ids=alias_step_ids,
+        step_trace_ids=step_trace_ids,
     )
 
 

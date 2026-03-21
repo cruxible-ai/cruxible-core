@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS candidate_groups (
     member_count INTEGER NOT NULL DEFAULT 0,
     review_priority TEXT NOT NULL DEFAULT 'normal',
     suggested_priority TEXT,
+    source_workflow_name TEXT,
+    source_workflow_receipt_id TEXT,
+    source_trace_ids TEXT NOT NULL DEFAULT '[]',
+    source_step_ids TEXT NOT NULL DEFAULT '[]',
     resolution_id TEXT REFERENCES group_resolutions(resolution_id),
     created_at TEXT NOT NULL
 );
@@ -85,6 +89,23 @@ class GroupStore:
         # PRAGMA must be set before executescript (separate statement)
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(_SCHEMA)
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(candidate_groups)").fetchall()
+        }
+        additions = [
+            ("source_workflow_name", "TEXT"),
+            ("source_workflow_receipt_id", "TEXT"),
+            ("source_trace_ids", "TEXT NOT NULL DEFAULT '[]'"),
+            ("source_step_ids", "TEXT NOT NULL DEFAULT '[]'"),
+        ]
+        for name, ddl in additions:
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE candidate_groups ADD COLUMN {name} {ddl}")
+        self._conn.commit()
 
     # -----------------------------------------------------------------
     # Transaction support
@@ -115,8 +136,10 @@ class GroupStore:
             "INSERT OR REPLACE INTO candidate_groups "
             "(group_id, relationship_type, signature, status, thesis_text, "
             "thesis_facts, analysis_state, integrations_used, proposed_by, "
-            "member_count, review_priority, suggested_priority, resolution_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "member_count, review_priority, suggested_priority, source_workflow_name, "
+            "source_workflow_receipt_id, source_trace_ids, source_step_ids, "
+            "resolution_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 group.group_id,
                 group.relationship_type,
@@ -130,6 +153,10 @@ class GroupStore:
                 group.member_count,
                 group.review_priority,
                 group.suggested_priority,
+                group.source_workflow_name,
+                group.source_workflow_receipt_id,
+                json.dumps(group.source_trace_ids),
+                json.dumps(group.source_step_ids),
                 group.resolution_id,
                 group.created_at.isoformat(),
             ),
@@ -227,6 +254,10 @@ class GroupStore:
             member_count=row["member_count"],
             review_priority=row["review_priority"],
             suggested_priority=row["suggested_priority"],
+            source_workflow_name=row["source_workflow_name"],
+            source_workflow_receipt_id=row["source_workflow_receipt_id"],
+            source_trace_ids=json.loads(row["source_trace_ids"]),
+            source_step_ids=json.loads(row["source_step_ids"]),
             resolution_id=row["resolution_id"],
             created_at=row["created_at"],
         )

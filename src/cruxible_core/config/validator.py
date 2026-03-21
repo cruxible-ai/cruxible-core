@@ -29,6 +29,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_ingestion(config, errors)
     _validate_primary_keys(config, errors)
     _validate_matching_integrations(config, errors)
+    _validate_kind(config, errors)
     _validate_provider_artifacts(config, errors)
     _validate_workflows(config, errors)
     _validate_tests(config, errors)
@@ -179,11 +180,31 @@ def _validate_provider_artifacts(config: CoreConfig, errors: list[str]) -> None:
             )
 
 
+def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
+    """Validate top-level kind gating for built world-model features."""
+    if config.kind != "ontology":
+        return
+
+    if config.ingestion:
+        errors.append("Config kind 'ontology' may not define ingestion mappings")
+    if config.contracts:
+        errors.append("Config kind 'ontology' may not define contracts")
+    if config.artifacts:
+        errors.append("Config kind 'ontology' may not define artifacts")
+    if config.providers:
+        errors.append("Config kind 'ontology' may not define providers")
+    if config.workflows:
+        errors.append("Config kind 'ontology' may not define workflows")
+    if config.tests:
+        errors.append("Config kind 'ontology' may not define workflow tests")
+
+
 def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
     """Validate workflow/provider/query references and reference syntax."""
     contract_names = set(config.contracts.keys())
     provider_names = set(config.providers.keys())
     query_names = set(config.named_queries.keys())
+    relationship_names = {rel.name for rel in config.relationships}
 
     for workflow_name, workflow in config.workflows.items():
         if workflow.contract_in not in contract_names:
@@ -256,6 +277,26 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 f"'{workflow_name}': returns alias '{workflow.returns}' "
                 "not produced by any prior step"
             )
+
+        if workflow.proposal_output is not None:
+            if workflow.proposal_output.kind != "relationship_group":
+                errors.append(
+                    f"Workflow '{workflow_name}': unsupported proposal_output kind "
+                    f"'{workflow.proposal_output.kind}'"
+                )
+            if workflow.proposal_output.relationship_type not in relationship_names:
+                errors.append(
+                    "Workflow "
+                    f"'{workflow_name}': proposal_output relationship_type "
+                    f"'{workflow.proposal_output.relationship_type}' not found in relationships"
+                )
+            source_alias = workflow.proposal_output.source_alias or workflow.returns
+            if source_alias not in produced_aliases:
+                errors.append(
+                    "Workflow "
+                    f"'{workflow_name}': proposal_output source_alias '{source_alias}' "
+                    "not produced by any prior step"
+                )
 
 
 def _validate_tests(config: CoreConfig, errors: list[str]) -> None:

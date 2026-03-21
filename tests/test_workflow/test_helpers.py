@@ -77,6 +77,31 @@ class TestContractValidation:
                 error_factory=ConfigError,
             )
 
+    def test_accepts_json_contract_fields(self) -> None:
+        config = _base_config(
+            contracts={
+                "Input": ContractSchema(
+                    fields={
+                        "members": PropertySchema(type="json"),
+                        "facts": PropertySchema(type="json", optional=True),
+                    }
+                )
+            }
+        )
+
+        payload = validate_contract_payload(
+            config,
+            "Input",
+            {
+                "members": [{"from_id": "A", "to_id": "B"}],
+                "facts": {"source": "catalog"},
+            },
+            subject="Provider output",
+            error_factory=ConfigError,
+        )
+
+        assert payload["members"][0]["from_id"] == "A"
+
 
 class TestProviderRegistry:
     def test_rejects_unsupported_runtime(self) -> None:

@@ -139,6 +139,113 @@ tests:
         - margin_calculator
 """
 
+PROPOSAL_WORKFLOW_CONFIG_YAML = """\
+version: "1.0"
+name: campaign_relationship_workflows
+kind: world_model
+
+entity_types:
+  Campaign:
+    properties:
+      campaign_id:
+        type: string
+        primary_key: true
+      region:
+        type: string
+  Product:
+    properties:
+      sku:
+        type: string
+        primary_key: true
+      category:
+        type: string
+
+relationships:
+  - name: recommended_for
+    from: Campaign
+    to: Product
+
+named_queries:
+  get_campaign_context:
+    entry_point: Campaign
+    traversal: []
+    returns: "list[Campaign]"
+
+contracts:
+  CampaignInput:
+    fields:
+      campaign_id:
+        type: string
+  CampaignContext:
+    fields:
+      campaign_id:
+        type: string
+      region:
+        type: string
+  RecommendationProposal:
+    fields:
+      members:
+        type: json
+      thesis_text:
+        type: string
+        optional: true
+      thesis_facts:
+        type: json
+        optional: true
+        default: {}
+      analysis_state:
+        type: json
+        optional: true
+        default: {}
+      integrations_used:
+        type: json
+        optional: true
+        default: []
+      suggested_priority:
+        type: string
+        optional: true
+
+providers:
+  campaign_recommendations:
+    kind: function
+    contract_in: CampaignContext
+    contract_out: RecommendationProposal
+    ref: tests.support.workflow_test_providers.campaign_recommendations
+    version: 1.0.0
+    deterministic: true
+    runtime: python
+
+workflows:
+  propose_campaign_recommendations:
+    contract_in: CampaignInput
+    steps:
+      - id: campaign
+        query: get_campaign_context
+        params:
+          campaign_id: $input.campaign_id
+        as: campaign
+      - id: recommend
+        provider: campaign_recommendations
+        input:
+          campaign_id: $steps.campaign.results[0].properties.campaign_id
+          region: $steps.campaign.results[0].properties.region
+        as: recommendations
+    returns: recommendations
+    proposal_output:
+      kind: relationship_group
+      relationship_type: recommended_for
+
+tests:
+  - name: campaign_proposal_smoke
+    workflow: propose_campaign_recommendations
+    input:
+      campaign_id: CMP-1
+    expect:
+      output_contains:
+        thesis_text: Recommend products for regional campaign
+      receipt_contains_provider: campaign_recommendations
+"""
+
 
 @pytest.fixture
 def configs_dir() -> Path:
@@ -156,3 +263,9 @@ def car_parts_config(configs_dir: Path) -> str:
 def workflow_config_yaml() -> str:
     """Raw YAML string for terraform-primitives workflow tests."""
     return WORKFLOW_CONFIG_YAML
+
+
+@pytest.fixture
+def proposal_workflow_config_yaml() -> str:
+    """Raw YAML string for relationship proposal workflow tests."""
+    return PROPOSAL_WORKFLOW_CONFIG_YAML

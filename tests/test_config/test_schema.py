@@ -183,6 +183,27 @@ class TestWorkflowSchema:
         )
         assert workflow.contract_in == "PromoInput"
 
+    def test_workflow_accepts_proposal_output(self):
+        workflow = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="recommend",
+                    provider="recommender",
+                    input={"sku": "$input.sku"},
+                    **{"as": "recommendations"},
+                )
+            ],
+            returns="recommendations",
+            proposal_output={
+                "kind": "relationship_group",
+                "relationship_type": "recommended_for",
+            },
+        )
+        assert workflow.proposal_output is not None
+        assert workflow.proposal_output.kind == "relationship_group"
+        assert workflow.proposal_output.source_alias is None
+
 
 class TestWorkflowTests:
     def test_expectation_normalizes_provider_list(self):
@@ -268,6 +289,7 @@ class TestCoreConfig:
         )
         assert config.name == "test"
         assert config.version == "1.0"
+        assert config.kind == "world_model"
         assert config.named_queries == {}
         assert config.constraints == []
         assert config.ingestion == {}

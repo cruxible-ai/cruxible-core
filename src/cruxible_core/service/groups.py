@@ -94,12 +94,18 @@ def service_propose_group(
     integrations_used: list[str] | None = None,
     proposed_by: Literal["human", "ai_review"] = "ai_review",
     suggested_priority: str | None = None,
+    source_workflow_name: str | None = None,
+    source_workflow_receipt_id: str | None = None,
+    source_trace_ids: list[str] | None = None,
+    source_step_ids: list[str] | None = None,
 ) -> ProposeGroupResult:
     """Propose a group of candidate edges for batch review/approval."""
     config = instance.load_config()
     thesis_facts = thesis_facts or {}
     analysis_state = analysis_state or {}
     integrations_used = integrations_used or []
+    source_trace_ids = source_trace_ids or []
+    source_step_ids = source_step_ids or []
 
     # 1. Validate relationship_type
     rel_schema = config.get_relationship(relationship_type)
@@ -241,6 +247,10 @@ def service_propose_group(
             member_count=len(members),
             review_priority=review_priority,
             suggested_priority=suggested_priority,
+            source_workflow_name=source_workflow_name,
+            source_workflow_receipt_id=source_workflow_receipt_id,
+            source_trace_ids=source_trace_ids,
+            source_step_ids=source_step_ids,
             created_at=datetime.now(timezone.utc),
         )
 

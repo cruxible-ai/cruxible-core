@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from cruxible_core.group.types import CandidateSignal
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 
@@ -83,6 +84,9 @@ class WorkflowExecutionResult(BaseModel):
     receipt: Receipt
     query_receipt_ids: list[str] = Field(default_factory=list)
     traces: list[ExecutionTrace] = Field(default_factory=list)
+    step_outputs: dict[str, Any] = Field(default_factory=dict)
+    alias_step_ids: dict[str, str] = Field(default_factory=dict)
+    step_trace_ids: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class WorkflowTestCaseResult(BaseModel):
@@ -103,3 +107,25 @@ class WorkflowTestRunResult(BaseModel):
     passed: int
     failed: int
     cases: list[WorkflowTestCaseResult] = Field(default_factory=list)
+
+
+class RelationshipGroupProposalMember(BaseModel):
+    """Bridged workflow payload member for relationship group proposals."""
+
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    signals: list[CandidateSignal] = Field(default_factory=list)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class RelationshipGroupProposalPayload(BaseModel):
+    """Typed workflow output for the relationship-group bridge."""
+
+    members: list[RelationshipGroupProposalMember]
+    thesis_text: str = ""
+    thesis_facts: dict[str, Any] = Field(default_factory=dict)
+    analysis_state: dict[str, Any] = Field(default_factory=dict)
+    integrations_used: list[str] = Field(default_factory=list)
+    suggested_priority: str | None = None

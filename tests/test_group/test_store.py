@@ -26,6 +26,10 @@ def _group(
     analysis_state: dict | None = None,
     review_priority: str = "normal",
     suggested_priority: str | None = None,
+    source_workflow_name: str | None = None,
+    source_workflow_receipt_id: str | None = None,
+    source_trace_ids: list[str] | None = None,
+    source_step_ids: list[str] | None = None,
     resolution_id: str | None = None,
 ) -> CandidateGroup:
     return CandidateGroup(
@@ -41,6 +45,10 @@ def _group(
         member_count=2,
         review_priority=review_priority,
         suggested_priority=suggested_priority,
+        source_workflow_name=source_workflow_name,
+        source_workflow_receipt_id=source_workflow_receipt_id,
+        source_trace_ids=source_trace_ids or [],
+        source_step_ids=source_step_ids or [],
         resolution_id=resolution_id,
         created_at=_now(),
     )
@@ -120,6 +128,22 @@ class TestGroupRoundTrip:
         assert loaded is not None
         assert loaded.review_priority == "critical"
         assert loaded.suggested_priority == "high"
+
+    def test_workflow_lineage_fields(self, store: GroupStore) -> None:
+        g = _group(
+            source_workflow_name="recommend",
+            source_workflow_receipt_id="RCP-1",
+            source_trace_ids=["TRC-1", "TRC-2"],
+            source_step_ids=["recommend"],
+        )
+        with store.transaction():
+            store.save_group(g)
+        loaded = store.get_group(g.group_id)
+        assert loaded is not None
+        assert loaded.source_workflow_name == "recommend"
+        assert loaded.source_workflow_receipt_id == "RCP-1"
+        assert loaded.source_trace_ids == ["TRC-1", "TRC-2"]
+        assert loaded.source_step_ids == ["recommend"]
 
     def test_resolution_id_stored(self, store: GroupStore) -> None:
         # First create a resolution (so FK resolves)
