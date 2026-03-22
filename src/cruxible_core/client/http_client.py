@@ -311,6 +311,90 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.AddEntityResult)
 
+    def workflow_lock(self, instance_id: str) -> contracts.WorkflowLockResult:
+        response = self._client.post(f"/api/v1/{instance_id}/workflows/lock")
+        return self._parse_model(response, contracts.WorkflowLockResult)
+
+    def workflow_plan(
+        self,
+        instance_id: str,
+        *,
+        workflow_name: str,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowPlanResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/workflows/plan",
+            json={"workflow_name": workflow_name, "input": input_payload or {}},
+        )
+        return self._parse_model(response, contracts.WorkflowPlanResult)
+
+    def workflow_run(
+        self,
+        instance_id: str,
+        *,
+        workflow_name: str,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowRunResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/workflows/run",
+            json={"workflow_name": workflow_name, "input": input_payload or {}},
+        )
+        return self._parse_model(response, contracts.WorkflowRunResult)
+
+    def workflow_test(
+        self,
+        instance_id: str,
+        *,
+        name: str | None = None,
+    ) -> contracts.WorkflowTestResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/workflows/test",
+            json={"name": name},
+        )
+        return self._parse_model(response, contracts.WorkflowTestResult)
+
+    def propose_workflow(
+        self,
+        instance_id: str,
+        *,
+        workflow_name: str,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowProposeResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/workflows/propose",
+            json={"workflow_name": workflow_name, "input": input_payload or {}},
+        )
+        return self._parse_model(response, contracts.WorkflowProposeResult)
+
+    def create_snapshot(
+        self,
+        instance_id: str,
+        *,
+        label: str | None = None,
+    ) -> contracts.SnapshotCreateResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/snapshots",
+            json={"label": label},
+        )
+        return self._parse_model(response, contracts.SnapshotCreateResult)
+
+    def list_snapshots(self, instance_id: str) -> contracts.SnapshotListResult:
+        response = self._client.get(f"/api/v1/{instance_id}/snapshots")
+        return self._parse_model(response, contracts.SnapshotListResult)
+
+    def fork_snapshot(
+        self,
+        instance_id: str,
+        *,
+        snapshot_id: str,
+        root_dir: str,
+    ) -> contracts.ForkSnapshotResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/fork",
+            json={"snapshot_id": snapshot_id, "root_dir": root_dir},
+        )
+        return self._parse_model(response, contracts.ForkSnapshotResult)
+
     def add_constraint(
         self,
         instance_id: str,

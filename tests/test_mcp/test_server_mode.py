@@ -39,3 +39,24 @@ def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
         limit=5,
     )
     assert result.receipt_id == "RCPT-1"
+
+
+def test_workflow_propose_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
+    class StubClient:
+        def propose_workflow(self, instance_id, *, workflow_name, input_payload=None):
+            assert instance_id == "inst_123"
+            assert workflow_name == "wf"
+            assert input_payload == {"id": "1"}
+            return contracts.WorkflowProposeResult(
+                workflow="wf",
+                output={"members": []},
+                receipt_id="RCP-1",
+                group_id="GRP-1",
+                group_status="pending_review",
+                review_priority="review",
+                trace_ids=["TRC-1"],
+            )
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+    result = handlers.handle_propose_workflow("inst_123", "wf", {"id": "1"})
+    assert result.group_id == "GRP-1"

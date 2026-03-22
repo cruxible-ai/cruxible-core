@@ -43,9 +43,11 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_create_snapshot,
     service_evaluate,
     service_feedback,
     service_find_candidates,
+    service_fork_snapshot,
     service_get_entity,
     service_get_group,
     service_get_receipt,
@@ -55,10 +57,12 @@ from cruxible_core.service import (
     service_list,
     service_list_groups,
     service_list_resolutions,
+    service_list_snapshots,
     service_lock,
     service_outcome,
     service_plan,
     service_propose_group,
+    service_propose_workflow,
     service_query,
     service_resolve_group,
     service_run,
@@ -237,11 +241,12 @@ def validate(config_path: str) -> None:
 @handle_errors
 def lock_cmd() -> None:
     """Generate a workflow lock file for the current instance config."""
-    if _get_client() is not None:
-        _raise_server_mode_unsupported("lock")
-
-    instance = CruxibleInstance.load()
-    result = service_lock(instance)
+    client = _get_client()
+    if client is not None:
+        result = client.workflow_lock(_require_instance_id())
+    else:
+        instance = CruxibleInstance.load()
+        result = service_lock(instance)
     click.echo(f"Wrote lock file to {result.lock_path}")
     click.echo(
         f"  digest={result.config_digest} providers={result.providers_locked} "
@@ -260,8 +265,15 @@ def lock_cmd() -> None:
 @handle_errors
 def plan_cmd(workflow_name: str, input_file: str) -> None:
     """Compile a workflow plan for the current instance."""
-    if _get_client() is not None:
-        _raise_server_mode_unsupported("plan")
+    client = _get_client()
+    if client is not None:
+        result = client.workflow_plan(
+            _require_instance_id(),
+            workflow_name=workflow_name,
+            input_payload=_read_input_payload(input_file),
+        )
+        click.echo(json.dumps(result.plan, indent=2, sort_keys=True))
+        return
 
     instance = CruxibleInstance.load()
     result = service_plan(instance, workflow_name, _read_input_payload(input_file))
@@ -279,11 +291,16 @@ def plan_cmd(workflow_name: str, input_file: str) -> None:
 @handle_errors
 def run_cmd(workflow_name: str, input_file: str) -> None:
     """Execute a workflow for the current instance."""
-    if _get_client() is not None:
-        _raise_server_mode_unsupported("run")
-
-    instance = CruxibleInstance.load()
-    result = service_run(instance, workflow_name, _read_input_payload(input_file))
+    client = _get_client()
+    if client is not None:
+        result = client.workflow_run(
+            _require_instance_id(),
+            workflow_name=workflow_name,
+            input_payload=_read_input_payload(input_file),
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_run(instance, workflow_name, _read_input_payload(input_file))
     click.echo(f"Workflow {result.workflow} completed.")
     click.echo(f"Receipt ID: {result.receipt_id}")
     if result.query_receipt_ids:
@@ -298,11 +315,12 @@ def run_cmd(workflow_name: str, input_file: str) -> None:
 @handle_errors
 def test_cmd(test_name: str | None) -> None:
     """Execute config-defined workflow tests for the current instance."""
-    if _get_client() is not None:
-        _raise_server_mode_unsupported("test")
-
-    instance = CruxibleInstance.load()
-    result = service_test(instance, test_name=test_name)
+    client = _get_client()
+    if client is not None:
+        result = client.workflow_test(_require_instance_id(), name=test_name)
+    else:
+        instance = CruxibleInstance.load()
+        result = service_test(instance, test_name=test_name)
     click.echo(f"Tests: {result.passed} passed, {result.failed} failed, {result.total} total")
     for case in result.cases:
         status = "PASS" if case.passed else "FAIL"
@@ -311,6 +329,105 @@ def test_cmd(test_name: str | None) -> None:
             click.echo(f"  {case.error}")
         elif case.receipt_id:
             click.echo(f"  receipt={case.receipt_id}")
+
+
+@click.command("propose")
+@click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option(
+    "--input-file",
+    required=True,
+    type=click.Path(exists=True),
+    help="JSON or YAML file providing workflow input.",
+)
+@handle_errors
+def propose_cmd(workflow_name: str, input_file: str) -> None:
+    """Execute a workflow and bridge its output into a candidate group."""
+    payload = _read_input_payload(input_file)
+    client = _get_client()
+    if client is not None:
+        result = client.propose_workflow(
+            _require_instance_id(),
+            workflow_name=workflow_name,
+            input_payload=payload,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_propose_workflow(instance, workflow_name, payload)
+
+    click.echo(f"Workflow {result.workflow} proposed group {result.group_id}.")
+    click.echo(f"Receipt ID: {result.receipt_id}")
+    click.echo(f"Group status: {result.group_status} ({result.review_priority})")
+    if result.trace_ids:
+        click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
+    click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+
+
+@click.group("snapshot")
+def snapshot_group() -> None:
+    """Manage immutable world-model snapshots."""
+
+
+@snapshot_group.command("create")
+@click.option("--label", default=None, help="Optional human label for the snapshot.")
+@handle_errors
+def snapshot_create_cmd(label: str | None) -> None:
+    """Create an immutable full snapshot for the current instance."""
+    client = _get_client()
+    if client is not None:
+        result = client.create_snapshot(_require_instance_id(), label=label)
+    else:
+        instance = CruxibleInstance.load()
+        result = service_create_snapshot(instance, label=label)
+
+    click.echo(f"Created snapshot {result.snapshot.snapshot_id}")
+    if result.snapshot.label:
+        click.echo(f"  label={result.snapshot.label}")
+    click.echo(f"  graph={result.snapshot.graph_sha256}")
+
+
+@snapshot_group.command("list")
+@handle_errors
+def snapshot_list_cmd() -> None:
+    """List snapshots for the current instance."""
+    client = _get_client()
+    if client is not None:
+        result = client.list_snapshots(_require_instance_id())
+    else:
+        instance = CruxibleInstance.load()
+        result = service_list_snapshots(instance)
+
+    if not result.snapshots:
+        click.echo("No snapshots found.")
+        return
+
+    for snapshot in result.snapshots:
+        label = f" label={snapshot.label}" if snapshot.label else ""
+        click.echo(f"{snapshot.snapshot_id} {snapshot.created_at}{label}")
+
+
+@click.command("fork")
+@click.option("--snapshot", "snapshot_id", required=True, help="Snapshot ID to fork from.")
+@click.option("--root-dir", required=True, help="Root directory for the new forked instance.")
+@handle_errors
+def fork_cmd(snapshot_id: str, root_dir: str) -> None:
+    """Create a new local instance from a chosen snapshot."""
+    client = _get_client()
+    if client is not None:
+        result = client.fork_snapshot(
+            _require_instance_id(),
+            snapshot_id=snapshot_id,
+            root_dir=root_dir,
+        )
+        click.echo(
+            f"Forked snapshot {result.snapshot.snapshot_id} into instance {result.instance_id}"
+        )
+        return
+
+    instance = CruxibleInstance.load()
+    result = service_fork_snapshot(instance, snapshot_id, root_dir)
+    click.echo(
+        f"Forked snapshot {result.snapshot.snapshot_id} into {result.instance.get_root_path()}"
+    )
 
 
 # ---------------------------------------------------------------------------

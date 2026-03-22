@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -104,3 +105,62 @@ def test_file_upload_uses_multipart(tmp_path: Path):
     assert result.records_ingested == 1
     assert "multipart/form-data" in captured["content_type"]
     assert captured["path"].endswith("/api/v1/inst_123/ingest")
+
+
+def test_workflow_propose_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "workflow": "wf",
+                "output": {"members": []},
+                "receipt_id": "RCP-1",
+                "group_id": "GRP-1",
+                "group_status": "pending_review",
+                "review_priority": "review",
+                "query_receipt_ids": [],
+                "trace_ids": ["TRC-1"],
+                "prior_resolution": None,
+                "receipt": None,
+                "traces": [],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.propose_workflow("inst_123", workflow_name="wf", input_payload={"id": "1"})
+    assert result.group_id == "GRP-1"
+    assert captured["path"].endswith("/api/v1/inst_123/workflows/propose")
+    assert captured["payload"]["workflow_name"] == "wf"
+
+
+def test_snapshot_create_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "snapshot": {
+                    "snapshot_id": "snap_1",
+                    "created_at": "2026-03-21T00:00:00Z",
+                    "label": "baseline",
+                    "config_digest": "sha256:abc",
+                    "lock_digest": None,
+                    "graph_sha256": "sha256:def",
+                    "parent_snapshot_id": None,
+                    "origin_snapshot_id": None,
+                }
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.create_snapshot("inst_123", label="baseline")
+    assert result.snapshot.snapshot_id == "snap_1"
+    assert captured["path"].endswith("/api/v1/inst_123/snapshots")
+    assert captured["payload"]["label"] == "baseline"

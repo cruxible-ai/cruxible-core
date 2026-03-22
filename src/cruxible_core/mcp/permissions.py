@@ -93,6 +93,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
     "cruxible_feedback": PermissionMode.GRAPH_WRITE,
     "cruxible_outcome": PermissionMode.GRAPH_WRITE,
+    "cruxible_propose_workflow": PermissionMode.GRAPH_WRITE,
     "cruxible_propose_group": PermissionMode.GRAPH_WRITE,
     "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
     "cruxible_update_trust_status": PermissionMode.GRAPH_WRITE,

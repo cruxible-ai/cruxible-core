@@ -80,25 +80,249 @@ def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
     assert "not available in server mode" in result.output
 
 
-@pytest.mark.parametrize(
-    ("args"),
-    [
-        ["lock"],
-        ["plan", "--workflow", "wf", "--input-file", "/tmp/input.yaml"],
-        ["run", "--workflow", "wf", "--input-file", "/tmp/input.yaml"],
-        ["test"],
-    ],
-)
-def test_workflow_commands_are_rejected_in_server_mode(
+def test_workflow_commands_delegate_to_client_in_server_mode(
     monkeypatch,
     runner: CliRunner,
     tmp_path: Path,
-    args: list[str],
 ):
     input_path = tmp_path / "input.yaml"
     input_path.write_text("sku: SKU-123\n")
-    resolved_args = [str(input_path) if arg == "/tmp/input.yaml" else arg for arg in args]
-    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: object())
-    result = runner.invoke(cli, ["--server-url", "http://server", *resolved_args])
-    assert result.exit_code == 2
-    assert "not available in server mode" in result.output
+
+    class StubClient:
+        def workflow_lock(self, instance_id):
+            assert instance_id == "inst_123"
+            return contracts.WorkflowLockResult(
+                lock_path="/srv/project/cruxible.lock.yaml",
+                config_digest="sha256:abc",
+                providers_locked=1,
+                artifacts_locked=0,
+            )
+
+        def workflow_plan(self, instance_id, *, workflow_name, input_payload=None):
+            assert instance_id == "inst_123"
+            assert workflow_name == "wf"
+            assert input_payload == {"sku": "SKU-123"}
+            return contracts.WorkflowPlanResult(plan={"workflow": "wf", "steps": []})
+
+        def workflow_run(self, instance_id, *, workflow_name, input_payload=None):
+            assert instance_id == "inst_123"
+            return contracts.WorkflowRunResult(
+                workflow=workflow_name,
+                output={"decision": "approve"},
+                receipt_id="RCP-1",
+                trace_ids=["TRC-1"],
+            )
+
+        def workflow_test(self, instance_id, *, name=None):
+            assert instance_id == "inst_123"
+            assert name == "smoke"
+            return contracts.WorkflowTestResult(
+                total=1,
+                passed=1,
+                failed=0,
+                cases=[
+                    contracts.WorkflowTestCaseResult(
+                        name="smoke",
+                        workflow="wf",
+                        passed=True,
+                        receipt_id="RCP-1",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: StubClient())
+
+    lock = runner.invoke(
+        cli, ["--server-url", "http://server", "--instance-id", "inst_123", "lock"]
+    )
+    assert lock.exit_code == 0
+    assert "digest=sha256:abc" in lock.output
+
+    plan = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "plan",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+        ],
+    )
+    assert plan.exit_code == 0
+    assert '"workflow": "wf"' in plan.output
+
+    run = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "run",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+        ],
+    )
+    assert run.exit_code == 0
+    assert "Receipt ID: RCP-1" in run.output
+
+    test = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "test",
+            "--name",
+            "smoke",
+        ],
+    )
+    assert test.exit_code == 0
+    assert "1 passed, 0 failed, 1 total" in test.output
+
+
+def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    input_path = tmp_path / "input.yaml"
+    input_path.write_text("campaign_id: CMP-1\n")
+
+    class StubClient:
+        def propose_workflow(self, instance_id, *, workflow_name, input_payload=None):
+            assert instance_id == "inst_123"
+            assert workflow_name == "wf"
+            assert input_payload == {"campaign_id": "CMP-1"}
+            return contracts.WorkflowProposeResult(
+                workflow="wf",
+                output={"members": []},
+                receipt_id="RCP-1",
+                group_id="GRP-1",
+                group_status="pending_review",
+                review_priority="review",
+                trace_ids=["TRC-1"],
+            )
+
+        def create_snapshot(self, instance_id, *, label=None):
+            assert instance_id == "inst_123"
+            assert label == "baseline"
+            return contracts.SnapshotCreateResult(
+                snapshot=contracts.SnapshotMetadata(
+                    snapshot_id="snap_1",
+                    created_at="2026-03-21T00:00:00Z",
+                    label="baseline",
+                    config_digest="sha256:abc",
+                    lock_digest=None,
+                    graph_sha256="sha256:def",
+                    parent_snapshot_id=None,
+                    origin_snapshot_id=None,
+                )
+            )
+
+        def list_snapshots(self, instance_id):
+            assert instance_id == "inst_123"
+            return contracts.SnapshotListResult(
+                snapshots=[
+                    contracts.SnapshotMetadata(
+                        snapshot_id="snap_1",
+                        created_at="2026-03-21T00:00:00Z",
+                        label="baseline",
+                        config_digest="sha256:abc",
+                        lock_digest=None,
+                        graph_sha256="sha256:def",
+                        parent_snapshot_id=None,
+                        origin_snapshot_id=None,
+                    )
+                ]
+            )
+
+        def fork_snapshot(self, instance_id, *, snapshot_id, root_dir):
+            assert instance_id == "inst_123"
+            assert snapshot_id == "snap_1"
+            return contracts.ForkSnapshotResult(
+                instance_id="inst_fork",
+                snapshot=contracts.SnapshotMetadata(
+                    snapshot_id="snap_1",
+                    created_at="2026-03-21T00:00:00Z",
+                    label="baseline",
+                    config_digest="sha256:abc",
+                    lock_digest=None,
+                    graph_sha256="sha256:def",
+                    parent_snapshot_id=None,
+                    origin_snapshot_id=None,
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: StubClient())
+
+    propose = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "propose",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+        ],
+    )
+    assert propose.exit_code == 0
+    assert "group GRP-1" in propose.output
+
+    create = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "snapshot",
+            "create",
+            "--label",
+            "baseline",
+        ],
+    )
+    assert create.exit_code == 0
+    assert "Created snapshot snap_1" in create.output
+
+    listed = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "snapshot",
+            "list",
+        ],
+    )
+    assert listed.exit_code == 0
+    assert "snap_1" in listed.output
+
+    fork = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "fork",
+            "--snapshot",
+            "snap_1",
+            "--root-dir",
+            str(tmp_path / "forked"),
+        ],
+    )
+    assert fork.exit_code == 0
+    assert "instance inst_fork" in fork.output

@@ -187,6 +187,22 @@ class TestOutputSchema:
             ("cruxible_add_relationship", {"added", "updated", "receipt_id"}),
             ("cruxible_add_entity", {"entities_added", "entities_updated", "receipt_id"}),
             ("cruxible_add_constraint", {"name", "added", "config_updated", "warnings"}),
+            (
+                "cruxible_propose_workflow",
+                {
+                    "workflow",
+                    "output",
+                    "receipt_id",
+                    "group_id",
+                    "group_status",
+                    "review_priority",
+                    "query_receipt_ids",
+                    "trace_ids",
+                    "prior_resolution",
+                    "receipt",
+                    "traces",
+                },
+            ),
             ("cruxible_get_entity", {"found", "entity_type", "entity_id", "properties"}),
             (
                 "cruxible_get_relationship",

@@ -108,3 +108,21 @@ class AddConstraintRequest(BaseModel):
     rule: str
     severity: contracts.ConstraintSeverity = "warning"
     description: str | None = None
+
+
+class WorkflowInputRequest(BaseModel):
+    workflow_name: str
+    input: dict[str, Any] | None = None
+
+
+class WorkflowTestRequest(BaseModel):
+    name: str | None = None
+
+
+class SnapshotCreateRequest(BaseModel):
+    label: str | None = None
+
+
+class ForkSnapshotRequest(BaseModel):
+    snapshot_id: str
+    root_dir: str

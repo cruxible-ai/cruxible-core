@@ -25,6 +25,14 @@ def server_project(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def workflow_server_project(tmp_path: Path, proposal_workflow_config_yaml: str) -> Path:
+    root = tmp_path / "workflow-project"
+    root.mkdir()
+    (root / "config.yaml").write_text(proposal_workflow_config_yaml)
+    return root
+
+
+@pytest.fixture
 def vehicles_csv(server_project: Path) -> Path:
     csv_path = server_project / "vehicles.csv"
     csv_path.write_text(
@@ -308,6 +316,145 @@ def test_add_relationship_stamps_http_api_provenance(
     props = lookup.json()["properties"]
     assert props["_provenance"]["source"] == "http_api"
     assert props["_provenance"]["source_ref"] == "cruxible_add_relationship"
+
+
+def test_workflow_propose_snapshot_and_fork_round_trip(
+    app_client: TestClient,
+    workflow_server_project: Path,
+):
+    instance_id = _init_instance(app_client, workflow_server_project)
+
+    for entity in [
+        {
+            "entity_type": "Campaign",
+            "entity_id": "CMP-1",
+            "properties": {"campaign_id": "CMP-1", "region": "north"},
+        },
+        {
+            "entity_type": "Product",
+            "entity_id": "SKU-123",
+            "properties": {"sku": "SKU-123", "category": "beverages"},
+        },
+        {
+            "entity_type": "Product",
+            "entity_id": "SKU-456",
+            "properties": {"sku": "SKU-456", "category": "beverages"},
+        },
+    ]:
+        response = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": [entity]})
+        assert response.status_code == 200
+
+    lock = app_client.post(f"/api/v1/{instance_id}/workflows/lock")
+    assert lock.status_code == 200
+
+    propose = app_client.post(
+        f"/api/v1/{instance_id}/workflows/propose",
+        json={
+            "workflow_name": "propose_campaign_recommendations",
+            "input": {"campaign_id": "CMP-1"},
+        },
+    )
+    assert propose.status_code == 200
+    group_id = propose.json()["group_id"]
+
+    resolve = app_client.post(
+        f"/api/v1/{instance_id}/groups/{group_id}/resolve",
+        json={"action": "approve", "resolved_by": "human", "rationale": "looks good"},
+    )
+    assert resolve.status_code == 200
+    assert resolve.json()["edges_created"] == 2
+
+    list_edges = app_client.get(
+        f"/api/v1/{instance_id}/list/edges",
+        params={"relationship_type": "recommended_for"},
+    )
+    assert list_edges.status_code == 200
+    edges = list_edges.json()["items"]
+    assert len(edges) == 2
+    assert all(edge["properties"]["_provenance"]["source"] == "group_resolve" for edge in edges)
+    assert all(
+        edge["properties"]["_provenance"]["source_ref"] == f"group:{group_id}" for edge in edges
+    )
+
+    snapshot = app_client.post(f"/api/v1/{instance_id}/snapshots", json={"label": "baseline"})
+    assert snapshot.status_code == 200
+    snapshot_id = snapshot.json()["snapshot"]["snapshot_id"]
+
+    listed = app_client.get(f"/api/v1/{instance_id}/snapshots")
+    assert listed.status_code == 200
+    assert listed.json()["snapshots"][0]["snapshot_id"] == snapshot_id
+
+    fork_root = workflow_server_project.parent / "forked-server-project"
+    fork = app_client.post(
+        f"/api/v1/{instance_id}/fork",
+        json={"snapshot_id": snapshot_id, "root_dir": str(fork_root)},
+    )
+    assert fork.status_code == 200
+    assert fork.json()["snapshot"]["snapshot_id"] == snapshot_id
+    fork_instance_id = fork.json()["instance_id"]
+    assert fork_instance_id != instance_id
+
+    fork_list = app_client.get(
+        f"/api/v1/{fork_instance_id}/list/edges",
+        params={"relationship_type": "recommended_for"},
+    )
+    assert fork_list.status_code == 200
+    assert fork_list.json()["total"] == 2
+
+
+def test_workflow_routes_lock_plan_run_and_test(
+    app_client: TestClient,
+    workflow_server_project: Path,
+):
+    instance_id = _init_instance(app_client, workflow_server_project)
+
+    for entity in [
+        {
+            "entity_type": "Campaign",
+            "entity_id": "CMP-1",
+            "properties": {"campaign_id": "CMP-1", "region": "north"},
+        },
+        {
+            "entity_type": "Product",
+            "entity_id": "SKU-123",
+            "properties": {"sku": "SKU-123", "category": "beverages"},
+        },
+        {
+            "entity_type": "Product",
+            "entity_id": "SKU-456",
+            "properties": {"sku": "SKU-456", "category": "beverages"},
+        },
+    ]:
+        response = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": [entity]})
+        assert response.status_code == 200
+
+    lock = app_client.post(f"/api/v1/{instance_id}/workflows/lock")
+    assert lock.status_code == 200
+
+    plan = app_client.post(
+        f"/api/v1/{instance_id}/workflows/plan",
+        json={
+            "workflow_name": "propose_campaign_recommendations",
+            "input": {"campaign_id": "CMP-1"},
+        },
+    )
+    assert plan.status_code == 200
+    assert plan.json()["plan"]["workflow"] == "propose_campaign_recommendations"
+
+    run = app_client.post(
+        f"/api/v1/{instance_id}/workflows/run",
+        json={
+            "workflow_name": "propose_campaign_recommendations",
+            "input": {"campaign_id": "CMP-1"},
+        },
+    )
+    assert run.status_code == 200
+    assert run.json()["receipt_id"].startswith("RCP-")
+    assert run.json()["output"]["members"]
+
+    test = app_client.post(f"/api/v1/{instance_id}/workflows/test", json={"name": None})
+    assert test.status_code == 200
+    assert test.json()["failed"] == 0
 
 
 def test_server_routes_reject_unknown_instance_ids(

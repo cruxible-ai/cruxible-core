@@ -412,6 +412,24 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_add_constraint(instance_id, name, rule, severity, description)
 
     @_tool
+    def cruxible_propose_workflow(
+        instance_id: str,
+        workflow_name: str,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowProposeResult:
+        """Execute a configured workflow and bridge its output into a governed relationship group.
+
+        Use this when a repeated decision procedure should propose relationship state
+        through Cruxible's proposal/review/trust boundary instead of writing edges directly.
+        The workflow must declare `proposal_output.kind: relationship_group`.
+        """
+        return handlers.handle_propose_workflow(
+            instance_id,
+            workflow_name,
+            input_payload=input_payload,
+        )
+
+    @_tool
     def cruxible_propose_group(
         instance_id: str,
         relationship_type: str,

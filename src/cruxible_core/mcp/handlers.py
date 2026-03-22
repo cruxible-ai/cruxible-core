@@ -34,9 +34,11 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_create_snapshot,
     service_evaluate,
     service_feedback,
     service_find_candidates,
+    service_fork_snapshot,
     service_get_entity,
     service_get_group,
     service_get_receipt,
@@ -46,12 +48,18 @@ from cruxible_core.service import (
     service_list,
     service_list_groups,
     service_list_resolutions,
+    service_list_snapshots,
+    service_lock,
     service_outcome,
+    service_plan,
     service_propose_group,
+    service_propose_workflow,
     service_query,
     service_resolve_group,
+    service_run,
     service_sample,
     service_schema,
+    service_test,
     service_update_trust_status,
     service_validate,
 )
@@ -249,6 +257,192 @@ def handle_validate(
     if client is not None:
         return client.validate(config_path=config_path, config_yaml=config_yaml)
     return _handle_validate_local(config_path, config_yaml)
+
+
+def _handle_workflow_lock_local(instance_id: str) -> contracts.WorkflowLockResult:
+    """Generate a workflow lock through the governed service layer."""
+    check_permission(
+        "workflow_lock",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = _manager.get(instance_id)
+    result = service_lock(instance)
+    return contracts.WorkflowLockResult(
+        lock_path=result.lock_path,
+        config_digest=result.config_digest,
+        providers_locked=result.providers_locked,
+        artifacts_locked=result.artifacts_locked,
+    )
+
+
+def _handle_workflow_plan_local(
+    instance_id: str,
+    workflow_name: str,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowPlanResult:
+    """Compile a workflow plan through the governed service layer."""
+    check_permission(
+        "workflow_plan",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = _manager.get(instance_id)
+    result = service_plan(instance, workflow_name, input_payload or {})
+    return contracts.WorkflowPlanResult(plan=result.plan.model_dump(mode="json"))
+
+
+def _handle_workflow_run_local(
+    instance_id: str,
+    workflow_name: str,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowRunResult:
+    """Execute a workflow through the governed service layer."""
+    check_permission(
+        "workflow_run",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = _manager.get(instance_id)
+    result = service_run(instance, workflow_name, input_payload or {})
+    return contracts.WorkflowRunResult(
+        workflow=result.workflow,
+        output=result.output,
+        receipt_id=result.receipt_id,
+        query_receipt_ids=result.query_receipt_ids,
+        trace_ids=result.trace_ids,
+        receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
+        traces=[trace.model_dump(mode="json") for trace in result.traces],
+    )
+
+
+def _handle_workflow_test_local(
+    instance_id: str,
+    name: str | None = None,
+) -> contracts.WorkflowTestResult:
+    """Execute config-defined workflow tests through the governed service layer."""
+    check_permission(
+        "workflow_test",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = _manager.get(instance_id)
+    result = service_test(instance, test_name=name)
+    return contracts.WorkflowTestResult(
+        total=result.total,
+        passed=result.passed,
+        failed=result.failed,
+        cases=[
+            contracts.WorkflowTestCaseResult(
+                name=case.name,
+                workflow=case.workflow,
+                passed=case.passed,
+                output=case.output,
+                receipt_id=case.receipt_id,
+                error=case.error,
+            )
+            for case in result.cases
+        ],
+    )
+
+
+def _handle_propose_workflow_local(
+    instance_id: str,
+    workflow_name: str,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowProposeResult:
+    """Execute a workflow and bridge its output into a governed relationship proposal."""
+    check_permission(
+        "cruxible_propose_workflow",
+        instance_id=instance_id,
+    )
+    instance = _manager.get(instance_id)
+    result = service_propose_workflow(instance, workflow_name, input_payload or {})
+    return contracts.WorkflowProposeResult(
+        workflow=result.workflow,
+        output=result.output,
+        receipt_id=result.receipt_id,
+        group_id=result.group_id,
+        group_status=result.group_status,
+        review_priority=result.review_priority,
+        query_receipt_ids=result.query_receipt_ids,
+        trace_ids=result.trace_ids,
+        prior_resolution=result.prior_resolution,
+        receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
+        traces=[trace.model_dump(mode="json") for trace in result.traces],
+    )
+
+
+def handle_propose_workflow(
+    instance_id: str,
+    workflow_name: str,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowProposeResult:
+    """Execute a workflow and create a governed relationship proposal."""
+    client = _get_client()
+    if client is not None:
+        return client.propose_workflow(
+            instance_id,
+            workflow_name=workflow_name,
+            input_payload=input_payload or {},
+        )
+    return _handle_propose_workflow_local(instance_id, workflow_name, input_payload)
+
+
+def _handle_create_snapshot_local(
+    instance_id: str,
+    label: str | None = None,
+) -> contracts.SnapshotCreateResult:
+    """Create an immutable full snapshot for an instance."""
+    check_permission(
+        "snapshot_create",
+        instance_id=instance_id,
+        required_mode=PermissionMode.ADMIN,
+    )
+    instance = _manager.get(instance_id)
+    result = service_create_snapshot(instance, label=label)
+    return contracts.SnapshotCreateResult(
+        snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json"))
+    )
+
+
+def _handle_list_snapshots_local(instance_id: str) -> contracts.SnapshotListResult:
+    """List immutable snapshots for an instance."""
+    check_permission(
+        "snapshot_list",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = _manager.get(instance_id)
+    result = service_list_snapshots(instance)
+    return contracts.SnapshotListResult(
+        snapshots=[
+            contracts.SnapshotMetadata.model_validate(snapshot.model_dump(mode="json"))
+            for snapshot in result.snapshots
+        ]
+    )
+
+
+def _handle_fork_snapshot_local(
+    instance_id: str,
+    snapshot_id: str,
+    root_dir: str,
+) -> contracts.ForkSnapshotResult:
+    """Create a new local instance from a selected snapshot."""
+    check_permission(
+        "snapshot_fork",
+        instance_id=instance_id,
+        required_mode=PermissionMode.ADMIN,
+    )
+    validate_root_dir(root_dir)
+    instance = _manager.get(instance_id)
+    result = service_fork_snapshot(instance, snapshot_id, root_dir)
+    registered = get_registry().get_or_create_local_instance(Path(root_dir))
+    _manager.register(registered.record.instance_id, result.instance)
+    return contracts.ForkSnapshotResult(
+        instance_id=registered.record.instance_id,
+        snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json")),
+    )
 
 
 def _handle_ingest_local(

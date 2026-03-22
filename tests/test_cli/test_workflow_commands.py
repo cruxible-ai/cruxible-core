@@ -53,6 +53,40 @@ def workflow_input_file(workflow_project: CruxibleInstance) -> Path:
     return path
 
 
+@pytest.fixture
+def proposal_workflow_project(
+    tmp_path: Path, proposal_workflow_config_yaml: str
+) -> CruxibleInstance:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(proposal_workflow_config_yaml)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Campaign",
+            entity_id="CMP-1",
+            properties={"campaign_id": "CMP-1", "region": "north"},
+        )
+    )
+    for sku in ("SKU-123", "SKU-456"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id=sku,
+                properties={"sku": sku, "category": "beverages"},
+            )
+        )
+    instance.save_graph(graph)
+    return instance
+
+
+@pytest.fixture
+def proposal_input_file(proposal_workflow_project: CruxibleInstance) -> Path:
+    path = proposal_workflow_project.root / "input.yaml"
+    path.write_text("campaign_id: CMP-1\n")
+    return path
+
+
 class TestWorkflowCli:
     def test_lock_writes_lock_file(
         self, runner: CliRunner, workflow_project: CruxibleInstance
@@ -107,3 +141,57 @@ class TestWorkflowCli:
         assert result.exit_code == 0
         assert "1 passed, 0 failed, 1 total" in result.output
         assert "[PASS] promo_margin_smoke" in result.output
+
+    def test_propose_bridges_workflow_into_candidate_group(
+        self,
+        runner: CliRunner,
+        proposal_workflow_project: CruxibleInstance,
+        proposal_input_file: Path,
+    ) -> None:
+        _chdir_run(runner, proposal_workflow_project.root, ["lock"])
+        result = _chdir_run(
+            runner,
+            proposal_workflow_project.root,
+            [
+                "propose",
+                "--workflow",
+                "propose_campaign_recommendations",
+                "--input-file",
+                str(proposal_input_file),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "proposed group GRP-" in result.output
+        assert "Group status: pending_review" in result.output
+
+    def test_snapshot_create_list_and_fork(
+        self,
+        runner: CliRunner,
+        proposal_workflow_project: CruxibleInstance,
+        tmp_path: Path,
+    ) -> None:
+        create = _chdir_run(
+            runner,
+            proposal_workflow_project.root,
+            ["snapshot", "create", "--label", "baseline"],
+        )
+        assert create.exit_code == 0
+        assert "Created snapshot snap_" in create.output
+        snapshot_id = next(
+            line.split()[2]
+            for line in create.output.splitlines()
+            if line.startswith("Created snapshot ")
+        )
+
+        listed = _chdir_run(runner, proposal_workflow_project.root, ["snapshot", "list"])
+        assert listed.exit_code == 0
+        assert snapshot_id in listed.output
+
+        fork_root = tmp_path / "forked-cli"
+        forked = _chdir_run(
+            runner,
+            proposal_workflow_project.root,
+            ["fork", "--snapshot", snapshot_id, "--root-dir", str(fork_root)],
+        )
+        assert forked.exit_code == 0
+        assert str(fork_root) in forked.output

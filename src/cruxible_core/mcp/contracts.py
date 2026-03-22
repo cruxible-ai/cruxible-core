@@ -166,6 +166,81 @@ class GetRelationshipResult(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
+class WorkflowLockResult(BaseModel):
+    lock_path: str
+    config_digest: str
+    providers_locked: int
+    artifacts_locked: int
+
+
+class WorkflowPlanResult(BaseModel):
+    plan: dict[str, Any]
+
+
+class WorkflowRunResult(BaseModel):
+    workflow: str
+    output: Any
+    receipt_id: str
+    query_receipt_ids: list[str] = Field(default_factory=list)
+    trace_ids: list[str] = Field(default_factory=list)
+    receipt: dict[str, Any] | None = None
+    traces: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkflowTestCaseResult(BaseModel):
+    name: str
+    workflow: str
+    passed: bool
+    output: Any | None = None
+    receipt_id: str | None = None
+    error: str | None = None
+
+
+class WorkflowTestResult(BaseModel):
+    total: int
+    passed: int
+    failed: int
+    cases: list[WorkflowTestCaseResult] = Field(default_factory=list)
+
+
+class WorkflowProposeResult(BaseModel):
+    workflow: str
+    output: Any
+    receipt_id: str
+    group_id: str
+    group_status: str
+    review_priority: str
+    query_receipt_ids: list[str] = Field(default_factory=list)
+    trace_ids: list[str] = Field(default_factory=list)
+    prior_resolution: dict[str, Any] | None = None
+    receipt: dict[str, Any] | None = None
+    traces: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SnapshotMetadata(BaseModel):
+    snapshot_id: str
+    created_at: str
+    label: str | None = None
+    config_digest: str
+    lock_digest: str | None = None
+    graph_sha256: str
+    parent_snapshot_id: str | None = None
+    origin_snapshot_id: str | None = None
+
+
+class SnapshotCreateResult(BaseModel):
+    snapshot: SnapshotMetadata
+
+
+class SnapshotListResult(BaseModel):
+    snapshots: list[SnapshotMetadata] = Field(default_factory=list)
+
+
+class ForkSnapshotResult(BaseModel):
+    instance_id: str
+    snapshot: SnapshotMetadata
+
+
 class ProposeGroupToolResult(BaseModel):
     group_id: str
     signature: str

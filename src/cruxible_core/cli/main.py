@@ -74,6 +74,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     export_group,
     feedback_cmd,
     find_candidates_cmd,
+    fork_cmd,
     get_entity_cmd,
     get_relationship_cmd,
     group_group,
@@ -83,10 +84,12 @@ from cruxible_core.cli.commands import (  # noqa: E402
     lock_cmd,
     outcome_cmd,
     plan_cmd,
+    propose_cmd,
     query,
     run_cmd,
     sample,
     schema,
+    snapshot_group,
     test_cmd,
     validate,
 )
@@ -97,6 +100,9 @@ cli.add_command(lock_cmd)  # type: ignore[has-type]
 cli.add_command(plan_cmd)  # type: ignore[has-type]
 cli.add_command(run_cmd)  # type: ignore[has-type]
 cli.add_command(test_cmd)  # type: ignore[has-type]
+cli.add_command(propose_cmd)  # type: ignore[has-type]
+cli.add_command(snapshot_group, "snapshot")  # type: ignore[has-type]
+cli.add_command(fork_cmd, "fork")  # type: ignore[has-type]
 cli.add_command(ingest)  # type: ignore[has-type]
 cli.add_command(query)  # type: ignore[has-type]
 cli.add_command(explain)  # type: ignore[has-type]
