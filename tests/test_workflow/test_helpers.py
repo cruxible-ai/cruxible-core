@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import date
 from math import pi
 
+import httpx
 import pytest
 
 from cruxible_core.config.schema import (
@@ -16,6 +18,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.provider.registry import resolve_provider
+from cruxible_core.provider.types import ProviderContext
 from cruxible_core.workflow.contracts import validate_contract_payload
 from cruxible_core.workflow.refs import preview_value, resolve_value
 
@@ -32,6 +35,15 @@ def _base_config(**overrides: object) -> CoreConfig:
         **overrides,
     )
     return config
+
+
+def _provider_context() -> ProviderContext:
+    return ProviderContext(
+        workflow_name="wf",
+        step_id="step",
+        provider_name="provider",
+        provider_version="1.0.0",
+    )
 
 
 class TestContractValidation:
@@ -141,6 +153,232 @@ class TestProviderRegistry:
         assert pi == 3.141592653589793
         with pytest.raises(ConfigError, match="is not callable"):
             resolve_provider("provider", provider)
+
+    def test_http_json_runtime_posts_json_and_returns_object(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {"echo": "ok"}
+
+        class FakeClient:
+            def __init__(self, *, timeout: float) -> None:
+                captured["timeout"] = timeout
+
+            def __enter__(self) -> FakeClient:
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+                return None
+
+            def post(
+                self, url: str, *, json: dict[str, object], headers: dict[str, str]
+            ) -> FakeResponse:
+                captured["url"] = url
+                captured["json"] = json
+                captured["headers"] = headers
+                return FakeResponse()
+
+        monkeypatch.setattr("cruxible_core.provider.registry.httpx.Client", FakeClient)
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref="https://example.test/run",
+            version="1.0.0",
+            runtime="http_json",
+            config={"headers": {"Authorization": "Bearer token"}, "timeout_s": 9},
+        )
+
+        result = resolve_provider("provider", provider)({"value": 7}, _provider_context())
+
+        assert result == {"echo": "ok"}
+        assert captured == {
+            "timeout": 9.0,
+            "url": "https://example.test/run",
+            "json": {"value": 7},
+            "headers": {"Authorization": "Bearer token"},
+        }
+
+    def test_http_json_runtime_rejects_invalid_json_response(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                raise ValueError("bad json")
+
+        class FakeClient:
+            def __init__(self, *, timeout: float) -> None:
+                self.timeout = timeout
+
+            def __enter__(self) -> FakeClient:
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+                return None
+
+            def post(
+                self, url: str, *, json: dict[str, object], headers: dict[str, str]
+            ) -> FakeResponse:
+                return FakeResponse()
+
+        monkeypatch.setattr("cruxible_core.provider.registry.httpx.Client", FakeClient)
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref="https://example.test/run",
+            version="1.0.0",
+            runtime="http_json",
+        )
+
+        with pytest.raises(QueryExecutionError, match="response was not valid JSON"):
+            resolve_provider("provider", provider)({"value": 7}, _provider_context())
+
+    def test_http_json_runtime_surfaces_http_status_errors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        request = httpx.Request("POST", "https://example.test/run")
+        response = httpx.Response(503, request=request)
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                raise httpx.HTTPStatusError("bad status", request=request, response=response)
+
+            def json(self) -> dict[str, object]:
+                return {"ok": False}
+
+        class FakeClient:
+            def __init__(self, *, timeout: float) -> None:
+                self.timeout = timeout
+
+            def __enter__(self) -> FakeClient:
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+                return None
+
+            def post(
+                self, url: str, *, json: dict[str, object], headers: dict[str, str]
+            ) -> FakeResponse:
+                return FakeResponse()
+
+        monkeypatch.setattr("cruxible_core.provider.registry.httpx.Client", FakeClient)
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref="https://example.test/run",
+            version="1.0.0",
+            runtime="http_json",
+        )
+
+        with pytest.raises(QueryExecutionError, match="failed with status 503"):
+            resolve_provider("provider", provider)({"value": 7}, _provider_context())
+
+    def test_http_json_runtime_surfaces_timeouts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class FakeClient:
+            def __init__(self, *, timeout: float) -> None:
+                self.timeout = timeout
+
+            def __enter__(self) -> FakeClient:
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+                return None
+
+            def post(
+                self, url: str, *, json: dict[str, object], headers: dict[str, str]
+            ) -> dict[str, object]:
+                raise httpx.TimeoutException("too slow")
+
+        monkeypatch.setattr("cruxible_core.provider.registry.httpx.Client", FakeClient)
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref="https://example.test/run",
+            version="1.0.0",
+            runtime="http_json",
+            config={"timeout_s": 1},
+        )
+
+        with pytest.raises(QueryExecutionError, match="timed out after 1.0s"):
+            resolve_provider("provider", provider)({"value": 7}, _provider_context())
+
+    def test_command_runtime_executes_and_reads_json_stdout(self) -> None:
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref=sys.executable,
+            version="1.0.0",
+            runtime="command",
+            config={
+                "args": [
+                    "-c",
+                    (
+                        "import json, sys; "
+                        "payload = json.load(sys.stdin); "
+                        "print(json.dumps({'echo': payload['value']}))"
+                    ),
+                ]
+            },
+        )
+
+        result = resolve_provider("provider", provider)({"value": 7}, _provider_context())
+
+        assert result == {"echo": 7}
+
+    def test_command_runtime_rejects_invalid_stdout_json(self) -> None:
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref=sys.executable,
+            version="1.0.0",
+            runtime="command",
+            config={"args": ["-c", "print('not-json')"]},
+        )
+
+        with pytest.raises(QueryExecutionError, match="output was not valid JSON"):
+            resolve_provider("provider", provider)({"value": 7}, _provider_context())
+
+    def test_command_runtime_surfaces_nonzero_exit(self) -> None:
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref=sys.executable,
+            version="1.0.0",
+            runtime="command",
+            config={"args": ["-c", "import sys; sys.stderr.write('boom'); sys.exit(7)"]},
+        )
+
+        with pytest.raises(QueryExecutionError, match="exited with status 7: boom"):
+            resolve_provider("provider", provider)({"value": 7}, _provider_context())
+
+    def test_command_runtime_surfaces_timeout(self) -> None:
+        provider = ProviderSchema(
+            kind="tool",
+            contract_in="Input",
+            contract_out="Output",
+            ref=sys.executable,
+            version="1.0.0",
+            runtime="command",
+            config={"timeout_s": 0.01, "args": ["-c", "import time; time.sleep(1); print('{}')"]},
+        )
+
+        with pytest.raises(QueryExecutionError, match="timed out after 0.01s"):
+            resolve_provider("provider", provider)({"value": 7}, _provider_context())
 
 
 class TestWorkflowRefs:
