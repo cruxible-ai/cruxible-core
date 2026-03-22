@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import (
@@ -180,7 +180,7 @@ class TestWorkflowExecutionServices:
         assert group.source_workflow_name == "propose_campaign_recommendations"
         assert group.source_workflow_receipt_id == result.receipt_id
         assert group.source_trace_ids == result.trace_ids
-        assert group.source_step_ids == ["recommend"]
+        assert group.source_step_ids == ["proposal"]
         assert len(members) == 2
         assert all(member.relationship_type == "recommended_for" for member in members)
 
@@ -195,12 +195,47 @@ class TestWorkflowExecutionServices:
             {"campaign_id": "CMP-1"},
         )
 
+        assert result.output["relationship_type"] == "recommended_for"
         assert result.output["members"]
         group_store = proposal_workflow_instance.get_group_store()
         try:
             assert group_store.count_groups() == 0
         finally:
             group_store.close()
+
+    def test_service_propose_workflow_rejects_missing_required_signals(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        for step in config.workflows["propose_campaign_recommendations"].steps:
+            if step.propose_relationship_group is not None:
+                step.propose_relationship_group.signals_from = []
+        proposal_workflow_instance.save_config(config)
+        service_lock(proposal_workflow_instance)
+
+        with pytest.raises(ConfigError, match="missing signal from required integration 'catalog'"):
+            service_propose_workflow(
+                proposal_workflow_instance,
+                "propose_campaign_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
+
+    def test_service_run_rejects_signal_for_unknown_candidate_pair(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        for step in config.workflows["propose_campaign_recommendations"].steps:
+            if step.make_candidates is not None:
+                step.make_candidates.to_id = "SKU-123"
+        proposal_workflow_instance.save_config(config)
+        service_lock(proposal_workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="unknown candidate pair CMP-1->SKU-456"):
+            service_run(
+                proposal_workflow_instance,
+                "propose_campaign_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
 
     def test_snapshot_create_list_and_fork(
         self, proposal_workflow_instance: CruxibleInstance, tmp_path: Path

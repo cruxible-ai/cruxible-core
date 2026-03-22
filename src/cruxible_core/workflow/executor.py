@@ -7,6 +7,7 @@ from typing import Any
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.group.types import CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
@@ -15,7 +16,15 @@ from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.workflow.compiler import compile_workflow, get_lock_path, load_lock
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
-from cruxible_core.workflow.types import WorkflowExecutionResult
+from cruxible_core.workflow.types import (
+    CandidateSet,
+    CandidateSetMember,
+    RelationshipGroupProposalArtifact,
+    RelationshipGroupProposalMember,
+    SignalBatch,
+    SignalBatchSignal,
+    WorkflowExecutionResult,
+)
 
 
 def execute_workflow(
@@ -200,6 +209,90 @@ def execute_workflow(
             )
             continue
 
+        if compiled_step.kind == "make_candidates":
+            candidate_set = _make_candidate_set(
+                config,
+                compiled_step.step_id,
+                compiled_step.step_config,
+                plan.input_payload,
+                step_outputs,
+            )
+            step_outputs[compiled_step.as_name or compiled_step.step_id] = candidate_set.model_dump(
+                mode="python"
+            )
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+            receipt_builder.record_plan_step(
+                compiled_step.step_id,
+                "make_candidates",
+                detail={
+                    "relationship_type": candidate_set.relationship_type,
+                    "candidate_count": len(candidate_set.candidates),
+                    "item_count": len(
+                        _resolve_step_items(
+                            compiled_step.step_config,
+                            plan.input_payload,
+                            step_outputs,
+                        )
+                    ),
+                },
+            )
+            continue
+
+        if compiled_step.kind == "map_signals":
+            signal_batch = _map_signal_batch(
+                compiled_step.step_id,
+                compiled_step.step_config,
+                plan.input_payload,
+                step_outputs,
+            )
+            step_outputs[compiled_step.as_name or compiled_step.step_id] = signal_batch.model_dump(
+                mode="python"
+            )
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+            receipt_builder.record_plan_step(
+                compiled_step.step_id,
+                "map_signals",
+                detail={
+                    "integration": signal_batch.integration,
+                    "signal_count": len(signal_batch.signals),
+                    "item_count": len(
+                        _resolve_step_items(
+                            compiled_step.step_config,
+                            plan.input_payload,
+                            step_outputs,
+                        )
+                    ),
+                },
+            )
+            continue
+
+        if compiled_step.kind == "propose_relationship_group":
+            proposal = _build_relationship_group_proposal(
+                compiled_step.step_id,
+                compiled_step.step_config,
+                plan.input_payload,
+                step_outputs,
+            )
+            step_outputs[compiled_step.as_name or compiled_step.step_id] = proposal.model_dump(
+                mode="python"
+            )
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+            receipt_builder.record_plan_step(
+                compiled_step.step_id,
+                "propose_relationship_group",
+                detail={
+                    "relationship_type": proposal.relationship_type,
+                    "candidates_from": compiled_step.step_config["candidates_from"],
+                    "signals_from": compiled_step.step_config["signals_from"],
+                    "member_count": len(proposal.members),
+                    "integrations_used": proposal.integrations_used,
+                },
+            )
+            continue
+
         left = resolve_value(workflow_step.assert_spec.left, plan.input_payload, step_outputs)
         right = resolve_value(workflow_step.assert_spec.right, plan.input_payload, step_outputs)
         passed = _evaluate_assert(left, workflow_step.assert_spec.op, right)
@@ -307,3 +400,271 @@ def _evaluate_assert(left: Any, op: str, right: Any) -> bool:
     if op == "lte":
         return left <= right
     raise ConfigError(f"Unsupported assert op '{op}'")
+
+
+def _resolve_step_items(
+    step_config: dict[str, Any],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> list[Any]:
+    items = resolve_value(step_config["items"], input_payload, step_outputs)
+    if not isinstance(items, list):
+        raise QueryExecutionError("Built-in workflow step 'items' must resolve to a list")
+    return items
+
+
+def _make_candidate_set(
+    config: CoreConfig,
+    step_id: str,
+    step_config: dict[str, Any],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> CandidateSet:
+    relationship_type = step_config["relationship_type"]
+    rel_schema = config.get_relationship(relationship_type)
+    if rel_schema is None:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' references unknown relationship '{relationship_type}'"
+        )
+
+    items = _resolve_step_items(step_config, input_payload, step_outputs)
+    seen: set[tuple[str, str, str, str]] = set()
+    candidates: list[CandidateSetMember] = []
+
+    for item in items:
+        member = CandidateSetMember.model_validate(
+            {
+                "from_type": resolve_value(
+                    step_config["from_type"],
+                    input_payload,
+                    step_outputs,
+                    item_payload=item,
+                    allow_item=True,
+                ),
+                "from_id": resolve_value(
+                    step_config["from_id"],
+                    input_payload,
+                    step_outputs,
+                    item_payload=item,
+                    allow_item=True,
+                ),
+                "to_type": resolve_value(
+                    step_config["to_type"],
+                    input_payload,
+                    step_outputs,
+                    item_payload=item,
+                    allow_item=True,
+                ),
+                "to_id": resolve_value(
+                    step_config["to_id"],
+                    input_payload,
+                    step_outputs,
+                    item_payload=item,
+                    allow_item=True,
+                ),
+                "properties": resolve_value(
+                    step_config.get("properties", {}),
+                    input_payload,
+                    step_outputs,
+                    item_payload=item,
+                    allow_item=True,
+                ),
+            }
+        )
+        if member.from_type != rel_schema.from_entity or member.to_type != rel_schema.to_entity:
+            raise QueryExecutionError(
+                f"Workflow step '{step_id}' produced candidate types "
+                f"{member.from_type}->{member.to_type} which do not match "
+                "relationship "
+                f"'{relationship_type}' "
+                f"({rel_schema.from_entity}->{rel_schema.to_entity})"
+            )
+        key = (member.from_type, member.from_id, member.to_type, member.to_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(member)
+
+    return CandidateSet(relationship_type=relationship_type, candidates=candidates)
+
+
+def _map_signal_batch(
+    step_id: str,
+    step_config: dict[str, Any],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> SignalBatch:
+    items = _resolve_step_items(step_config, input_payload, step_outputs)
+    seen_pairs: set[tuple[str, str]] = set()
+    signals: list[SignalBatchSignal] = []
+
+    for item in items:
+        from_id = str(
+            resolve_value(
+                step_config["from_id"],
+                input_payload,
+                step_outputs,
+                item_payload=item,
+                allow_item=True,
+            )
+        )
+        to_id = str(
+            resolve_value(
+                step_config["to_id"],
+                input_payload,
+                step_outputs,
+                item_payload=item,
+                allow_item=True,
+            )
+        )
+        key = (from_id, to_id)
+        if key in seen_pairs:
+            raise QueryExecutionError(
+                f"Workflow step '{step_id}' produced duplicate signal for pair {from_id}->{to_id}"
+            )
+
+        evidence = ""
+        if "evidence" in step_config:
+            resolved_evidence = resolve_value(
+                step_config["evidence"],
+                input_payload,
+                step_outputs,
+                item_payload=item,
+                allow_item=True,
+            )
+            if resolved_evidence is not None:
+                evidence = str(resolved_evidence)
+
+        if "score" in step_config:
+            score_spec = step_config["score"]
+            score_value = resolve_value(
+                f"$item.{score_spec['path']}",
+                input_payload,
+                step_outputs,
+                item_payload=item,
+                allow_item=True,
+            )
+            if isinstance(score_value, bool) or not isinstance(score_value, (int, float)):
+                raise QueryExecutionError(
+                    f"Workflow step '{step_id}' score path '{score_spec['path']}' "
+                    "must resolve to a number"
+                )
+            numeric_score = float(score_value)
+            if numeric_score >= float(score_spec["support_gte"]):
+                signal = "support"
+            elif numeric_score >= float(score_spec["unsure_gte"]):
+                signal = "unsure"
+            else:
+                signal = "contradict"
+        else:
+            enum_spec = step_config["enum"]
+            enum_value = resolve_value(
+                f"$item.{enum_spec['path']}",
+                input_payload,
+                step_outputs,
+                item_payload=item,
+                allow_item=True,
+            )
+            if not isinstance(enum_value, str):
+                raise QueryExecutionError(
+                    f"Workflow step '{step_id}' enum path '{enum_spec['path']}' "
+                    "must resolve to a string"
+                )
+            if enum_value not in enum_spec["map"]:
+                raise QueryExecutionError(
+                    f"Workflow step '{step_id}' enum path '{enum_spec['path']}' returned "
+                    f"unknown value '{enum_value}'"
+                )
+            signal = enum_spec["map"][enum_value]
+
+        signals.append(
+            SignalBatchSignal(
+                from_id=from_id,
+                to_id=to_id,
+                signal=signal,
+                evidence=evidence,
+            )
+        )
+        seen_pairs.add(key)
+
+    return SignalBatch(integration=step_config["integration"], signals=signals)
+
+
+def _build_relationship_group_proposal(
+    step_id: str,
+    step_config: dict[str, Any],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> RelationshipGroupProposalArtifact:
+    candidate_set = CandidateSet.model_validate(step_outputs[step_config["candidates_from"]])
+    relationship_type = step_config["relationship_type"]
+    if candidate_set.relationship_type != relationship_type:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' expected candidate relationship '{relationship_type}' "
+            f"but received '{candidate_set.relationship_type}'"
+        )
+
+    members_by_pair: dict[tuple[str, str], RelationshipGroupProposalMember] = {
+        (candidate.from_id, candidate.to_id): RelationshipGroupProposalMember(
+            from_type=candidate.from_type,
+            from_id=candidate.from_id,
+            to_type=candidate.to_type,
+            to_id=candidate.to_id,
+            properties=candidate.properties,
+        )
+        for candidate in candidate_set.candidates
+    }
+
+    integrations_used: list[str] = []
+    for alias in step_config["signals_from"]:
+        signal_batch = SignalBatch.model_validate(step_outputs[alias])
+        integrations_used.append(signal_batch.integration)
+        for signal in signal_batch.signals:
+            key = (signal.from_id, signal.to_id)
+            if key not in members_by_pair:
+                raise QueryExecutionError(
+                    f"Workflow step '{step_id}' received signal for unknown candidate pair "
+                    f"{signal.from_id}->{signal.to_id}"
+                )
+            member = members_by_pair[key]
+            if any(existing.integration == signal_batch.integration for existing in member.signals):
+                raise QueryExecutionError(
+                    f"Workflow step '{step_id}' produced duplicate integration "
+                    f"'{signal_batch.integration}' for pair {signal.from_id}->{signal.to_id}"
+                )
+            member.signals.append(
+                CandidateSignal(
+                    integration=signal_batch.integration,
+                    signal=signal.signal,
+                    evidence=signal.evidence,
+                )
+            )
+
+    return RelationshipGroupProposalArtifact.model_validate(
+        {
+            "relationship_type": relationship_type,
+            "members": [member.model_dump(mode="python") for member in members_by_pair.values()],
+            "thesis_text": resolve_value(
+                step_config.get("thesis_text", ""),
+                input_payload,
+                step_outputs,
+            ),
+            "thesis_facts": resolve_value(
+                step_config.get("thesis_facts", {}),
+                input_payload,
+                step_outputs,
+            ),
+            "analysis_state": resolve_value(
+                step_config.get("analysis_state", {}),
+                input_payload,
+                step_outputs,
+            ),
+            "integrations_used": integrations_used,
+            "suggested_priority": resolve_value(
+                step_config.get("suggested_priority"),
+                input_payload,
+                step_outputs,
+            ),
+            "proposed_by": step_config.get("proposed_by", "ai_review"),
+        }
+    )

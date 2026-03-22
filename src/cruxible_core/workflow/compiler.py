@@ -157,6 +157,53 @@ def compile_workflow(
             )
             continue
 
+        if step.make_candidates is not None:
+            step_config = step.make_candidates.model_dump(mode="python", exclude_none=True)
+            step_config["items_preview"] = preview_value(
+                step.make_candidates.items, normalized_input
+            )
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="make_candidates",
+                    as_name=step.as_,
+                    step_config=step_config,
+                )
+            )
+            continue
+
+        if step.map_signals is not None:
+            step_config = step.map_signals.model_dump(mode="python", exclude_none=True)
+            step_config["items_preview"] = preview_value(step.map_signals.items, normalized_input)
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="map_signals",
+                    as_name=step.as_,
+                    step_config=step_config,
+                )
+            )
+            continue
+
+        if step.propose_relationship_group is not None:
+            step_config = step.propose_relationship_group.model_dump(
+                mode="python",
+                exclude_none=True,
+            )
+            step_config["thesis_text_preview"] = preview_value(
+                step.propose_relationship_group.thesis_text,
+                normalized_input,
+            )
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="propose_relationship_group",
+                    as_name=step.as_,
+                    step_config=step_config,
+                )
+            )
+            continue
+
         assert step.assert_spec is not None
         compiled_steps.append(
             CompiledPlanStep(

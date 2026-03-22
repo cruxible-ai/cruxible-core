@@ -421,7 +421,8 @@ def register_tools(server: FastMCP) -> list[str]:
 
         Use this when a repeated decision procedure should propose relationship state
         through Cruxible's proposal/review/trust boundary instead of writing edges directly.
-        The workflow must declare `proposal_output.kind: relationship_group`.
+        The workflow must return a relationship proposal artifact from a
+        `propose_relationship_group` step.
         """
         return handlers.handle_propose_workflow(
             instance_id,

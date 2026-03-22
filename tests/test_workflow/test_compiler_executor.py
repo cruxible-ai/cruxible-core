@@ -42,6 +42,34 @@ def workflow_instance(tmp_path: Path, workflow_config_yaml: str) -> CruxibleInst
     return instance
 
 
+@pytest.fixture
+def proposal_workflow_instance(
+    tmp_path: Path, proposal_workflow_config_yaml: str
+) -> CruxibleInstance:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(proposal_workflow_config_yaml)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Campaign",
+            entity_id="CMP-1",
+            properties={"campaign_id": "CMP-1", "region": "north"},
+        )
+    )
+    for sku in ("SKU-123", "SKU-456"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id=sku,
+                properties={"sku": sku, "category": "beverages"},
+            )
+        )
+    instance.save_graph(graph)
+    return instance
+
+
 def _write_lock_for_instance(instance: CruxibleInstance) -> None:
     config = instance.load_config()
     write_lock(build_lock(config), get_lock_path(instance))
@@ -102,6 +130,30 @@ class TestWorkflowCompiler:
                     "end_date": "2026-03-07",
                 },
             )
+
+    def test_compile_workflow_includes_built_in_proposal_steps(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        _write_lock_for_instance(proposal_workflow_instance)
+        config = proposal_workflow_instance.load_config()
+
+        plan = compile_workflow(
+            config,
+            build_lock(config),
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert [step.kind for step in plan.steps] == [
+            "query",
+            "provider",
+            "make_candidates",
+            "map_signals",
+            "propose_relationship_group",
+        ]
+        assert plan.steps[2].step_config["relationship_type"] == "recommended_for"
+        assert plan.steps[3].step_config["integration"] == "catalog"
+        assert plan.steps[4].step_config["signals_from"] == ["catalog_signals"]
 
 
 class TestWorkflowExecutor:
@@ -181,3 +233,24 @@ class TestWorkflowExecutor:
         finally:
             store.close()
         assert receipts
+
+    def test_execute_workflow_builds_relationship_proposal_artifact(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        _write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.output["relationship_type"] == "recommended_for"
+        assert len(result.output["members"]) == 2
+        assert result.output["integrations_used"] == ["catalog"]
+        assert len(result.traces) == 1
+        plan_steps = [node for node in result.receipt.nodes if node.node_type == "plan_step"]
+        assert any(node.detail.get("relationship_type") == "recommended_for" for node in plan_steps)
+        assert any(node.detail.get("integration") == "catalog" for node in plan_steps)
+        assert any(node.detail.get("signals_from") == ["catalog_signals"] for node in plan_steps)

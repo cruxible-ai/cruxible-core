@@ -164,6 +164,11 @@ relationships:
   - name: recommended_for
     from: Campaign
     to: Product
+    matching:
+      integrations:
+        catalog:
+          role: required
+          always_review_on_unsure: true
 
 named_queries:
   get_campaign_context:
@@ -182,34 +187,22 @@ contracts:
         type: string
       region:
         type: string
-  RecommendationProposal:
+  RecommendationRows:
     fields:
-      members:
+      items:
         type: json
-      thesis_text:
-        type: string
-        optional: true
-      thesis_facts:
-        type: json
-        optional: true
-        default: {}
-      analysis_state:
-        type: json
-        optional: true
-        default: {}
-      integrations_used:
-        type: json
-        optional: true
-        default: []
-      suggested_priority:
-        type: string
-        optional: true
+
+integrations:
+  catalog:
+    kind: heuristic
+    contract:
+      output: support|unsure|contradict
 
 providers:
   campaign_recommendations:
     kind: function
     contract_in: CampaignContext
-    contract_out: RecommendationProposal
+    contract_out: RecommendationRows
     ref: tests.support.workflow_test_providers.campaign_recommendations
     version: 1.0.0
     deterministic: true
@@ -230,10 +223,46 @@ workflows:
           campaign_id: $steps.campaign.results[0].properties.campaign_id
           region: $steps.campaign.results[0].properties.region
         as: recommendations
-    returns: recommendations
-    proposal_output:
-      kind: relationship_group
-      relationship_type: recommended_for
+      - id: candidates
+        make_candidates:
+          relationship_type: recommended_for
+          items: $steps.recommendations.items
+          from_type: Campaign
+          from_id: $steps.campaign.results[0].properties.campaign_id
+          to_type: Product
+          to_id: $item.product_sku
+          properties:
+            reason: $item.reason
+        as: candidates
+      - id: catalog_signals
+        map_signals:
+          integration: catalog
+          items: $steps.recommendations.items
+          from_id: $steps.campaign.results[0].properties.campaign_id
+          to_id: $item.product_sku
+          evidence: $item.reason
+          enum:
+            path: verdict
+            map:
+              match: support
+              fallback: unsure
+              reject: contradict
+        as: catalog_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: recommended_for
+          candidates_from: candidates
+          signals_from:
+            - catalog_signals
+          thesis_text: Recommend products for regional campaign
+          thesis_facts:
+            campaign_id: $input.campaign_id
+            region: $steps.campaign.results[0].properties.region
+          analysis_state:
+            source: campaign_recommendations
+          suggested_priority: high
+        as: proposal
+    returns: proposal
 
 tests:
   - name: campaign_proposal_smoke

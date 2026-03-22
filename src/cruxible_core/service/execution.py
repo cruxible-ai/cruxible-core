@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import ValidationError
+
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -23,7 +25,10 @@ from cruxible_core.workflow import (
     load_lock,
     write_lock,
 )
-from cruxible_core.workflow.types import RelationshipGroupProposalPayload, WorkflowTestCaseResult
+from cruxible_core.workflow.types import (
+    RelationshipGroupProposalArtifact,
+    WorkflowTestCaseResult,
+)
 
 
 def service_lock(instance: InstanceProtocol) -> LockServiceResult:
@@ -76,33 +81,16 @@ def service_propose_workflow(
     workflow_name: str,
     input_payload: dict[str, Any],
 ) -> ProposeWorkflowResult:
-    """Execute a workflow and bridge its declared output into a candidate group."""
+    """Execute a workflow and bridge its returned proposal artifact into a candidate group."""
     config = instance.load_config()
-    workflow = config.workflows.get(workflow_name)
-    if workflow is None:
-        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-    if workflow.proposal_output is None:
-        raise ConfigError(
-            f"Workflow '{workflow_name}' does not declare proposal_output and cannot propose state"
-        )
-    if workflow.proposal_output.kind != "relationship_group":
-        raise ConfigError(
-            "Workflow "
-            f"'{workflow_name}' proposal_output kind '{workflow.proposal_output.kind}' "
-            "is not supported"
-        )
-
     result = execute_workflow(instance, config, workflow_name, input_payload)
-    source_alias = workflow.proposal_output.source_alias or workflow.returns
-    if source_alias not in result.step_outputs:
+    try:
+        proposal_payload = RelationshipGroupProposalArtifact.model_validate(result.output)
+    except ValidationError as exc:
         raise QueryExecutionError(
-            f"Workflow '{workflow_name}' proposal source alias '{source_alias}' was not produced"
-        )
-
-    proposal_payload = RelationshipGroupProposalPayload.model_validate(
-        result.step_outputs[source_alias]
-    )
-    relationship_type = workflow.proposal_output.relationship_type
+            f"Workflow '{workflow_name}' must return a relationship proposal artifact"
+        ) from exc
+    relationship_type = proposal_payload.relationship_type
     members = [
         CandidateMember(
             from_type=member.from_type,
@@ -116,8 +104,8 @@ def service_propose_workflow(
         for member in proposal_payload.members
     ]
 
-    source_step_id = result.alias_step_ids.get(source_alias)
-    source_trace_ids = result.step_trace_ids.get(source_step_id, []) if source_step_id else []
+    source_step_id = result.alias_step_ids.get(config.workflows[workflow_name].returns)
+    source_trace_ids = [trace.trace_id for trace in result.traces]
     group_result = service_propose_group(
         instance,
         relationship_type,
@@ -126,7 +114,7 @@ def service_propose_workflow(
         thesis_facts=proposal_payload.thesis_facts,
         analysis_state=proposal_payload.analysis_state,
         integrations_used=proposal_payload.integrations_used,
-        proposed_by=workflow.proposal_output.proposed_by,
+        proposed_by=proposal_payload.proposed_by,
         suggested_priority=proposal_payload.suggested_priority,
         source_workflow_name=workflow_name,
         source_workflow_receipt_id=result.receipt.receipt_id,

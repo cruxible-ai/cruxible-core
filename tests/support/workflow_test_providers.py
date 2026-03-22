@@ -31,33 +31,21 @@ def margin_calculator(input_payload: dict[str, Any], context: ProviderContext) -
 def campaign_recommendations(
     input_payload: dict[str, Any], _context: ProviderContext
 ) -> dict[str, Any]:
-    """Return a deterministic relationship-group proposal payload."""
+    """Return deterministic raw recommendation rows for declarative proposal assembly."""
     region = input_payload["region"]
-    members = [
-        {
-            "from_type": "Campaign",
-            "from_id": input_payload["campaign_id"],
-            "to_type": "Product",
-            "to_id": "SKU-123",
-            "signals": [{"integration": "catalog", "signal": "support", "evidence": region}],
-            "properties": {"reason": f"{region} bestseller"},
-        },
-        {
-            "from_type": "Campaign",
-            "from_id": input_payload["campaign_id"],
-            "to_type": "Product",
-            "to_id": "SKU-456",
-            "signals": [{"integration": "catalog", "signal": "support", "evidence": region}],
-            "properties": {"reason": f"{region} fallback"},
-        },
-    ]
     return {
-        "members": members,
-        "thesis_text": "Recommend products for regional campaign",
-        "thesis_facts": {"campaign_id": input_payload["campaign_id"], "region": region},
-        "analysis_state": {"source": "campaign_recommendations"},
-        "integrations_used": ["catalog"],
-        "suggested_priority": "high",
+        "items": [
+            {
+                "product_sku": "SKU-123",
+                "verdict": "match",
+                "reason": f"{region} bestseller",
+            },
+            {
+                "product_sku": "SKU-456",
+                "verdict": "fallback",
+                "reason": f"{region} fallback",
+            },
+        ]
     }
 
 
