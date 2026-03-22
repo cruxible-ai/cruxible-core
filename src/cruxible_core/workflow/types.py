@@ -47,7 +47,14 @@ class CompiledPlanStep(BaseModel):
     """Single compiled workflow step."""
 
     step_id: str
-    kind: Literal["query", "provider", "assert"]
+    kind: Literal[
+        "query",
+        "provider",
+        "assert",
+        "make_candidates",
+        "map_signals",
+        "propose_relationship_group",
+    ]
     as_name: str | None = None
     query_name: str | None = None
     provider_name: str | None = None
@@ -63,6 +70,7 @@ class CompiledPlanStep(BaseModel):
     assert_right: Any | None = None
     assert_op: str | None = None
     message: str | None = None
+    step_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CompiledPlan(BaseModel):
@@ -109,8 +117,41 @@ class WorkflowTestRunResult(BaseModel):
     cases: list[WorkflowTestCaseResult] = Field(default_factory=list)
 
 
+class CandidateSetMember(BaseModel):
+    """Candidate relationship endpoints produced inside a workflow."""
+
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidateSet(BaseModel):
+    """Internal workflow artifact containing candidate relationship pairs."""
+
+    relationship_type: str
+    candidates: list[CandidateSetMember] = Field(default_factory=list)
+
+
+class SignalBatchSignal(BaseModel):
+    """Governed signal produced for a specific candidate pair."""
+
+    from_id: str
+    to_id: str
+    signal: Literal["support", "unsure", "contradict"]
+    evidence: str = ""
+
+
+class SignalBatch(BaseModel):
+    """Internal workflow artifact containing one integration's signals."""
+
+    integration: str
+    signals: list[SignalBatchSignal] = Field(default_factory=list)
+
+
 class RelationshipGroupProposalMember(BaseModel):
-    """Bridged workflow payload member for relationship group proposals."""
+    """Candidate group member assembled by built-in workflow steps."""
 
     from_type: str
     from_id: str
@@ -120,12 +161,14 @@ class RelationshipGroupProposalMember(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
-class RelationshipGroupProposalPayload(BaseModel):
-    """Typed workflow output for the relationship-group bridge."""
+class RelationshipGroupProposalArtifact(BaseModel):
+    """Internal workflow artifact bridged into a governed relationship proposal."""
 
+    relationship_type: str
     members: list[RelationshipGroupProposalMember]
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
     suggested_priority: str | None = None
+    proposed_by: Literal["human", "ai_review"] = "ai_review"

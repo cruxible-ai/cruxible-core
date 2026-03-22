@@ -21,13 +21,28 @@ def preview_value(value: Any, input_payload: dict[str, Any]) -> Any:
     return value
 
 
-def resolve_value(value: Any, input_payload: dict[str, Any], step_outputs: dict[str, Any]) -> Any:
+def resolve_value(
+    value: Any,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    *,
+    item_payload: Any | None = None,
+    allow_item: bool = False,
+) -> Any:
     """Resolve $input and $steps refs during workflow execution."""
     if isinstance(value, str):
         if value == "$input":
             return input_payload
         if value.startswith("$input."):
             return _extract_path(input_payload, value[len("$input.") :], value)
+        if value == "$item":
+            if allow_item and item_payload is not None:
+                return item_payload
+            raise QueryExecutionError(f"Unsupported workflow reference '{value}'")
+        if value.startswith("$item."):
+            if allow_item and item_payload is not None:
+                return _extract_path(item_payload, value[len("$item.") :], value)
+            raise QueryExecutionError(f"Unsupported workflow reference '{value}'")
         if value.startswith("$steps."):
             ref = value[len("$steps.") :]
             alias, _, remainder = ref.partition(".")
@@ -42,9 +57,27 @@ def resolve_value(value: Any, input_payload: dict[str, Any], step_outputs: dict[
         return value
 
     if isinstance(value, dict):
-        return {k: resolve_value(v, input_payload, step_outputs) for k, v in value.items()}
+        return {
+            k: resolve_value(
+                v,
+                input_payload,
+                step_outputs,
+                item_payload=item_payload,
+                allow_item=allow_item,
+            )
+            for k, v in value.items()
+        }
     if isinstance(value, list):
-        return [resolve_value(v, input_payload, step_outputs) for v in value]
+        return [
+            resolve_value(
+                v,
+                input_payload,
+                step_outputs,
+                item_payload=item_payload,
+                allow_item=allow_item,
+            )
+            for v in value
+        ]
     return value
 
 

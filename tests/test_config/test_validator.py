@@ -11,13 +11,13 @@ from cruxible_core.config.schema import (
     CoreConfig,
     EntityTypeSchema,
     IngestionMapping,
+    IntegrationSpec,
     NamedQuerySchema,
     PropertySchema,
     ProviderArtifactSchema,
     ProviderSchema,
     RelationshipSchema,
     TraversalStep,
-    WorkflowProposalOutputSchema,
     WorkflowSchema,
     WorkflowStepSchema,
     WorkflowTestSchema,
@@ -223,6 +223,9 @@ class TestValidateWorkflowExecution:
             contracts={
                 "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
             },
+            integrations={
+                "catalog": IntegrationSpec(kind="heuristic"),
+            },
             artifacts={
                 "artifact": ProviderArtifactSchema(
                     kind="model", uri="file:///tmp/model", sha256="abc"
@@ -329,31 +332,110 @@ class TestValidateWorkflowExecution:
             validate_config(config)
         assert any("workflow 'nope'" in error for error in exc_info.value.errors)
 
-    def test_proposal_output_rejects_unknown_relationship(self):
-        config = self._workflow_config()
-        config.workflows["wf"].proposal_output = WorkflowProposalOutputSchema(
-            kind="relationship_group",
-            relationship_type="missing",
+    def test_make_candidates_rejects_unknown_relationship(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="candidates",
+                            make_candidates={
+                                "relationship_type": "missing",
+                                "items": [],
+                                "from_type": "A",
+                                "from_id": "$input.id",
+                                "to_type": "B",
+                                "to_id": "$input.id",
+                            },
+                            **{"as": "candidates"},
+                        )
+                    ],
+                    returns="candidates",
+                )
+            }
         )
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any(
-            "proposal_output relationship_type 'missing'" in error
+            "make_candidates relationship_type 'missing'" in error
             for error in exc_info.value.errors
         )
 
-    def test_proposal_output_rejects_unknown_source_alias(self):
-        config = self._workflow_config()
-        config.workflows["wf"].proposal_output = WorkflowProposalOutputSchema(
-            kind="relationship_group",
-            relationship_type="links",
-            source_alias="missing",
+    def test_map_signals_rejects_unknown_integration(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="signals",
+                            map_signals={
+                                "integration": "missing",
+                                "items": [],
+                                "from_id": "$input.id",
+                                "to_id": "$input.id",
+                                "enum": {
+                                    "path": "verdict",
+                                    "map": {"support": "support"},
+                                },
+                            },
+                            **{"as": "signals"},
+                        )
+                    ],
+                    returns="signals",
+                )
+            }
         )
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
-        assert any(
-            "proposal_output source_alias 'missing'" in error for error in exc_info.value.errors
+        assert any("map_signals integration 'missing'" in error for error in exc_info.value.errors)
+
+    def test_propose_relationship_group_rejects_unknown_aliases(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="proposal",
+                            propose_relationship_group={
+                                "relationship_type": "links",
+                                "candidates_from": "missing_candidates",
+                                "signals_from": ["missing_signals"],
+                            },
+                            **{"as": "proposal"},
+                        )
+                    ],
+                    returns="proposal",
+                )
+            }
         )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("candidates_from alias 'missing_candidates'" in e for e in exc_info.value.errors)
+        assert any("signals_from alias 'missing_signals'" in e for e in exc_info.value.errors)
+
+    def test_item_reference_outside_builtin_steps_is_rejected(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$item.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("unsupported reference '$item.id'" in e for e in exc_info.value.errors)
 
 
 class TestValidateKinds:

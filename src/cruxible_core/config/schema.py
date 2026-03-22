@@ -250,13 +250,88 @@ class AssertSpec(BaseModel):
     message: str
 
 
-class WorkflowProposalOutputSchema(BaseModel):
-    """Optional bridge from workflow output into a governed proposal type."""
+class MakeCandidatesSpec(BaseModel):
+    """Build a relationship candidate set from list-shaped workflow data."""
 
-    kind: Literal["relationship_group"]
     relationship_type: str
-    source_alias: str | None = None
+    items: Any
+    from_type: Any
+    from_id: Any
+    to_type: Any
+    to_id: Any
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class ScoreSignalMappingSpec(BaseModel):
+    """Map numeric scores to tri-state candidate signals."""
+
+    path: str
+    support_gte: float
+    unsure_gte: float
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> ScoreSignalMappingSpec:
+        if self.support_gte < self.unsure_gte:
+            msg = "score.support_gte must be greater than or equal to score.unsure_gte"
+            raise ValueError(msg)
+        return self
+
+
+class EnumSignalMappingSpec(BaseModel):
+    """Map enum-like values to tri-state candidate signals."""
+
+    path: str
+    map: dict[str, Literal["support", "unsure", "contradict"]]
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_non_empty_map(self) -> EnumSignalMappingSpec:
+        if not self.map:
+            msg = "enum.map must not be empty"
+            raise ValueError(msg)
+        return self
+
+
+class MapSignalsSpec(BaseModel):
+    """Convert raw provider output into a governed signal batch."""
+
+    integration: str
+    items: Any
+    from_id: Any
+    to_id: Any
+    evidence: Any | None = None
+    score: ScoreSignalMappingSpec | None = None
+    enum: EnumSignalMappingSpec | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_mapping_mode(self) -> MapSignalsSpec:
+        mapping_modes = sum(mode is not None for mode in (self.score, self.enum))
+        if mapping_modes != 1:
+            msg = "map_signals must define exactly one of 'score' or 'enum'"
+            raise ValueError(msg)
+        return self
+
+
+class ProposeRelationshipGroupSpec(BaseModel):
+    """Assemble a governed relationship-group proposal from built-in artifacts."""
+
+    relationship_type: str
+    candidates_from: str
+    signals_from: list[str]
+    thesis_text: Any = ""
+    thesis_facts: dict[str, Any] = Field(default_factory=dict)
+    analysis_state: dict[str, Any] = Field(default_factory=dict)
+    suggested_priority: Any | None = None
     proposed_by: Literal["human", "ai_review"] = "ai_review"
+
+    model_config = {"extra": "forbid"}
 
 
 class WorkflowStepSchema(BaseModel):
@@ -266,11 +341,14 @@ class WorkflowStepSchema(BaseModel):
     query: str | None = None
     provider: str | None = None
     assert_spec: AssertSpec | None = Field(alias="assert", default=None)
+    make_candidates: MakeCandidatesSpec | None = None
+    map_signals: MapSignalsSpec | None = None
+    propose_relationship_group: ProposeRelationshipGroupSpec | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     input: dict[str, Any] = Field(default_factory=dict)
     as_: str | None = Field(alias="as", default=None)
 
-    model_config = {"populate_by_name": True}
+    model_config = {"populate_by_name": True, "extra": "forbid"}
 
     @model_validator(mode="after")
     def validate_step_shape(self) -> WorkflowStepSchema:
@@ -280,10 +358,16 @@ class WorkflowStepSchema(BaseModel):
                 self.query,
                 self.provider,
                 self.assert_spec,
+                self.make_candidates,
+                self.map_signals,
+                self.propose_relationship_group,
             )
         )
         if kinds != 1:
-            msg = "Workflow step must define exactly one of 'query', 'provider', or 'assert'"
+            msg = (
+                "Workflow step must define exactly one of 'query', 'provider', 'assert', "
+                "'make_candidates', 'map_signals', or 'propose_relationship_group'"
+            )
             raise ValueError(msg)
 
         if self.query is not None:
@@ -301,6 +385,42 @@ class WorkflowStepSchema(BaseModel):
                 raise ValueError(msg)
             if self.params:
                 msg = "Provider workflow steps may not define 'params'"
+                raise ValueError(msg)
+            return self
+
+        if self.make_candidates is not None:
+            if self.as_ is None:
+                msg = "make_candidates workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "make_candidates workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "make_candidates workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.map_signals is not None:
+            if self.as_ is None:
+                msg = "map_signals workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "map_signals workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "map_signals workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.propose_relationship_group is not None:
+            if self.as_ is None:
+                msg = "propose_relationship_group workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "propose_relationship_group workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "propose_relationship_group workflow steps may not define 'input'"
                 raise ValueError(msg)
             return self
 
@@ -323,7 +443,8 @@ class WorkflowSchema(BaseModel):
     contract_in: str
     steps: list[WorkflowStepSchema]
     returns: str
-    proposal_output: WorkflowProposalOutputSchema | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class WorkflowTestExpectSchema(BaseModel):

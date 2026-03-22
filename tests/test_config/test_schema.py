@@ -183,26 +183,68 @@ class TestWorkflowSchema:
         )
         assert workflow.contract_in == "PromoInput"
 
-    def test_workflow_accepts_proposal_output(self):
-        workflow = WorkflowSchema(
-            contract_in="PromoInput",
-            steps=[
-                WorkflowStepSchema(
-                    id="recommend",
-                    provider="recommender",
-                    input={"sku": "$input.sku"},
-                    **{"as": "recommendations"},
-                )
-            ],
-            returns="recommendations",
-            proposal_output={
-                "kind": "relationship_group",
+    def test_make_candidates_step_accepts_item_refs(self):
+        step = WorkflowStepSchema(
+            id="candidates",
+            make_candidates={
                 "relationship_type": "recommended_for",
+                "items": "$steps.rows.items",
+                "from_type": "Campaign",
+                "from_id": "$input.campaign_id",
+                "to_type": "Product",
+                "to_id": "$item.product_sku",
+                "properties": {"reason": "$item.reason"},
             },
+            **{"as": "candidates"},
         )
-        assert workflow.proposal_output is not None
-        assert workflow.proposal_output.kind == "relationship_group"
-        assert workflow.proposal_output.source_alias is None
+        assert step.make_candidates is not None
+        assert step.make_candidates.relationship_type == "recommended_for"
+
+    def test_map_signals_requires_exactly_one_mapping_mode(self):
+        with pytest.raises(ValidationError, match="exactly one of 'score' or 'enum'"):
+            WorkflowStepSchema(
+                id="catalog_signals",
+                map_signals={
+                    "integration": "catalog",
+                    "items": "$steps.rows.items",
+                    "from_id": "$input.campaign_id",
+                    "to_id": "$item.product_sku",
+                },
+                **{"as": "signals"},
+            )
+
+    def test_propose_relationship_group_step_accepts_signal_aliases(self):
+        step = WorkflowStepSchema(
+            id="proposal",
+            propose_relationship_group={
+                "relationship_type": "recommended_for",
+                "candidates_from": "candidates",
+                "signals_from": ["catalog_signals"],
+                "thesis_text": "Recommend products for campaign",
+            },
+            **{"as": "proposal"},
+        )
+        assert step.propose_relationship_group is not None
+        assert step.propose_relationship_group.signals_from == ["catalog_signals"]
+
+    def test_workflow_rejects_removed_proposal_output(self):
+        with pytest.raises(ValidationError, match="proposal_output"):
+            WorkflowSchema(
+                contract_in="PromoInput",
+                steps=[
+                    WorkflowStepSchema(
+                        id="recommend",
+                        provider="recommender",
+                        input={"sku": "$input.sku"},
+                        **{"as": "recommendations"},
+                    )
+                ],
+                returns="recommendations",
+                proposal_output={
+                    "kind": "relationship_group",
+                    "relationship_type": "recommended_for",
+                },
+            )
 
 
 class TestWorkflowTests:

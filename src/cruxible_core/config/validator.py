@@ -205,6 +205,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
     provider_names = set(config.providers.keys())
     query_names = set(config.named_queries.keys())
     relationship_names = {rel.name for rel in config.relationships}
+    integration_names = set(config.integrations.keys())
 
     for workflow_name, workflow in config.workflows.items():
         if workflow.contract_in not in contract_names:
@@ -261,6 +262,103 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     produced_aliases.add(step.as_)
                 continue
 
+            if step.make_candidates is not None:
+                if step.make_candidates.relationship_type not in relationship_names:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': make_candidates relationship_type "
+                        f"'{step.make_candidates.relationship_type}' not found in relationships"
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.make_candidates.items,
+                        step.make_candidates.from_type,
+                        step.make_candidates.from_id,
+                        step.make_candidates.to_type,
+                        step.make_candidates.to_id,
+                        step.make_candidates.properties,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.map_signals is not None:
+                if step.map_signals.integration not in integration_names:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': map_signals integration "
+                        f"'{step.map_signals.integration}' not found in integrations"
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.map_signals.items,
+                        step.map_signals.from_id,
+                        step.map_signals.to_id,
+                        step.map_signals.evidence,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.propose_relationship_group is not None:
+                if step.propose_relationship_group.relationship_type not in relationship_names:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': propose_relationship_group "
+                        f"relationship_type '{step.propose_relationship_group.relationship_type}' "
+                        "not found in relationships"
+                    )
+                if step.propose_relationship_group.candidates_from not in produced_aliases:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': candidates_from alias "
+                        f"'{step.propose_relationship_group.candidates_from}' "
+                        "is unknown or future"
+                    )
+                for alias in step.propose_relationship_group.signals_from:
+                    if alias not in produced_aliases:
+                        errors.append(
+                            "Workflow "
+                            f"'{workflow_name}' step '{step.id}': signals_from alias "
+                            f"'{alias}' is unknown or future"
+                        )
+                for ref in _iter_refs(
+                    [
+                        step.propose_relationship_group.thesis_text,
+                        step.propose_relationship_group.thesis_facts,
+                        step.propose_relationship_group.analysis_state,
+                        step.propose_relationship_group.suggested_priority,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
             assert step.assert_spec is not None
             for ref in _iter_refs([step.assert_spec.left, step.assert_spec.right]):
                 _validate_workflow_ref(
@@ -277,26 +375,6 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 f"'{workflow_name}': returns alias '{workflow.returns}' "
                 "not produced by any prior step"
             )
-
-        if workflow.proposal_output is not None:
-            if workflow.proposal_output.kind != "relationship_group":
-                errors.append(
-                    f"Workflow '{workflow_name}': unsupported proposal_output kind "
-                    f"'{workflow.proposal_output.kind}'"
-                )
-            if workflow.proposal_output.relationship_type not in relationship_names:
-                errors.append(
-                    "Workflow "
-                    f"'{workflow_name}': proposal_output relationship_type "
-                    f"'{workflow.proposal_output.relationship_type}' not found in relationships"
-                )
-            source_alias = workflow.proposal_output.source_alias or workflow.returns
-            if source_alias not in produced_aliases:
-                errors.append(
-                    "Workflow "
-                    f"'{workflow_name}': proposal_output source_alias '{source_alias}' "
-                    "not produced by any prior step"
-                )
 
 
 def _validate_tests(config: CoreConfig, errors: list[str]) -> None:
@@ -339,11 +417,18 @@ def _validate_workflow_ref(
     ref: str,
     produced_aliases: set[str],
     errors: list[str],
+    *,
+    allow_item: bool = False,
 ) -> None:
     """Validate a single workflow input/step reference."""
     if ref == "$input":
         return
     if ref.startswith("$input."):
+        return
+    if ref == "$item" or ref.startswith("$item."):
+        if allow_item:
+            return
+        errors.append(f"Workflow '{workflow_name}' step '{step_id}': unsupported reference '{ref}'")
         return
     if ref == "$steps":
         errors.append(f"Workflow '{workflow_name}' step '{step_id}': invalid reference '{ref}'")

@@ -191,3 +191,29 @@ class TestWorkflowRefs:
                 {},
                 {"context": {"results": [{"properties": {"category": "soda"}}]}},
             )
+
+    def test_resolve_value_supports_item_refs_when_enabled(self) -> None:
+        resolved = resolve_value(
+            {
+                "sku": "$item.product_sku",
+                "reason": "$item.reason",
+                "campaign_id": "$input.campaign_id",
+            },
+            {"campaign_id": "CMP-1"},
+            {},
+            item_payload={"product_sku": "SKU-123", "reason": "north bestseller"},
+            allow_item=True,
+        )
+
+        assert resolved == {
+            "sku": "SKU-123",
+            "reason": "north bestseller",
+            "campaign_id": "CMP-1",
+        }
+
+    def test_resolve_value_rejects_item_ref_when_disabled(self) -> None:
+        with pytest.raises(
+            QueryExecutionError,
+            match="Unsupported workflow reference '\\$item.id'",
+        ):
+            resolve_value("$item.id", {}, {})
