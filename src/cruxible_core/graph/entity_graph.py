@@ -256,6 +256,20 @@ class EntityGraph:
 
         return False
 
+    def update_entity_properties(
+        self,
+        entity_type: str,
+        entity_id: str,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Merge updates into an entity's properties. Returns True if found."""
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return False
+
+        self._graph.nodes[node_id].setdefault("properties", {}).update(updates)
+        return True
+
     def replace_edge_properties(
         self,
         from_type: str,
