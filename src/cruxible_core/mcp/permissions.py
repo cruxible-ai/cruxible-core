@@ -1,10 +1,11 @@
 """Server-side permission modes for MCP tools.
 
 Controls which tools an MCP session can invoke, enforced via the
-``CRUXIBLE_MODE`` environment variable. Three cumulative tiers:
+``CRUXIBLE_MODE`` environment variable. Four cumulative tiers:
 
 - ``READ_ONLY``: query, inspect, validate — no graph or config mutations
-- ``GRAPH_WRITE``: add entities/relationships, record feedback/outcomes
+- ``GOVERNED_WRITE``: propose or review via governed surfaces, no raw mutation
+- ``GRAPH_WRITE``: raw graph mutation and proposal resolution
 - ``ADMIN``: ingest data, add constraints, create new instances
 
 Default is ``ADMIN`` (backward compatible).
@@ -53,15 +54,17 @@ _log = structlog.get_logger("cruxible.permissions")
 
 
 class PermissionMode(IntEnum):
-    """Cumulative permission tiers: ADMIN ⊃ GRAPH_WRITE ⊃ READ_ONLY."""
+    """Cumulative permission tiers: ADMIN ⊃ GRAPH_WRITE ⊃ GOVERNED_WRITE ⊃ READ_ONLY."""
 
     READ_ONLY = 1
-    GRAPH_WRITE = 2
-    ADMIN = 3
+    GOVERNED_WRITE = 2
+    GRAPH_WRITE = 3
+    ADMIN = 4
 
 
 _MODE_NAMES: dict[str, PermissionMode] = {
     "read_only": PermissionMode.READ_ONLY,
+    "governed_write": PermissionMode.GOVERNED_WRITE,
     "graph_write": PermissionMode.GRAPH_WRITE,
     "admin": PermissionMode.ADMIN,
 }
@@ -88,14 +91,20 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_get_group": PermissionMode.READ_ONLY,
     "cruxible_list_groups": PermissionMode.READ_ONLY,
     "cruxible_list_resolutions": PermissionMode.READ_ONLY,
+    "cruxible_get_entity_proposal": PermissionMode.READ_ONLY,
+    "cruxible_list_entity_proposals": PermissionMode.READ_ONLY,
+    # GOVERNED_WRITE tools
+    "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
+    "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,
+    "cruxible_outcome": PermissionMode.GOVERNED_WRITE,
+    "cruxible_propose_workflow": PermissionMode.GOVERNED_WRITE,
+    "cruxible_propose_group": PermissionMode.GOVERNED_WRITE,
+    "cruxible_propose_entity_changes": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
     "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
-    "cruxible_feedback": PermissionMode.GRAPH_WRITE,
-    "cruxible_outcome": PermissionMode.GRAPH_WRITE,
-    "cruxible_propose_workflow": PermissionMode.GRAPH_WRITE,
-    "cruxible_propose_group": PermissionMode.GRAPH_WRITE,
     "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
+    "cruxible_resolve_entity_proposal": PermissionMode.GRAPH_WRITE,
     "cruxible_update_trust_status": PermissionMode.GRAPH_WRITE,
     # ADMIN tools
     "cruxible_ingest": PermissionMode.ADMIN,
@@ -253,7 +262,7 @@ def check_permission(
         raise PermissionDeniedError(tool_name, current.name, effective.name)
 
     # Audit log for mutations
-    if effective >= PermissionMode.GRAPH_WRITE:
+    if effective >= PermissionMode.GOVERNED_WRITE:
         _log.info(
             "mutation_allowed",
             tool=tool_name,

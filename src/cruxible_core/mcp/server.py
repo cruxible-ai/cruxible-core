@@ -41,10 +41,11 @@ Use prompt defaults unless the user explicitly requests deviation.
 
 ## Permission Modes
 
-The server runs in one of three cumulative permission modes controlled by
+The server runs in one of four cumulative permission modes controlled by
 the `CRUXIBLE_MODE` environment variable:
 - `READ_ONLY`: query, inspect, validate — no graph or config mutations
-- `GRAPH_WRITE`: READ_ONLY + add entities/relationships, record feedback/outcomes
+- `GOVERNED_WRITE`: READ_ONLY + governed proposal and feedback surfaces
+- `GRAPH_WRITE`: GOVERNED_WRITE + raw graph mutation and proposal resolution
 - `ADMIN` (default): all tools available including ingest and config mutation
 
 If a tool call is denied, the error message indicates the required mode.

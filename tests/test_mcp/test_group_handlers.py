@@ -348,7 +348,7 @@ class TestUpdateTrustStatus:
 
 
 class TestGroupPermissions:
-    def test_propose_requires_graph_write(self, server, instance_id, monkeypatch):
+    def test_propose_requires_governed_write(self, server, instance_id, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
         reset_permissions()
         error = call_tool_expect_error(
@@ -361,7 +361,7 @@ class TestGroupPermissions:
                 "thesis_facts": {"k": "v"},
             },
         )
-        assert "GRAPH_WRITE" in error
+        assert "GOVERNED_WRITE" in error
 
     def test_resolve_requires_graph_write(self, server, instance_id, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
