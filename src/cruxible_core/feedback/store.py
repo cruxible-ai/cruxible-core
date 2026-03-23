@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
@@ -49,12 +51,35 @@ class FeedbackStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
 
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Context manager for atomic compound writes."""
+        self._conn.execute("BEGIN")
+        try:
+            yield
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
     # -----------------------------------------------------------------
     # Feedback
     # -----------------------------------------------------------------
 
     def save_feedback(self, record: FeedbackRecord) -> str:
         """Persist a feedback record. Returns the feedback_id."""
+        self._save_feedback(record)
+        self._conn.commit()
+        return record.feedback_id
+
+    def save_feedback_batch(self, records: list[FeedbackRecord]) -> list[str]:
+        """Persist multiple feedback records. Does not commit."""
+        for record in records:
+            self._save_feedback(record)
+        return [record.feedback_id for record in records]
+
+    def _save_feedback(self, record: FeedbackRecord) -> None:
+        """Persist a feedback record without committing."""
         self._conn.execute(
             "INSERT OR REPLACE INTO feedback "
             "(feedback_id, receipt_id, action, target_json, reason, source, "
@@ -73,8 +98,6 @@ class FeedbackStore:
             ),
         )
         self._index_feedback_entities(record)
-        self._conn.commit()
-        return record.feedback_id
 
     def get_feedback(self, feedback_id: str) -> FeedbackRecord | None:
         """Load a feedback record by ID."""

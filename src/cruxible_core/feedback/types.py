@@ -34,6 +34,17 @@ class FeedbackRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class FeedbackBatchItem(BaseModel):
+    """Input payload for one batch feedback item."""
+
+    receipt_id: str
+    action: Literal["approve", "reject", "correct", "flag"]
+    target: EdgeTarget
+    reason: str = ""
+    corrections: dict[str, Any] = Field(default_factory=dict)
+    group_override: bool = False
+
+
 class OutcomeRecord(BaseModel):
     """Record of what actually happened after a decision was made."""
 

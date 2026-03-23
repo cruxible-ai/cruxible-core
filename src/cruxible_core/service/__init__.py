@@ -6,6 +6,12 @@ permission checks, and protocol-specific concerns.
 """
 
 from cruxible_core.service.analysis import service_evaluate, service_find_candidates
+from cruxible_core.service.entity_proposals import (
+    service_get_entity_proposal,
+    service_list_entity_proposals,
+    service_propose_entity_changes,
+    service_resolve_entity_proposal,
+)
 from cruxible_core.service.execution import (
     service_lock,
     service_plan,
@@ -13,7 +19,7 @@ from cruxible_core.service.execution import (
     service_run,
     service_test,
 )
-from cruxible_core.service.feedback import service_feedback, service_outcome
+from cruxible_core.service.feedback import service_feedback, service_feedback_batch, service_outcome
 from cruxible_core.service.groups import (
     derive_review_priority,
     service_get_group,
@@ -48,21 +54,26 @@ from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
     EntityUpsertInput,
+    FeedbackBatchServiceResult,
     FeedbackServiceResult,
     ForkSnapshotResult,
+    GetEntityProposalResult,
     GetGroupResult,
     IngestResult,
     InitResult,
+    ListEntityProposalsResult,
     ListGroupsResult,
     ListResolutionsResult,
     ListResult,
     LockServiceResult,
     OutcomeServiceResult,
     PlanServiceResult,
+    ProposeEntityChangesResult,
     ProposeGroupResult,
     ProposeWorkflowResult,
     QueryServiceResult,
     RelationshipUpsertInput,
+    ResolveEntityProposalResult,
     ResolveGroupResult,
     RunServiceResult,
     SnapshotCreateResult,
@@ -76,22 +87,27 @@ __all__ = [
     "AddEntityResult",
     "AddRelationshipResult",
     "EntityUpsertInput",
+    "FeedbackBatchServiceResult",
     "FeedbackServiceResult",
     "ForkSnapshotResult",
+    "GetEntityProposalResult",
     "GetGroupResult",
     "IngestResult",
     "InitResult",
+    "ListEntityProposalsResult",
     "LockServiceResult",
     "ListGroupsResult",
     "ListResolutionsResult",
     "ListResult",
     "OutcomeServiceResult",
     "PlanServiceResult",
+    "ProposeEntityChangesResult",
     "ProposeWorkflowResult",
     "ProposeGroupResult",
     "QueryServiceResult",
     "RelationshipUpsertInput",
     "ResolveGroupResult",
+    "ResolveEntityProposalResult",
     "RunServiceResult",
     "SnapshotCreateResult",
     "SnapshotListResult",
@@ -111,7 +127,13 @@ __all__ = [
     "service_find_candidates",
     # Feedback
     "service_feedback",
+    "service_feedback_batch",
     "service_outcome",
+    # Entity proposals
+    "service_get_entity_proposal",
+    "service_list_entity_proposals",
+    "service_propose_entity_changes",
+    "service_resolve_entity_proposal",
     # Groups
     "derive_review_priority",
     "service_get_group",

@@ -24,6 +24,10 @@ GroupResolvedBy = Literal["human", "ai_review"]
 GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
 GroupProposedBy = Literal["human", "ai_review"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
+EntityProposalStatus = Literal["pending_review", "applying", "resolved"]
+EntityProposalAction = Literal["approve", "reject"]
+EntityProposalResolvedBy = Literal["human", "ai_review"]
+EntityChangeOperation = Literal["create", "patch"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -50,6 +54,15 @@ class SignalInput(BaseModel):
     evidence: str = ""
 
 
+class EdgeTargetInput(BaseModel):
+    from_type: str
+    from_id: str
+    relationship: str
+    to_type: str
+    to_id: str
+    edge_key: int | None = None
+
+
 class MemberInput(BaseModel):
     from_type: str
     from_id: str
@@ -57,6 +70,22 @@ class MemberInput(BaseModel):
     to_id: str
     relationship_type: str
     signals: list[SignalInput] = Field(default_factory=list)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackBatchItemInput(BaseModel):
+    receipt_id: str
+    action: FeedbackAction
+    target: EdgeTargetInput
+    reason: str = ""
+    corrections: dict[str, Any] | None = None
+    group_override: bool = False
+
+
+class EntityChangeInput(BaseModel):
+    entity_type: str
+    entity_id: str
+    operation: EntityChangeOperation
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -99,6 +128,13 @@ class QueryToolResult(BaseModel):
 class FeedbackResult(BaseModel):
     feedback_id: str
     applied: bool
+    receipt_id: str | None = None
+
+
+class FeedbackBatchResult(BaseModel):
+    feedback_ids: list[str] = Field(default_factory=list)
+    applied_count: int
+    total: int
     receipt_id: str | None = None
 
 
@@ -255,6 +291,31 @@ class ResolveGroupToolResult(BaseModel):
     action: str
     edges_created: int
     edges_skipped: int
+    resolution_id: str | None = None
+    receipt_id: str | None = None
+
+
+class ProposeEntityChangesToolResult(BaseModel):
+    proposal_id: str
+    status: str
+    member_count: int
+
+
+class GetEntityProposalToolResult(BaseModel):
+    proposal: dict[str, Any]
+    members: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ListEntityProposalsToolResult(BaseModel):
+    proposals: list[dict[str, Any]] = Field(default_factory=list)
+    total: int
+
+
+class ResolveEntityProposalToolResult(BaseModel):
+    proposal_id: str
+    action: str
+    entities_created: int
+    entities_patched: int
     resolution_id: str | None = None
     receipt_id: str | None = None
 

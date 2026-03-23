@@ -16,8 +16,9 @@ from cruxible_core.client import CruxibleClient
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import ConstraintSchema
 from cruxible_core.config.validator import validate_config
+from cruxible_core.entity_proposal.types import EntityChangeMember
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
-from cruxible_core.feedback.types import EdgeTarget
+from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.mcp import contracts
@@ -37,24 +38,29 @@ from cruxible_core.service import (
     service_create_snapshot,
     service_evaluate,
     service_feedback,
+    service_feedback_batch,
     service_find_candidates,
     service_fork_snapshot,
     service_get_entity,
+    service_get_entity_proposal,
     service_get_group,
     service_get_receipt,
     service_get_relationship,
     service_ingest,
     service_init,
     service_list,
+    service_list_entity_proposals,
     service_list_groups,
     service_list_resolutions,
     service_list_snapshots,
     service_lock,
     service_outcome,
     service_plan,
+    service_propose_entity_changes,
     service_propose_group,
     service_propose_workflow,
     service_query,
+    service_resolve_entity_proposal,
     service_resolve_group,
     service_run,
     service_sample,
@@ -659,6 +665,58 @@ def handle_feedback(
         corrections=corrections,
         group_override=group_override,
     )
+
+
+def _handle_feedback_batch_local(
+    instance_id: str,
+    items: list[contracts.FeedbackBatchItemInput],
+    *,
+    source: contracts.FeedbackSource,
+) -> contracts.FeedbackBatchResult:
+    """Record batch edge feedback tied to prior receipts."""
+    check_permission("cruxible_feedback_batch", instance_id=instance_id)
+    instance = _manager.get(instance_id)
+    result = service_feedback_batch(
+        instance,
+        [
+            FeedbackBatchItem(
+                receipt_id=item.receipt_id,
+                action=item.action,
+                target=EdgeTarget(
+                    from_type=item.target.from_type,
+                    from_id=item.target.from_id,
+                    relationship=item.target.relationship,
+                    to_type=item.target.to_type,
+                    to_id=item.target.to_id,
+                    edge_key=item.target.edge_key,
+                ),
+                reason=item.reason,
+                corrections=item.corrections or {},
+                group_override=item.group_override,
+            )
+            for item in items
+        ],
+        source=source,
+    )
+    return contracts.FeedbackBatchResult(
+        feedback_ids=result.feedback_ids,
+        applied_count=result.applied_count,
+        total=result.total,
+        receipt_id=result.receipt_id,
+    )
+
+
+def handle_feedback_batch(
+    instance_id: str,
+    items: list[contracts.FeedbackBatchItemInput],
+    *,
+    source: contracts.FeedbackSource,
+) -> contracts.FeedbackBatchResult:
+    """Record batch edge feedback tied to prior receipts."""
+    client = _get_client()
+    if client is not None:
+        return client.feedback_batch(instance_id, items=items, source=source)
+    return _handle_feedback_batch_local(instance_id, items, source=source)
 
 
 def _handle_outcome_local(
@@ -1484,3 +1542,202 @@ def handle_list_resolutions(
             limit=limit,
         )
     return _handle_list_resolutions_local(instance_id, relationship_type, action, limit)
+
+
+def _handle_propose_entity_changes_local(
+    instance_id: str,
+    members: list[contracts.EntityChangeInput],
+    *,
+    thesis_text: str = "",
+    thesis_facts: dict[str, Any] | None = None,
+    analysis_state: dict[str, Any] | None = None,
+    proposed_by: contracts.GroupProposedBy = "ai_review",
+    suggested_priority: str | None = None,
+    source_workflow_name: str | None = None,
+    source_workflow_receipt_id: str | None = None,
+    source_trace_ids: list[str] | None = None,
+    source_step_ids: list[str] | None = None,
+) -> contracts.ProposeEntityChangesToolResult:
+    """Propose a governed batch of entity creates or patches."""
+    check_permission("cruxible_propose_entity_changes", instance_id=instance_id)
+    instance = _manager.get(instance_id)
+    result = service_propose_entity_changes(
+        instance,
+        [
+            EntityChangeMember(
+                entity_type=member.entity_type,
+                entity_id=member.entity_id,
+                operation=member.operation,
+                properties=member.properties,
+            )
+            for member in members
+        ],
+        thesis_text=thesis_text,
+        thesis_facts=thesis_facts,
+        analysis_state=analysis_state,
+        proposed_by=proposed_by,
+        suggested_priority=suggested_priority,
+        source_workflow_name=source_workflow_name,
+        source_workflow_receipt_id=source_workflow_receipt_id,
+        source_trace_ids=source_trace_ids,
+        source_step_ids=source_step_ids,
+    )
+    return contracts.ProposeEntityChangesToolResult(
+        proposal_id=result.proposal_id,
+        status=result.status,
+        member_count=result.member_count,
+    )
+
+
+def handle_propose_entity_changes(
+    instance_id: str,
+    members: list[contracts.EntityChangeInput],
+    *,
+    thesis_text: str = "",
+    thesis_facts: dict[str, Any] | None = None,
+    analysis_state: dict[str, Any] | None = None,
+    proposed_by: contracts.GroupProposedBy = "ai_review",
+    suggested_priority: str | None = None,
+    source_workflow_name: str | None = None,
+    source_workflow_receipt_id: str | None = None,
+    source_trace_ids: list[str] | None = None,
+    source_step_ids: list[str] | None = None,
+) -> contracts.ProposeEntityChangesToolResult:
+    """Propose a governed batch of entity creates or patches."""
+    client = _get_client()
+    if client is not None:
+        return client.propose_entity_changes(
+            instance_id,
+            members=members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+            source_workflow_name=source_workflow_name,
+            source_workflow_receipt_id=source_workflow_receipt_id,
+            source_trace_ids=source_trace_ids,
+            source_step_ids=source_step_ids,
+        )
+    return _handle_propose_entity_changes_local(
+        instance_id,
+        members,
+        thesis_text=thesis_text,
+        thesis_facts=thesis_facts,
+        analysis_state=analysis_state,
+        proposed_by=proposed_by,
+        suggested_priority=suggested_priority,
+        source_workflow_name=source_workflow_name,
+        source_workflow_receipt_id=source_workflow_receipt_id,
+        source_trace_ids=source_trace_ids,
+        source_step_ids=source_step_ids,
+    )
+
+
+def _handle_get_entity_proposal_local(
+    instance_id: str,
+    proposal_id: str,
+) -> contracts.GetEntityProposalToolResult:
+    """Get an entity proposal with its members."""
+    check_permission("cruxible_get_entity_proposal")
+    instance = _manager.get(instance_id)
+    result = service_get_entity_proposal(instance, proposal_id)
+    return contracts.GetEntityProposalToolResult(
+        proposal=result.proposal.model_dump(mode="json"),
+        members=[member.model_dump(mode="json") for member in result.members],
+    )
+
+
+def handle_get_entity_proposal(
+    instance_id: str,
+    proposal_id: str,
+) -> contracts.GetEntityProposalToolResult:
+    """Get an entity proposal with its members."""
+    client = _get_client()
+    if client is not None:
+        return client.get_entity_proposal(instance_id, proposal_id)
+    return _handle_get_entity_proposal_local(instance_id, proposal_id)
+
+
+def _handle_list_entity_proposals_local(
+    instance_id: str,
+    *,
+    status: contracts.EntityProposalStatus | None = None,
+    limit: int = 50,
+) -> contracts.ListEntityProposalsToolResult:
+    """List entity proposals with optional status filter."""
+    check_permission("cruxible_list_entity_proposals")
+    instance = _manager.get(instance_id)
+    result = service_list_entity_proposals(instance, status=status, limit=limit)
+    return contracts.ListEntityProposalsToolResult(
+        proposals=[proposal.model_dump(mode="json") for proposal in result.proposals],
+        total=result.total,
+    )
+
+
+def handle_list_entity_proposals(
+    instance_id: str,
+    *,
+    status: contracts.EntityProposalStatus | None = None,
+    limit: int = 50,
+) -> contracts.ListEntityProposalsToolResult:
+    """List entity proposals with optional status filter."""
+    client = _get_client()
+    if client is not None:
+        return client.list_entity_proposals(instance_id, status=status, limit=limit)
+    return _handle_list_entity_proposals_local(instance_id, status=status, limit=limit)
+
+
+def _handle_resolve_entity_proposal_local(
+    instance_id: str,
+    proposal_id: str,
+    action: contracts.EntityProposalAction,
+    *,
+    rationale: str = "",
+    resolved_by: contracts.EntityProposalResolvedBy = "human",
+) -> contracts.ResolveEntityProposalToolResult:
+    """Resolve an entity proposal."""
+    check_permission("cruxible_resolve_entity_proposal", instance_id=instance_id)
+    instance = _manager.get(instance_id)
+    result = service_resolve_entity_proposal(
+        instance,
+        proposal_id,
+        action,
+        rationale=rationale,
+        resolved_by=resolved_by,
+    )
+    return contracts.ResolveEntityProposalToolResult(
+        proposal_id=result.proposal_id,
+        action=result.action,
+        entities_created=result.entities_created,
+        entities_patched=result.entities_patched,
+        resolution_id=result.resolution_id,
+        receipt_id=result.receipt_id,
+    )
+
+
+def handle_resolve_entity_proposal(
+    instance_id: str,
+    proposal_id: str,
+    action: contracts.EntityProposalAction,
+    *,
+    rationale: str = "",
+    resolved_by: contracts.EntityProposalResolvedBy = "human",
+) -> contracts.ResolveEntityProposalToolResult:
+    """Resolve an entity proposal."""
+    client = _get_client()
+    if client is not None:
+        return client.resolve_entity_proposal(
+            instance_id,
+            proposal_id,
+            action=action,
+            rationale=rationale,
+            resolved_by=resolved_by,
+        )
+    return _handle_resolve_entity_proposal_local(
+        instance_id,
+        proposal_id,
+        action,
+        rationale=rationale,
+        resolved_by=resolved_by,
+    )

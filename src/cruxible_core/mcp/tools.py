@@ -233,6 +233,15 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
+    def cruxible_feedback_batch(
+        instance_id: str,
+        items: list[contracts.FeedbackBatchItemInput],
+        source: contracts.FeedbackSource = "human",
+    ) -> contracts.FeedbackBatchResult:
+        """Record batch edge feedback under one top-level mutation receipt."""
+        return handlers.handle_feedback_batch(instance_id, items, source=source)
+
+    @_tool
     def cruxible_outcome(
         instance_id: str,
         receipt_id: str,
@@ -556,6 +565,69 @@ def register_tools(server: FastMCP) -> list[str]:
             relationship_type=relationship_type,
             action=action,
             limit=limit,
+        )
+
+    @_tool
+    def cruxible_propose_entity_changes(
+        instance_id: str,
+        members: list[contracts.EntityChangeInput],
+        thesis_text: str = "",
+        thesis_facts: dict[str, Any] | None = None,
+        analysis_state: dict[str, Any] | None = None,
+        proposed_by: contracts.GroupProposedBy = "ai_review",
+        suggested_priority: str | None = None,
+        source_workflow_name: str | None = None,
+        source_workflow_receipt_id: str | None = None,
+        source_trace_ids: list[str] | None = None,
+        source_step_ids: list[str] | None = None,
+    ) -> contracts.ProposeEntityChangesToolResult:
+        """Propose a governed batch of entity creates or property patches."""
+        return handlers.handle_propose_entity_changes(
+            instance_id,
+            members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+            source_workflow_name=source_workflow_name,
+            source_workflow_receipt_id=source_workflow_receipt_id,
+            source_trace_ids=source_trace_ids,
+            source_step_ids=source_step_ids,
+        )
+
+    @_tool
+    def cruxible_get_entity_proposal(
+        instance_id: str,
+        proposal_id: str,
+    ) -> contracts.GetEntityProposalToolResult:
+        """Fetch one governed entity proposal with its members."""
+        return handlers.handle_get_entity_proposal(instance_id, proposal_id)
+
+    @_tool
+    def cruxible_list_entity_proposals(
+        instance_id: str,
+        status: contracts.EntityProposalStatus | None = None,
+        limit: int = 50,
+    ) -> contracts.ListEntityProposalsToolResult:
+        """List governed entity proposals."""
+        return handlers.handle_list_entity_proposals(instance_id, status=status, limit=limit)
+
+    @_tool
+    def cruxible_resolve_entity_proposal(
+        instance_id: str,
+        proposal_id: str,
+        action: contracts.GroupAction,
+        rationale: str = "",
+        resolved_by: contracts.GroupResolvedBy = "human",
+    ) -> contracts.ResolveEntityProposalToolResult:
+        """Resolve an entity proposal. Approve applies graph changes."""
+        return handlers.handle_resolve_entity_proposal(
+            instance_id,
+            proposal_id,
+            action,
+            rationale=rationale,
+            resolved_by=resolved_by,
         )
 
     @_tool
