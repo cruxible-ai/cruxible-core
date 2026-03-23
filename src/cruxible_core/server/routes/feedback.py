@@ -5,8 +5,16 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_core.mcp import contracts
-from cruxible_core.mcp.handlers import _handle_feedback_local, _handle_outcome_local
-from cruxible_core.server.request_models import FeedbackRequest, OutcomeRequest
+from cruxible_core.mcp.handlers import (
+    _handle_feedback_batch_local,
+    _handle_feedback_local,
+    _handle_outcome_local,
+)
+from cruxible_core.server.request_models import (
+    FeedbackBatchRequest,
+    FeedbackRequest,
+    OutcomeRequest,
+)
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["feedback"])
@@ -29,6 +37,19 @@ async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.Feedback
         reason=req.reason,
         corrections=req.corrections,
         group_override=req.group_override,
+    )
+
+
+@router.post("/{instance_id}/feedback/batch", response_model=contracts.FeedbackBatchResult)
+async def feedback_batch(
+    instance_id: str,
+    req: FeedbackBatchRequest,
+) -> contracts.FeedbackBatchResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return _handle_feedback_batch_local(
+        instance_id=resolved_instance_id,
+        items=req.items,
+        source=req.source,
     )
 
 

@@ -5,7 +5,7 @@ Manages the local instance directory structure:
         instance.json   - metadata (config path, data dir, version)
         graph.json      - networkx node_link_data JSON
         receipts.db     - SQLite for receipts
-        feedback.db     - SQLite for feedback + outcomes
+        feedback.db     - SQLite for feedback, outcomes, and proposal stores
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from typing import Any
 from cruxible_core import __version__
 from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.config.schema import CoreConfig
+from cruxible_core.entity_proposal.store import EntityProposalStore
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -303,3 +304,7 @@ class CruxibleInstance:
     def get_group_store(self) -> GroupStore:
         """Get or create the group SQLite store (shares feedback.db)."""
         return GroupStore(self.instance_dir / "feedback.db")
+
+    def get_entity_proposal_store(self) -> EntityProposalStore:
+        """Get or create the entity proposal SQLite store (shares feedback.db)."""
+        return EntityProposalStore(self.instance_dir / "feedback.db")

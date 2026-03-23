@@ -69,9 +69,11 @@ from cruxible_core.cli.commands import (  # noqa: E402
     add_constraint_cmd,
     add_entity_cmd,
     add_relationship_cmd,
+    entity_proposal_group,
     evaluate,
     explain,
     export_group,
+    feedback_batch_cmd,
     feedback_cmd,
     find_candidates_cmd,
     fork_cmd,
@@ -107,6 +109,7 @@ cli.add_command(ingest)  # type: ignore[has-type]
 cli.add_command(query)  # type: ignore[has-type]
 cli.add_command(explain)  # type: ignore[has-type]
 cli.add_command(feedback_cmd, "feedback")  # type: ignore[has-type]
+cli.add_command(feedback_batch_cmd, "feedback-batch")  # type: ignore[has-type]
 cli.add_command(outcome_cmd, "outcome")  # type: ignore[has-type]
 cli.add_command(list_group, "list")  # type: ignore[has-type]
 cli.add_command(find_candidates_cmd, "find-candidates")  # type: ignore[has-type]
@@ -119,4 +122,5 @@ cli.add_command(add_entity_cmd, "add-entity")  # type: ignore[has-type]
 cli.add_command(add_relationship_cmd, "add-relationship")  # type: ignore[has-type]
 cli.add_command(add_constraint_cmd, "add-constraint")  # type: ignore[has-type]
 cli.add_command(export_group, "export")  # type: ignore[has-type]
+cli.add_command(entity_proposal_group, "entity-proposal")  # type: ignore[has-type]
 cli.add_command(group_group, "group")  # type: ignore[has-type]

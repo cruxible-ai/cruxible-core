@@ -318,6 +318,187 @@ def test_add_relationship_stamps_http_api_provenance(
     assert props["_provenance"]["source_ref"] == "cruxible_add_relationship"
 
 
+def test_feedback_batch_route(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    for entity in [
+        {
+            "entity_type": "Part",
+            "entity_id": "BP-1",
+            "properties": {
+                "part_number": "BP-1",
+                "name": "Pads",
+                "category": "brakes",
+                "price": 49.99,
+            },
+        },
+        {
+            "entity_type": "Part",
+            "entity_id": "BP-2",
+            "properties": {
+                "part_number": "BP-2",
+                "name": "Rotor",
+                "category": "brakes",
+                "price": 19.99,
+            },
+        },
+        {
+            "entity_type": "Vehicle",
+            "entity_id": "V-1",
+            "properties": {
+                "vehicle_id": "V-1",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Civic",
+            },
+        },
+    ]:
+        response = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": [entity]})
+        assert response.status_code == 200
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/relationships",
+        json={
+            "relationships": [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1",
+                    "relationship": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-1",
+                    "properties": {"verified": True},
+                },
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-2",
+                    "relationship": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-1",
+                    "properties": {"verified": True},
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    query = app_client.post(
+        f"/api/v1/{instance_id}/query",
+        json={"query_name": "parts_for_vehicle", "params": {"vehicle_id": "V-1"}},
+    )
+    assert query.status_code == 200
+    receipt_id = query.json()["receipt_id"]
+
+    batch = app_client.post(
+        f"/api/v1/{instance_id}/feedback/batch",
+        json={
+            "source": "human",
+            "items": [
+                {
+                    "receipt_id": receipt_id,
+                    "action": "approve",
+                    "target": {
+                        "from_type": "Part",
+                        "from_id": "BP-1",
+                        "relationship": "fits",
+                        "to_type": "Vehicle",
+                        "to_id": "V-1",
+                    },
+                },
+                {
+                    "receipt_id": receipt_id,
+                    "action": "reject",
+                    "target": {
+                        "from_type": "Part",
+                        "from_id": "BP-2",
+                        "relationship": "fits",
+                        "to_type": "Vehicle",
+                        "to_id": "V-1",
+                    },
+                },
+            ],
+        },
+    )
+    assert batch.status_code == 200
+    payload = batch.json()
+    assert payload["total"] == 2
+    assert payload["applied_count"] == 2
+    assert payload["receipt_id"]
+
+
+def test_entity_proposal_routes(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    add = app_client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "Part",
+                    "entity_id": "BP-1",
+                    "properties": {
+                        "part_number": "BP-1",
+                        "name": "Pads",
+                        "category": "brakes",
+                        "price": 49.99,
+                    },
+                }
+            ]
+        },
+    )
+    assert add.status_code == 200
+
+    propose = app_client.post(
+        f"/api/v1/{instance_id}/entity-proposals",
+        json={
+            "members": [
+                {
+                    "entity_type": "Vehicle",
+                    "entity_id": "V-2",
+                    "operation": "create",
+                    "properties": {
+                        "vehicle_id": "V-2",
+                        "year": 2025,
+                        "make": "Honda",
+                        "model": "Pilot",
+                    },
+                },
+                {
+                    "entity_type": "Part",
+                    "entity_id": "BP-1",
+                    "operation": "patch",
+                    "properties": {"price": 59.99},
+                },
+            ],
+            "thesis_text": "Curated entity updates",
+        },
+    )
+    assert propose.status_code == 200
+    proposal_id = propose.json()["proposal_id"]
+
+    fetched = app_client.get(f"/api/v1/{instance_id}/entity-proposals/{proposal_id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["proposal"]["proposal_id"] == proposal_id
+
+    listed = app_client.get(
+        f"/api/v1/{instance_id}/entity-proposals",
+        params={"status": "pending_review", "limit": 10},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["total"] >= 1
+
+    resolved = app_client.post(
+        f"/api/v1/{instance_id}/entity-proposals/{proposal_id}/resolve",
+        json={"action": "approve"},
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["entities_created"] == 1
+    assert resolved.json()["entities_patched"] == 1
+
+
 def test_workflow_propose_snapshot_and_fork_round_trip(
     app_client: TestClient,
     workflow_server_project: Path,

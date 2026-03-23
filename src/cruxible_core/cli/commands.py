@@ -30,8 +30,14 @@ from cruxible_core.client import CruxibleClient
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import ConstraintSchema, CoreConfig
 from cruxible_core.config.validator import validate_config
+from cruxible_core.entity_proposal.types import EntityChangeMember, EntityChangeProposal
 from cruxible_core.errors import ConfigError
-from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.feedback.types import (
+    EdgeTarget,
+    FeedbackBatchItem,
+    FeedbackRecord,
+    OutcomeRecord,
+)
 from cruxible_core.graph.types import REJECTED_STATUSES, EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.mcp import contracts
@@ -46,24 +52,29 @@ from cruxible_core.service import (
     service_create_snapshot,
     service_evaluate,
     service_feedback,
+    service_feedback_batch,
     service_find_candidates,
     service_fork_snapshot,
     service_get_entity,
+    service_get_entity_proposal,
     service_get_group,
     service_get_receipt,
     service_get_relationship,
     service_ingest,
     service_init,
     service_list,
+    service_list_entity_proposals,
     service_list_groups,
     service_list_resolutions,
     service_list_snapshots,
     service_lock,
     service_outcome,
     service_plan,
+    service_propose_entity_changes,
     service_propose_group,
     service_propose_workflow,
     service_query,
+    service_resolve_entity_proposal,
     service_resolve_group,
     service_run,
     service_sample,
@@ -164,6 +175,14 @@ def _groups_from_payload(items: list[dict[str, Any]]) -> list[CandidateGroup]:
 
 def _members_from_payload(items: list[dict[str, Any]]) -> list[CandidateMember]:
     return [CandidateMember.model_validate(item) for item in items]
+
+
+def _entity_change_members_from_payload(items: list[dict[str, Any]]) -> list[EntityChangeMember]:
+    return [EntityChangeMember.model_validate(item) for item in items]
+
+
+def _entity_proposals_from_payload(items: list[dict[str, Any]]) -> list[EntityChangeProposal]:
+    return [EntityChangeProposal.model_validate(item) for item in items]
 
 
 # ---------------------------------------------------------------------------
@@ -635,6 +654,93 @@ def feedback_cmd(
         click.echo(f"Feedback {result.feedback_id} applied to graph.")
     else:
         click.echo(f"Feedback {result.feedback_id} saved (edge not found in graph).")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
+
+
+@click.command("feedback-batch")
+@click.option(
+    "--items-file",
+    type=click.Path(exists=True),
+    default=None,
+    help="JSON or YAML file with batch feedback items.",
+)
+@click.option("--items", "items_json", default=None, help="Inline JSON array of feedback items.")
+@click.option(
+    "--source",
+    type=click.Choice(["human", "ai_review", "system"]),
+    default="human",
+    help="Who produced this feedback batch (default: human).",
+)
+@handle_errors
+def feedback_batch_cmd(
+    items_file: str | None,
+    items_json: str | None,
+    source: str,
+) -> None:
+    """Submit a batch of edge feedback with one top-level receipt."""
+    if items_file and items_json:
+        raise click.BadParameter("Provide --items-file or --items, not both.")
+    if not items_file and not items_json:
+        raise click.BadParameter("Provide --items-file or --items.")
+
+    try:
+        if items_file:
+            raw_items = yaml.safe_load(Path(items_file).read_text())
+        else:
+            raw_items = json.loads(items_json)  # type: ignore[arg-type]
+    except (json.JSONDecodeError, yaml.YAMLError) as exc:
+        raise click.BadParameter(f"Items must be valid JSON or YAML: {exc}") from exc
+
+    if not isinstance(raw_items, list):
+        raise click.BadParameter("Items must be a top-level array.")
+
+    batch_items = [
+        contracts.FeedbackBatchItemInput(
+            receipt_id=item["receipt_id"],
+            action=item["action"],
+            target=contracts.EdgeTargetInput.model_validate(item["target"]),
+            reason=item.get("reason", ""),
+            corrections=item.get("corrections"),
+            group_override=item.get("group_override", False),
+        )
+        for item in raw_items
+    ]
+
+    client = _get_client()
+    if client is not None:
+        result = client.feedback_batch(
+            _require_instance_id(),
+            items=batch_items,
+            source=cast(contracts.FeedbackSource, source),
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_feedback_batch(
+            instance,
+            [
+                FeedbackBatchItem(
+                    receipt_id=item.receipt_id,
+                    action=item.action,
+                    target=EdgeTarget(
+                        from_type=item.target.from_type,
+                        from_id=item.target.from_id,
+                        relationship=item.target.relationship,
+                        to_type=item.target.to_type,
+                        to_id=item.target.to_id,
+                        edge_key=item.target.edge_key,
+                    ),
+                    reason=item.reason,
+                    corrections=item.corrections or {},
+                    group_override=item.group_override,
+                )
+                for item in batch_items
+            ],
+            source=cast(contracts.FeedbackSource, source),
+        )
+
+    click.echo(f"Batch feedback recorded for {result.applied_count}/{result.total} item(s).")
+    click.echo(f"  Feedback IDs: {', '.join(result.feedback_ids)}")
     if result.receipt_id:
         click.echo(f"  Receipt: {result.receipt_id}")
 
@@ -1337,6 +1443,260 @@ def export_edges(output: str, relationship: str | None, exclude_rejected: bool) 
         raise ConfigError(f"Failed to write {path}: {exc}") from exc
 
     click.echo(f"Exported {count} edge(s) to {path}")
+
+
+# ---------------------------------------------------------------------------
+# entity-proposal (subgroup)
+# ---------------------------------------------------------------------------
+
+
+@click.group("entity-proposal")
+def entity_proposal_group() -> None:
+    """Manage governed entity create and patch proposals."""
+
+
+@entity_proposal_group.command("propose")
+@click.option(
+    "--members-file",
+    type=click.Path(exists=True),
+    default=None,
+    help="JSON or YAML file with proposal members.",
+)
+@click.option("--members", "members_json", default=None, help="Inline JSON array of members.")
+@click.option("--thesis", default="", help="Human-readable thesis text.")
+@click.option("--thesis-facts", default=None, help="JSON object of structured thesis facts.")
+@click.option("--analysis-state", default=None, help="JSON object of opaque analysis state.")
+@click.option(
+    "--source",
+    "proposed_by",
+    type=click.Choice(["human", "ai_review"]),
+    default="ai_review",
+    help="Who proposed the entity changes (default: ai_review).",
+)
+@click.option("--suggested-priority", default=None, help="Optional suggested priority.")
+@click.option("--source-workflow", default=None, help="Optional source workflow name.")
+@click.option(
+    "--source-workflow-receipt",
+    default=None,
+    help="Optional source workflow receipt ID.",
+)
+@click.option(
+    "--source-trace-id",
+    "source_trace_ids",
+    multiple=True,
+    help="Optional source execution trace ID (repeatable).",
+)
+@click.option(
+    "--source-step-id",
+    "source_step_ids",
+    multiple=True,
+    help="Optional source workflow step ID (repeatable).",
+)
+@handle_errors
+def entity_proposal_propose(
+    members_file: str | None,
+    members_json: str | None,
+    thesis: str,
+    thesis_facts: str | None,
+    analysis_state: str | None,
+    proposed_by: str,
+    suggested_priority: str | None,
+    source_workflow: str | None,
+    source_workflow_receipt: str | None,
+    source_trace_ids: tuple[str, ...],
+    source_step_ids: tuple[str, ...],
+) -> None:
+    """Propose a governed batch of entity creates or patches."""
+    if members_file and members_json:
+        raise click.BadParameter("Provide --members-file or --members, not both.")
+    if not members_file and not members_json:
+        raise click.BadParameter("Provide --members-file or --members.")
+
+    try:
+        if members_file:
+            raw_members = yaml.safe_load(Path(members_file).read_text())
+        else:
+            raw_members = json.loads(members_json)  # type: ignore[arg-type]
+    except (json.JSONDecodeError, yaml.YAMLError) as exc:
+        raise click.BadParameter(f"Members must be valid JSON or YAML: {exc}") from exc
+    if not isinstance(raw_members, list):
+        raise click.BadParameter("Members must be a top-level array.")
+
+    try:
+        facts = json.loads(thesis_facts) if thesis_facts else None
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--thesis-facts must be valid JSON") from exc
+    try:
+        state = json.loads(analysis_state) if analysis_state else None
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--analysis-state must be valid JSON") from exc
+
+    members = [
+        contracts.EntityChangeInput(
+            entity_type=item["entity_type"],
+            entity_id=item["entity_id"],
+            operation=item["operation"],
+            properties=item.get("properties", {}),
+        )
+        for item in raw_members
+    ]
+
+    client = _get_client()
+    if client is not None:
+        result = client.propose_entity_changes(
+            _require_instance_id(),
+            members=members,
+            thesis_text=thesis,
+            thesis_facts=facts,
+            analysis_state=state,
+            proposed_by=cast(contracts.GroupProposedBy, proposed_by),
+            suggested_priority=suggested_priority,
+            source_workflow_name=source_workflow,
+            source_workflow_receipt_id=source_workflow_receipt,
+            source_trace_ids=list(source_trace_ids) or None,
+            source_step_ids=list(source_step_ids) or None,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_propose_entity_changes(
+            instance,
+            [
+                EntityChangeMember(
+                    entity_type=member.entity_type,
+                    entity_id=member.entity_id,
+                    operation=member.operation,
+                    properties=member.properties,
+                )
+                for member in members
+            ],
+            thesis_text=thesis,
+            thesis_facts=facts,
+            analysis_state=state,
+            proposed_by=cast(contracts.GroupProposedBy, proposed_by),
+            suggested_priority=suggested_priority,
+            source_workflow_name=source_workflow,
+            source_workflow_receipt_id=source_workflow_receipt,
+            source_trace_ids=list(source_trace_ids),
+            source_step_ids=list(source_step_ids),
+        )
+
+    click.echo(f"Entity proposal {result.proposal_id} created.")
+    click.echo(f"  Status: {result.status}")
+    click.echo(f"  Members: {result.member_count}")
+
+
+@entity_proposal_group.command("get")
+@click.option("--proposal", "proposal_id", required=True, help="Entity proposal ID.")
+@handle_errors
+def entity_proposal_get(proposal_id: str) -> None:
+    """Get details of a governed entity proposal."""
+    client = _get_client()
+    if client is not None:
+        result = client.get_entity_proposal(_require_instance_id(), proposal_id)
+        proposal = EntityChangeProposal.model_validate(result.proposal)
+        members = _entity_change_members_from_payload(result.members)
+    else:
+        instance = CruxibleInstance.load()
+        loaded = service_get_entity_proposal(instance, proposal_id)
+        proposal = loaded.proposal
+        members = loaded.members
+
+    click.echo(f"Entity proposal {proposal.proposal_id}")
+    click.echo(f"  Status: {proposal.status}")
+    click.echo(f"  Proposed by: {proposal.proposed_by}")
+    click.echo(f"  Members: {proposal.member_count}")
+    for member in members:
+        click.echo(
+            f"  - {member.operation}: {member.entity_type}:{member.entity_id} "
+            f"({len(member.properties)} property updates)"
+        )
+
+
+@entity_proposal_group.command("list")
+@click.option(
+    "--status",
+    default=None,
+    type=click.Choice(["pending_review", "applying", "resolved"]),
+    help="Filter by status.",
+)
+@click.option("--limit", default=50, help="Max proposals to show.")
+@handle_errors
+def entity_proposal_list(status: str | None, limit: int) -> None:
+    """List governed entity proposals."""
+    client = _get_client()
+    if client is not None:
+        result = client.list_entity_proposals(
+            _require_instance_id(),
+            status=cast(contracts.EntityProposalStatus | None, status),
+            limit=limit,
+        )
+        proposals = _entity_proposals_from_payload(result.proposals)
+        total = result.total
+    else:
+        instance = CruxibleInstance.load()
+        loaded = service_list_entity_proposals(instance, status=status, limit=limit)
+        proposals = loaded.proposals
+        total = loaded.total
+
+    for proposal in proposals:
+        click.echo(
+            f"{proposal.proposal_id}  {proposal.status}  "
+            f"{proposal.member_count} member(s)  proposed_by={proposal.proposed_by}"
+        )
+    click.echo(f"{len(proposals)} of {total} proposal(s) shown.")
+
+
+@entity_proposal_group.command("resolve")
+@click.option("--proposal", "proposal_id", required=True, help="Entity proposal ID.")
+@click.option(
+    "--action",
+    required=True,
+    type=click.Choice(["approve", "reject"]),
+    help="Resolution action.",
+)
+@click.option("--rationale", default="", help="Rationale for this resolution.")
+@click.option(
+    "--source",
+    "resolved_by",
+    type=click.Choice(["human", "ai_review"]),
+    default="human",
+    help="Who resolved the proposal (default: human).",
+)
+@handle_errors
+def entity_proposal_resolve(
+    proposal_id: str,
+    action: str,
+    rationale: str,
+    resolved_by: str,
+) -> None:
+    """Resolve a governed entity proposal."""
+    client = _get_client()
+    if client is not None:
+        result = client.resolve_entity_proposal(
+            _require_instance_id(),
+            proposal_id,
+            action=cast(contracts.GroupAction, action),
+            rationale=rationale,
+            resolved_by=cast(contracts.GroupResolvedBy, resolved_by),
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_resolve_entity_proposal(
+            instance,
+            proposal_id,
+            cast(contracts.GroupAction, action),
+            rationale=rationale,
+            resolved_by=cast(contracts.GroupResolvedBy, resolved_by),
+        )
+
+    click.echo(f"Entity proposal {result.proposal_id} {result.action}d.")
+    if result.action == "approve":
+        click.echo(f"  Entities created: {result.entities_created}")
+        click.echo(f"  Entities patched: {result.entities_patched}")
+    if result.resolution_id:
+        click.echo(f"  Resolution: {result.resolution_id}")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 # ---------------------------------------------------------------------------

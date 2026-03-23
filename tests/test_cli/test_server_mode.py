@@ -326,3 +326,227 @@ def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
     )
     assert fork.exit_code == 0
     assert "instance inst_fork" in fork.output
+
+
+def test_governed_write_commands_delegate_to_client_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    feedback_items = tmp_path / "feedback.json"
+    feedback_items.write_text(
+        """[
+  {
+    "receipt_id": "RCP-1",
+    "action": "approve",
+    "target": {
+      "from_type": "Part",
+      "from_id": "BP-1",
+      "relationship": "fits",
+      "to_type": "Vehicle",
+      "to_id": "V-1"
+    }
+  }
+]"""
+    )
+    entity_members = tmp_path / "entity_members.json"
+    entity_members.write_text(
+        """[
+  {
+    "entity_type": "Vehicle",
+    "entity_id": "V-2",
+    "operation": "create",
+    "properties": {
+      "vehicle_id": "V-2",
+      "year": 2025,
+      "make": "Honda",
+      "model": "Pilot"
+    }
+  }
+]"""
+    )
+
+    class StubClient:
+        def feedback_batch(self, instance_id, *, items, source):
+            assert instance_id == "inst_123"
+            assert source == "human"
+            assert len(items) == 1
+            return contracts.FeedbackBatchResult(
+                feedback_ids=["FB-1"],
+                applied_count=1,
+                total=1,
+                receipt_id="RCP-BATCH-1",
+            )
+
+        def propose_entity_changes(self, instance_id, **kwargs):
+            assert instance_id == "inst_123"
+            assert len(kwargs["members"]) == 1
+            return contracts.ProposeEntityChangesToolResult(
+                proposal_id="EPR-1",
+                status="pending_review",
+                member_count=1,
+            )
+
+        def get_entity_proposal(self, instance_id, proposal_id):
+            assert instance_id == "inst_123"
+            assert proposal_id == "EPR-1"
+            return contracts.GetEntityProposalToolResult(
+                proposal={
+                    "proposal_id": "EPR-1",
+                    "status": "pending_review",
+                    "thesis_text": "",
+                    "thesis_facts": {},
+                    "analysis_state": {},
+                    "proposed_by": "ai_review",
+                    "suggested_priority": None,
+                    "source_workflow_name": None,
+                    "source_workflow_receipt_id": None,
+                    "source_trace_ids": [],
+                    "source_step_ids": [],
+                    "member_count": 1,
+                    "resolution_id": None,
+                    "resolution": None,
+                    "created_at": "2026-03-22T00:00:00Z",
+                },
+                members=[
+                    {
+                        "entity_type": "Vehicle",
+                        "entity_id": "V-2",
+                        "operation": "create",
+                        "properties": {"vehicle_id": "V-2"},
+                    }
+                ],
+            )
+
+        def list_entity_proposals(self, instance_id, *, status=None, limit=50):
+            assert instance_id == "inst_123"
+            assert status == "pending_review"
+            assert limit == 10
+            return contracts.ListEntityProposalsToolResult(
+                proposals=[
+                    {
+                        "proposal_id": "EPR-1",
+                        "status": "pending_review",
+                        "thesis_text": "",
+                        "thesis_facts": {},
+                        "analysis_state": {},
+                        "proposed_by": "ai_review",
+                        "suggested_priority": None,
+                        "source_workflow_name": None,
+                        "source_workflow_receipt_id": None,
+                        "source_trace_ids": [],
+                        "source_step_ids": [],
+                        "member_count": 1,
+                        "resolution_id": None,
+                        "resolution": None,
+                        "created_at": "2026-03-22T00:00:00Z",
+                    }
+                ],
+                total=1,
+            )
+
+        def resolve_entity_proposal(
+            self,
+            instance_id,
+            proposal_id,
+            *,
+            action,
+            rationale="",
+            resolved_by="human",
+        ):
+            assert instance_id == "inst_123"
+            assert proposal_id == "EPR-1"
+            assert action == "approve"
+            return contracts.ResolveEntityProposalToolResult(
+                proposal_id="EPR-1",
+                action="approve",
+                entities_created=1,
+                entities_patched=0,
+                resolution_id="ERES-1",
+                receipt_id="RCP-2",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: StubClient())
+
+    feedback = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "feedback-batch",
+            "--items-file",
+            str(feedback_items),
+        ],
+    )
+    assert feedback.exit_code == 0
+    assert "Batch feedback recorded for 1/1 item(s)." in feedback.output
+
+    propose = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "entity-proposal",
+            "propose",
+            "--members-file",
+            str(entity_members),
+        ],
+    )
+    assert propose.exit_code == 0
+    assert "Entity proposal EPR-1 created." in propose.output
+
+    get = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "entity-proposal",
+            "get",
+            "--proposal",
+            "EPR-1",
+        ],
+    )
+    assert get.exit_code == 0
+    assert "Entity proposal EPR-1" in get.output
+
+    listed = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "entity-proposal",
+            "list",
+            "--status",
+            "pending_review",
+            "--limit",
+            "10",
+        ],
+    )
+    assert listed.exit_code == 0
+    assert "EPR-1  pending_review" in listed.output
+
+    resolve = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "entity-proposal",
+            "resolve",
+            "--proposal",
+            "EPR-1",
+            "--action",
+            "approve",
+        ],
+    )
+    assert resolve.exit_code == 0
+    assert "Entity proposal EPR-1 approved." in resolve.output
