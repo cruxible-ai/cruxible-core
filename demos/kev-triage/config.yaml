@@ -1,13 +1,15 @@
 version: "1.0"
 name: kev_triage
 kind: world_model
+# extends: cruxible/kev-reference  # future: config composition
 description: >
-  Forkable cyber world model for KEV and vulnerability triage. The published
-  reference layer comes from public vulnerability data such as KEV, NVD, and
-  vendor/product mappings. A private company fork extends that graph with
-  assets, services, controls, findings, exceptions, and accepted exposure
-  judgments. The compounding asset is the company-specific accepted state
-  linking public vulnerabilities to internal operational impact.
+  Fork of the KEV reference world model for internal vulnerability triage.
+  The reference layer (Vendor, Product, Vulnerability) comes from public
+  feeds and is read-only. This fork adds internal assets, services,
+  controls, and the accepted judgment relationships that link public
+  vulnerabilities to internal operational impact.
+
+# ─── Reference layer (from kev-reference.yaml) ───────────────────────
 
 entity_types:
   Vendor:
@@ -36,6 +38,8 @@ entity_types:
       kev_due_date: {type: string, optional: true}
       known_ransomware_use: {type: string, optional: true}
       published_at: {type: string, optional: true}
+
+# ─── Fork: internal entity types ─────────────────────────────────────
 
   Asset:
     description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
@@ -95,6 +99,8 @@ entity_types:
       next_window_at: {type: string, optional: true}
       freeze_status: {type: string, optional: true}
 
+# ─── Reference layer relationships ───────────────────────────────────
+
 relationships:
   - name: product_from_vendor
     description: Deterministic product-to-vendor mapping.
@@ -108,6 +114,8 @@ relationships:
     properties:
       affected_version_range: {type: string, optional: true}
       fixed_version: {type: string, optional: true}
+
+# ─── Fork: deterministic internal mappings ────────────────────────────
 
   - name: asset_runs_product
     description: Deterministic mapping from internal asset inventory to installed products.
@@ -151,6 +159,8 @@ relationships:
     description: Internal patching schedule mapping.
     from: Asset
     to: PatchWindow
+
+# ─── Fork: accepted judgment relationships ────────────────────────────
 
   - name: asset_affected_by_vulnerability
     description: Accepted judgment that an internal asset is actually affected by a vulnerability.
@@ -223,6 +233,8 @@ relationships:
           role: required
           always_review_on_unsure: true
 
+# ─── Named queries (fork-specific, traverse across both layers) ──────
+
 named_queries:
   kev_assets:
     description: >
@@ -285,6 +297,8 @@ named_queries:
       - relationship: asset_has_control
         direction: outgoing
 
+# ─── Reference layer ingestion ────────────────────────────────────────
+
 ingestion:
   vendors:
     description: Vendor reference import built from public product metadata.
@@ -318,6 +332,23 @@ ingestion:
       kev_due_date: kev_due_date
       known_ransomware_use: known_ransomware_use
       published_at: published_at
+
+  product_from_vendor_edges:
+    description: Public vendor/product mapping import.
+    relationship_type: product_from_vendor
+    from_column: product_id
+    to_column: vendor_id
+
+  vulnerability_affects_product_edges:
+    description: Public vulnerability-to-product mapping import.
+    relationship_type: vulnerability_affects_product
+    from_column: cve_id
+    to_column: product_id
+    column_map:
+      affected_version_range: affected_version_range
+      fixed_version: fixed_version
+
+# ─── Fork: internal ingestion mappings ────────────────────────────────
 
   assets:
     description: Internal asset inventory import from CMDB, cloud inventory, or EDR.
@@ -391,21 +422,6 @@ ingestion:
       next_window_at: next_window_at
       freeze_status: freeze_status
 
-  product_from_vendor_edges:
-    description: Public vendor/product mapping import.
-    relationship_type: product_from_vendor
-    from_column: product_id
-    to_column: vendor_id
-
-  vulnerability_affects_product_edges:
-    description: Public vulnerability-to-product mapping import.
-    relationship_type: vulnerability_affects_product
-    from_column: cve_id
-    to_column: product_id
-    column_map:
-      affected_version_range: affected_version_range
-      fixed_version: fixed_version
-
   asset_runs_product_edges:
     description: Internal product install mapping import.
     relationship_type: asset_runs_product
@@ -456,6 +472,8 @@ ingestion:
     relationship_type: asset_patch_window
     from_column: asset_id
     to_column: patch_window_id
+
+# ─── Fork: integrations for judgment relationships ────────────────────
 
 integrations:
   product_version_evidence:

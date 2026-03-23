@@ -1,0 +1,99 @@
+version: "1.0"
+name: kev_reference
+kind: world_model
+description: >
+  Published vulnerability reference graph built from public data: KEV, NVD,
+  CPE, and vendor/product mappings. This config defines the read-only
+  upstream layer. Downstream forks extend it with internal assets, services,
+  and accepted judgment relationships.
+
+entity_types:
+  Vendor:
+    description: Vendor or software publisher.
+    properties:
+      vendor_id: {type: string, primary_key: true}
+      name: {type: string, indexed: true}
+      website: {type: string, optional: true}
+
+  Product:
+    description: Product, package, platform, or service affected by vulnerabilities.
+    properties:
+      product_id: {type: string, primary_key: true}
+      vendor_name: {type: string, optional: true}
+      product_name: {type: string, indexed: true}
+      cpe: {type: string, optional: true}
+      product_family: {type: string, optional: true}
+
+  Vulnerability:
+    description: Public vulnerability record such as a CVE entry.
+    properties:
+      cve_id: {type: string, primary_key: true}
+      description: {type: string, optional: true}
+      cvss_score: {type: number, optional: true}
+      epss_score: {type: number, optional: true}
+      kev_due_date: {type: string, optional: true}
+      known_ransomware_use: {type: string, optional: true}
+      published_at: {type: string, optional: true}
+
+relationships:
+  - name: product_from_vendor
+    description: Deterministic product-to-vendor mapping.
+    from: Product
+    to: Vendor
+
+  - name: vulnerability_affects_product
+    description: Public reference mapping from vulnerability to affected product.
+    from: Vulnerability
+    to: Product
+    properties:
+      affected_version_range: {type: string, optional: true}
+      fixed_version: {type: string, optional: true}
+
+ingestion:
+  vendors:
+    description: Vendor reference import built from public product metadata.
+    entity_type: Vendor
+    id_column: vendor_id
+    column_map:
+      vendor_id: vendor_id
+      name: name
+      website: website
+
+  products:
+    description: Product reference import from public product and CPE mappings.
+    entity_type: Product
+    id_column: product_id
+    column_map:
+      product_id: product_id
+      vendor_name: vendor_name
+      product_name: product_name
+      cpe: cpe
+      product_family: product_family
+
+  vulnerabilities:
+    description: Vulnerability reference import from KEV, NVD, or equivalent feeds.
+    entity_type: Vulnerability
+    id_column: cve_id
+    column_map:
+      cve_id: cve_id
+      description: description
+      cvss_score: cvss_score
+      epss_score: epss_score
+      kev_due_date: kev_due_date
+      known_ransomware_use: known_ransomware_use
+      published_at: published_at
+
+  product_from_vendor_edges:
+    description: Public vendor/product mapping import.
+    relationship_type: product_from_vendor
+    from_column: product_id
+    to_column: vendor_id
+
+  vulnerability_affects_product_edges:
+    description: Public vulnerability-to-product mapping import.
+    relationship_type: vulnerability_affects_product
+    from_column: cve_id
+    to_column: product_id
+    column_map:
+      affected_version_range: affected_version_range
+      fixed_version: fixed_version
