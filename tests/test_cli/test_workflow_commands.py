@@ -87,6 +87,13 @@ def proposal_input_file(proposal_workflow_project: CruxibleInstance) -> Path:
     return path
 
 
+@pytest.fixture
+def canonical_input_file(canonical_workflow_instance: CruxibleInstance) -> Path:
+    path = canonical_workflow_instance.root / "input.yaml"
+    path.write_text("{}\n")
+    return path
+
+
 class TestWorkflowCli:
     def test_lock_writes_lock_file(
         self, runner: CliRunner, workflow_project: CruxibleInstance
@@ -195,3 +202,38 @@ class TestWorkflowCli:
         )
         assert forked.exit_code == 0
         assert str(fork_root) in forked.output
+
+    def test_apply_commits_canonical_workflow(
+        self,
+        runner: CliRunner,
+        canonical_workflow_instance: CruxibleInstance,
+        canonical_input_file: Path,
+    ) -> None:
+        _chdir_run(runner, canonical_workflow_instance.root, ["lock"])
+        preview = _chdir_run(
+            runner,
+            canonical_workflow_instance.root,
+            ["run", "--workflow", "build_reference", "--input-file", str(canonical_input_file)],
+        )
+        assert preview.exit_code == 0
+        digest = next(
+            line.split("Apply digest: ", 1)[1]
+            for line in preview.output.splitlines()
+            if line.startswith("Apply digest: ")
+        )
+
+        applied = _chdir_run(
+            runner,
+            canonical_workflow_instance.root,
+            [
+                "apply",
+                "--workflow",
+                "build_reference",
+                "--input-file",
+                str(canonical_input_file),
+                "--apply-digest",
+                digest,
+            ],
+        )
+        assert applied.exit_code == 0
+        assert "Committed snapshot: snap_" in applied.output

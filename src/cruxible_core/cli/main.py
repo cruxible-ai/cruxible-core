@@ -69,6 +69,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     add_constraint_cmd,
     add_entity_cmd,
     add_relationship_cmd,
+    apply_cmd,
     entity_proposal_group,
     evaluate,
     explain,
@@ -101,6 +102,7 @@ cli.add_command(validate)  # type: ignore[has-type]
 cli.add_command(lock_cmd)  # type: ignore[has-type]
 cli.add_command(plan_cmd)  # type: ignore[has-type]
 cli.add_command(run_cmd)  # type: ignore[has-type]
+cli.add_command(apply_cmd)  # type: ignore[has-type]
 cli.add_command(test_cmd)  # type: ignore[has-type]
 cli.add_command(propose_cmd)  # type: ignore[has-type]
 cli.add_command(snapshot_group, "snapshot")  # type: ignore[has-type]

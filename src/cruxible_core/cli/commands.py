@@ -49,6 +49,7 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_apply_workflow,
     service_create_snapshot,
     service_evaluate,
     service_feedback,
@@ -310,20 +311,77 @@ def plan_cmd(workflow_name: str, input_file: str) -> None:
 @handle_errors
 def run_cmd(workflow_name: str, input_file: str) -> None:
     """Execute a workflow for the current instance."""
+    payload = _read_input_payload(input_file)
     client = _get_client()
     if client is not None:
         result = client.workflow_run(
             _require_instance_id(),
             workflow_name=workflow_name,
-            input_payload=_read_input_payload(input_file),
+            input_payload=payload,
         )
     else:
         instance = CruxibleInstance.load()
-        result = service_run(instance, workflow_name, _read_input_payload(input_file))
+        result = service_run(instance, workflow_name, payload)
     click.echo(f"Workflow {result.workflow} completed.")
+    if result.mode != "run":
+        click.echo(f"Mode: {result.mode}")
+    if result.apply_digest:
+        click.echo(f"Apply digest: {result.apply_digest}")
+    if result.head_snapshot_id:
+        click.echo(f"Head snapshot: {result.head_snapshot_id}")
     click.echo(f"Receipt ID: {result.receipt_id}")
     if result.query_receipt_ids:
         click.echo(f"Query receipt IDs: {', '.join(result.query_receipt_ids)}")
+    if result.trace_ids:
+        click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
+    click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+
+
+@click.command("apply")
+@click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option(
+    "--input-file",
+    required=True,
+    type=click.Path(exists=True),
+    help="JSON or YAML file providing workflow input.",
+)
+@click.option("--apply-digest", required=True, help="Preview apply digest from workflow run.")
+@click.option(
+    "--head-snapshot",
+    default=None,
+    help="Expected head snapshot ID from workflow preview.",
+)
+@handle_errors
+def apply_cmd(
+    workflow_name: str,
+    input_file: str,
+    apply_digest: str,
+    head_snapshot: str | None,
+) -> None:
+    """Apply a canonical workflow after verifying preview identity."""
+    payload = _read_input_payload(input_file)
+    client = _get_client()
+    if client is not None:
+        result = client.workflow_apply(
+            _require_instance_id(),
+            workflow_name=workflow_name,
+            expected_apply_digest=apply_digest,
+            expected_head_snapshot_id=head_snapshot,
+            input_payload=payload,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_apply_workflow(
+            instance,
+            workflow_name,
+            payload,
+            expected_apply_digest=apply_digest,
+            expected_head_snapshot_id=head_snapshot,
+        )
+    click.echo(f"Workflow {result.workflow} applied.")
+    if result.committed_snapshot_id:
+        click.echo(f"Committed snapshot: {result.committed_snapshot_id}")
+    click.echo(f"Receipt ID: {result.receipt_id}")
     if result.trace_ids:
         click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
     click.echo(json.dumps(result.output, indent=2, sort_keys=True))
