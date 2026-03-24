@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import subprocess
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -30,7 +32,28 @@ def resolve_provider(provider_name: str, provider: ProviderSchema) -> ProviderCa
     )
 
 
+def get_provider_entrypoint_path(provider_name: str, provider: ProviderSchema) -> Path | None:
+    """Resolve the provider entrypoint file path when available."""
+    if provider.runtime != "python":
+        return None
+
+    candidate = _resolve_python_candidate(provider_name, provider)
+    source_path = inspect.getsourcefile(candidate) or inspect.getfile(candidate)
+    if source_path is None:
+        raise ConfigError(
+            f"Provider '{provider_name}' ref '{provider.ref}' does not resolve to a source file"
+        )
+    return Path(source_path)
+
+
 def _resolve_python_provider(provider_name: str, provider: ProviderSchema) -> ProviderCallable:
+    candidate = _resolve_python_candidate(provider_name, provider)
+    if not callable(candidate):
+        raise ConfigError(f"Provider '{provider_name}' ref '{provider.ref}' is not callable")
+    return candidate
+
+
+def _resolve_python_candidate(provider_name: str, provider: ProviderSchema) -> object:
     ref = provider.ref
     module_name, sep, attr_name = ref.rpartition(".")
     if not sep:
@@ -51,10 +74,6 @@ def _resolve_python_provider(provider_name: str, provider: ProviderSchema) -> Pr
         raise ConfigError(
             f"Provider '{provider_name}' ref '{ref}' does not resolve to an attribute"
         ) from exc
-
-    if not callable(candidate):
-        raise ConfigError(f"Provider '{provider_name}' ref '{ref}' is not callable")
-
     return candidate
 
 

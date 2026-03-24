@@ -15,6 +15,7 @@ class ResolvedArtifact(BaseModel):
     name: str
     kind: str
     uri: str
+    local_path: str | None = None
     sha256: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -40,6 +41,7 @@ class ExecutionTrace(BaseModel):
     provider_name: str
     provider_version: str
     provider_ref: str
+    provider_entrypoint_sha256: str | None = None
     runtime: str
     deterministic: bool
     side_effects: bool
