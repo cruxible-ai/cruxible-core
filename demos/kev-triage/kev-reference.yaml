@@ -11,29 +11,59 @@ entity_types:
   Vendor:
     description: Vendor or software publisher.
     properties:
-      vendor_id: {type: string, primary_key: true}
-      name: {type: string, indexed: true}
-      website: {type: string, optional: true}
+      vendor_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      website:
+        type: string
+        optional: true
 
   Product:
     description: Product, package, platform, or service affected by vulnerabilities.
     properties:
-      product_id: {type: string, primary_key: true}
-      vendor_name: {type: string, optional: true}
-      product_name: {type: string, indexed: true}
-      cpe: {type: string, optional: true}
-      product_family: {type: string, optional: true}
+      product_id:
+        type: string
+        primary_key: true
+      vendor_name:
+        type: string
+        optional: true
+      product_name:
+        type: string
+        indexed: true
+      cpe:
+        type: string
+        optional: true
+      product_family:
+        type: string
+        optional: true
 
   Vulnerability:
     description: Public vulnerability record such as a CVE entry.
     properties:
-      cve_id: {type: string, primary_key: true}
-      description: {type: string, optional: true}
-      cvss_score: {type: number, optional: true}
-      epss_score: {type: number, optional: true}
-      kev_due_date: {type: string, optional: true}
-      known_ransomware_use: {type: string, optional: true}
-      published_at: {type: string, optional: true}
+      cve_id:
+        type: string
+        primary_key: true
+      description:
+        type: string
+        optional: true
+      cvss_score:
+        type: number
+        optional: true
+      epss_score:
+        type: number
+        optional: true
+      kev_due_date:
+        type: string
+        optional: true
+      known_ransomware_use:
+        type: string
+        optional: true
+      published_at:
+        type: string
+        optional: true
 
 relationships:
   - name: product_from_vendor
@@ -46,8 +76,130 @@ relationships:
     from: Vulnerability
     to: Product
     properties:
-      affected_version_range: {type: string, optional: true}
-      fixed_version: {type: string, optional: true}
+      affected_version_range:
+        type: string
+        optional: true
+      fixed_version:
+        type: string
+        optional: true
+
+contracts:
+  EmptyInput:
+    fields: {}
+  PublicKevRows:
+    fields:
+      items:
+        type: json
+
+artifacts:
+  public_kev_bundle:
+    kind: directory
+    uri: ./data
+    sha256: sha256:cfac7b85c64678583f1fabb4a0683aa01bca91d036b612c6933b4e636af1d4fd
+
+providers:
+  load_public_kev_rows:
+    kind: function
+    description: >
+      Deterministically load and normalize bundled KEV and enriched NVD/EPSS
+      rows into canonical reference records.
+    contract_in: EmptyInput
+    contract_out: PublicKevRows
+    ref: providers.load_public_kev_rows
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: public_kev_bundle
+
+workflows:
+  build_public_kev_reference:
+    canonical: true
+    description: >
+      Build the canonical public KEV reference layer from the bundled hashed
+      public-data artifact.
+    contract_in: EmptyInput
+    steps:
+      - id: rows
+        provider: load_public_kev_rows
+        input: {}
+        as: rows
+      - id: vendors
+        make_entities:
+          entity_type: Vendor
+          items: $steps.rows.items
+          entity_id: $item.vendor_id
+          properties:
+            vendor_id: $item.vendor_id
+            name: $item.vendor_name
+        as: vendors
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: $steps.rows.items
+          entity_id: $item.product_id
+          properties:
+            product_id: $item.product_id
+            vendor_name: $item.vendor_name
+            product_name: $item.product_name
+            cpe: $item.cpe
+            product_family: $item.product_family
+        as: products
+      - id: vulnerabilities
+        make_entities:
+          entity_type: Vulnerability
+          items: $steps.rows.items
+          entity_id: $item.cve_id
+          properties:
+            cve_id: $item.cve_id
+            description: $item.description
+            cvss_score: $item.cvss_score
+            epss_score: $item.epss_score
+            kev_due_date: $item.kev_due_date
+            known_ransomware_use: $item.known_ransomware_use
+            published_at: $item.published_at
+        as: vulnerabilities
+      - id: product_vendor
+        make_relationships:
+          relationship_type: product_from_vendor
+          items: $steps.rows.items
+          from_type: Product
+          from_id: $item.product_id
+          to_type: Vendor
+          to_id: $item.vendor_id
+        as: product_vendor
+      - id: vulnerability_product
+        make_relationships:
+          relationship_type: vulnerability_affects_product
+          items: $steps.rows.items
+          from_type: Vulnerability
+          from_id: $item.cve_id
+          to_type: Product
+          to_id: $item.product_id
+          properties:
+            affected_version_range: $item.affected_version_range
+            fixed_version: $item.fixed_version
+        as: vulnerability_product
+      - id: apply_vendors
+        apply_entities:
+          entities_from: vendors
+        as: apply_vendors
+      - id: apply_products
+        apply_entities:
+          entities_from: products
+        as: apply_products
+      - id: apply_vulnerabilities
+        apply_entities:
+          entities_from: vulnerabilities
+        as: apply_vulnerabilities
+      - id: apply_product_vendor
+        apply_relationships:
+          relationships_from: product_vendor
+        as: apply_product_vendor
+      - id: apply_vulnerability_product
+        apply_relationships:
+          relationships_from: vulnerability_product
+        as: apply_vulnerability_product
+    returns: apply_vulnerability_product
 
 ingestion:
   vendors:

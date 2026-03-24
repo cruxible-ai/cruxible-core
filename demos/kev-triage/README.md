@@ -8,8 +8,9 @@ This demo has two configs that represent the two layers:
 
 - **`kev-reference.yaml`** — the published upstream world model. Contains only
   public entity types (Vendor, Product, Vulnerability), deterministic reference
-  relationships, and public ingestion mappings. This is what Cruxible hosts and
-  keeps updated from KEV, NVD, and CPE feeds. Read-only to forks.
+  relationships, plus a canonical workflow that builds accepted reference state
+  from the bundled hashed KEV/NVD/EPSS artifact. This is what Cruxible hosts
+  and keeps updated from public feeds. Read-only to forks.
 
 - **`config.yaml`** — a customer fork. Contains the full reference layer (merged
   inline for now) plus all internal additions: private entity types, deterministic

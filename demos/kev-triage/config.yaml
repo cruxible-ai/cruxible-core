@@ -15,89 +15,177 @@ entity_types:
   Vendor:
     description: Vendor or software publisher.
     properties:
-      vendor_id: {type: string, primary_key: true}
-      name: {type: string, indexed: true}
-      website: {type: string, optional: true}
+      vendor_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      website:
+        type: string
+        optional: true
 
   Product:
     description: Product, package, platform, or service affected by vulnerabilities.
     properties:
-      product_id: {type: string, primary_key: true}
-      vendor_name: {type: string, optional: true}
-      product_name: {type: string, indexed: true}
-      cpe: {type: string, optional: true}
-      product_family: {type: string, optional: true}
+      product_id:
+        type: string
+        primary_key: true
+      vendor_name:
+        type: string
+        optional: true
+      product_name:
+        type: string
+        indexed: true
+      cpe:
+        type: string
+        optional: true
+      product_family:
+        type: string
+        optional: true
 
   Vulnerability:
     description: Public vulnerability record such as a CVE entry.
     properties:
-      cve_id: {type: string, primary_key: true}
-      description: {type: string, optional: true}
-      cvss_score: {type: number, optional: true}
-      epss_score: {type: number, optional: true}
-      kev_due_date: {type: string, optional: true}
-      known_ransomware_use: {type: string, optional: true}
-      published_at: {type: string, optional: true}
+      cve_id:
+        type: string
+        primary_key: true
+      description:
+        type: string
+        optional: true
+      cvss_score:
+        type: number
+        optional: true
+      epss_score:
+        type: number
+        optional: true
+      kev_due_date:
+        type: string
+        optional: true
+      known_ransomware_use:
+        type: string
+        optional: true
+      published_at:
+        type: string
+        optional: true
 
 # ─── Fork: internal entity types ─────────────────────────────────────
 
   Asset:
     description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
     properties:
-      asset_id: {type: string, primary_key: true}
-      hostname: {type: string, indexed: true}
-      asset_type: {type: string, optional: true}
-      criticality: {type: string, optional: true}
-      environment: {type: string, optional: true}
-      internet_exposed: {type: bool, optional: true}
+      asset_id:
+        type: string
+        primary_key: true
+      hostname:
+        type: string
+        indexed: true
+      asset_type:
+        type: string
+        optional: true
+      criticality:
+        type: string
+        optional: true
+      environment:
+        type: string
+        optional: true
+      internet_exposed:
+        type: bool
+        optional: true
 
   BusinessService:
     description: Internal business or technical service depending on assets.
     properties:
-      service_id: {type: string, primary_key: true}
-      name: {type: string, indexed: true}
-      tier: {type: string, optional: true}
+      service_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      tier:
+        type: string
+        optional: true
 
   Owner:
     description: Team or person responsible for an asset or service.
     properties:
-      owner_id: {type: string, primary_key: true}
-      name: {type: string}
-      team: {type: string, optional: true}
-      email: {type: string, optional: true}
+      owner_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      team:
+        type: string
+        optional: true
+      email:
+        type: string
+        optional: true
 
   ScannerFinding:
     description: Scanner or detection-system finding tied to an asset and vulnerability.
     properties:
-      finding_id: {type: string, primary_key: true}
-      source: {type: string, optional: true}
-      severity: {type: string, optional: true}
-      observed_at: {type: string, optional: true}
-      status: {type: string, optional: true}
+      finding_id:
+        type: string
+        primary_key: true
+      source:
+        type: string
+        optional: true
+      severity:
+        type: string
+        optional: true
+      observed_at:
+        type: string
+        optional: true
+      status:
+        type: string
+        optional: true
 
   CompensatingControl:
     description: Control that can reduce or block exploitability.
     properties:
-      control_id: {type: string, primary_key: true}
-      name: {type: string}
-      control_type: {type: string, optional: true}
-      status: {type: string, optional: true}
+      control_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      control_type:
+        type: string
+        optional: true
+      status:
+        type: string
+        optional: true
 
   Exception:
     description: Approved patch or remediation exception.
     properties:
-      exception_id: {type: string, primary_key: true}
-      reason: {type: string, optional: true}
-      review_due_at: {type: string, optional: true}
-      status: {type: string, optional: true}
+      exception_id:
+        type: string
+        primary_key: true
+      reason:
+        type: string
+        optional: true
+      review_due_at:
+        type: string
+        optional: true
+      status:
+        type: string
+        optional: true
 
   PatchWindow:
     description: Operational patching schedule or change window.
     properties:
-      patch_window_id: {type: string, primary_key: true}
-      cadence: {type: string, optional: true}
-      next_window_at: {type: string, optional: true}
-      freeze_status: {type: string, optional: true}
+      patch_window_id:
+        type: string
+        primary_key: true
+      cadence:
+        type: string
+        optional: true
+      next_window_at:
+        type: string
+        optional: true
+      freeze_status:
+        type: string
+        optional: true
 
 # ─── Reference layer relationships ───────────────────────────────────
 
@@ -112,8 +200,12 @@ relationships:
     from: Vulnerability
     to: Product
     properties:
-      affected_version_range: {type: string, optional: true}
-      fixed_version: {type: string, optional: true}
+      affected_version_range:
+        type: string
+        optional: true
+      fixed_version:
+        type: string
+        optional: true
 
 # ─── Fork: deterministic internal mappings ────────────────────────────
 
@@ -122,8 +214,12 @@ relationships:
     from: Asset
     to: Product
     properties:
-      installed_version: {type: string, optional: true}
-      evidence_source: {type: string, optional: true}
+      installed_version:
+        type: string
+        optional: true
+      evidence_source:
+        type: string
+        optional: true
 
   - name: service_depends_on_asset
     description: Internal dependency mapping from services to assets.
@@ -167,9 +263,15 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      installed_version: {type: string, optional: true}
-      rationale: {type: string, optional: true}
-      source: {type: string, optional: true}
+      installed_version:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+      source:
+        type: string
+        optional: true
     matching:
       integrations:
         product_version_evidence:
@@ -183,9 +285,15 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      priority: {type: string, optional: true}
-      due_by: {type: string, optional: true}
-      rationale: {type: string, optional: true}
+      priority:
+        type: string
+        optional: true
+      due_by:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
     matching:
       integrations:
         exploitability_signal:
@@ -200,8 +308,12 @@ relationships:
     from: BusinessService
     to: Vulnerability
     properties:
-      blast_radius: {type: string, optional: true}
-      rationale: {type: string, optional: true}
+      blast_radius:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
     matching:
       integrations:
         dependency_context:
@@ -212,9 +324,15 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      exception_id: {type: string, optional: true}
-      review_due_at: {type: string, optional: true}
-      rationale: {type: string, optional: true}
+      exception_id:
+        type: string
+        optional: true
+      review_due_at:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
     matching:
       integrations:
         policy_review:
@@ -225,8 +343,12 @@ relationships:
     from: CompensatingControl
     to: Vulnerability
     properties:
-      validation_basis: {type: string, optional: true}
-      expires_at: {type: string, optional: true}
+      validation_basis:
+        type: string
+        optional: true
+      expires_at:
+        type: string
+        optional: true
     matching:
       integrations:
         control_effectiveness:
