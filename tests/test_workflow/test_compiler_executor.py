@@ -72,7 +72,7 @@ def proposal_workflow_instance(
 
 def _write_lock_for_instance(instance: CruxibleInstance) -> None:
     config = instance.load_config()
-    write_lock(build_lock(config), get_lock_path(instance))
+    write_lock(build_lock(config, instance.get_config_path().parent), get_lock_path(instance))
 
 
 class TestWorkflowCompiler:
@@ -151,9 +151,49 @@ class TestWorkflowCompiler:
             "map_signals",
             "propose_relationship_group",
         ]
-        assert plan.steps[2].step_config["relationship_type"] == "recommended_for"
-        assert plan.steps[3].step_config["integration"] == "catalog"
-        assert plan.steps[4].step_config["signals_from"] == ["catalog_signals"]
+        assert plan.steps[2].make_candidates_spec is not None
+        assert plan.steps[2].make_candidates_spec.relationship_type == "recommended_for"
+        assert plan.steps[3].map_signals_spec is not None
+        assert plan.steps[3].map_signals_spec.integration == "catalog"
+        assert plan.steps[4].propose_relationship_group_spec is not None
+        assert plan.steps[4].propose_relationship_group_spec.signals_from == ["catalog_signals"]
+
+    def test_compile_canonical_workflow_carries_canonical_metadata(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        _write_lock_for_instance(canonical_workflow_instance)
+        config = canonical_workflow_instance.load_config()
+        lock = build_lock(config, canonical_workflow_instance.get_config_path().parent)
+
+        plan = compile_workflow(
+            config,
+            lock,
+            "build_reference",
+            {},
+            config_base_path=canonical_workflow_instance.get_config_path().parent,
+        )
+
+        assert plan.canonical is True
+        assert plan.lock_digest == lock.lock_digest
+        assert plan.steps[0].provider_entrypoint_sha256 is not None
+        assert "apply_entities" in [step.kind for step in plan.steps]
+
+    def test_compile_rejects_apply_steps_in_non_canonical_workflow(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        config.workflows["build_reference"].canonical = False
+        canonical_workflow_instance.save_config(config)
+        _write_lock_for_instance(canonical_workflow_instance)
+
+        with pytest.raises(ConfigError, match="must be canonical to use apply_entities"):
+            compile_workflow(
+                canonical_workflow_instance.load_config(),
+                build_lock(canonical_workflow_instance.load_config()),
+                "build_reference",
+                {},
+                config_base_path=canonical_workflow_instance.get_config_path().parent,
+            )
 
 
 class TestWorkflowExecutor:
@@ -254,3 +294,48 @@ class TestWorkflowExecutor:
         assert any(node.detail.get("relationship_type") == "recommended_for" for node in plan_steps)
         assert any(node.detail.get("integration") == "catalog" for node in plan_steps)
         assert any(node.detail.get("signals_from") == ["catalog_signals"] for node in plan_steps)
+
+    def test_execute_canonical_workflow_runs_in_preview_mode_without_mutating_graph(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        _write_lock_for_instance(canonical_workflow_instance)
+
+        result = execute_workflow(
+            canonical_workflow_instance,
+            canonical_workflow_instance.load_config(),
+            "build_reference",
+            {},
+        )
+
+        assert result.mode == "preview"
+        assert result.canonical is True
+        assert result.apply_digest is not None
+        assert result.committed_snapshot_id is None
+        assert result.receipt.committed is False
+        assert result.output["total_results"] == 1
+        assert canonical_workflow_instance.load_graph().list_entities("Vendor") == []
+
+    def test_execute_canonical_workflow_apply_commits_graph_and_snapshot(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        _write_lock_for_instance(canonical_workflow_instance)
+        preview = execute_workflow(
+            canonical_workflow_instance,
+            canonical_workflow_instance.load_config(),
+            "build_reference",
+            {},
+        )
+
+        applied = execute_workflow(
+            canonical_workflow_instance,
+            canonical_workflow_instance.load_config(),
+            "build_reference",
+            {},
+            mode="apply",
+        )
+
+        assert applied.mode == "apply"
+        assert applied.apply_digest == preview.apply_digest
+        assert applied.committed_snapshot_id is not None
+        assert applied.receipt.committed is True
+        assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")

@@ -177,6 +177,11 @@ class CruxibleInstance:
         """Clear the in-memory graph cache, forcing next load_graph to read from disk."""
         self._graph_cache = None
 
+    def get_head_snapshot_id(self) -> str | None:
+        """Return the current head snapshot identifier, if any."""
+        value = self.metadata.get("head_snapshot_id")
+        return str(value) if value is not None else None
+
     def _metadata_path(self) -> Path:
         return self.instance_dir / "instance.json"
 
@@ -193,13 +198,26 @@ class CruxibleInstance:
 
     def create_snapshot(self, label: str | None = None) -> WorldSnapshot:
         """Persist an immutable full snapshot of the current graph + config state."""
+        return self._write_snapshot(self.load_graph(), label=label, persist_live_graph=False)
+
+    def commit_graph_snapshot(self, graph: EntityGraph, label: str | None = None) -> WorldSnapshot:
+        """Persist a snapshot for a provided graph, then atomically advance live state."""
+        return self._write_snapshot(graph, label=label, persist_live_graph=True)
+
+    def _write_snapshot(
+        self,
+        graph: EntityGraph,
+        *,
+        label: str | None = None,
+        persist_live_graph: bool,
+    ) -> WorldSnapshot:
+        """Write snapshot artifacts and optionally advance the live graph/head."""
         snapshot_id = f"snap_{uuid.uuid4().hex[:16]}"
         snapshot_dir = self._snapshot_dir(snapshot_id)
         snapshot_dir.mkdir(parents=True, exist_ok=False)
 
         config = self.load_config()
         config_path = self.get_config_path()
-        graph = self.load_graph()
         graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True)
         graph_sha256 = f"sha256:{hashlib.sha256(graph_json.encode()).hexdigest()}"
 
@@ -227,6 +245,8 @@ class CruxibleInstance:
             json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True)
         )
 
+        if persist_live_graph:
+            self.save_graph(graph)
         self.metadata["head_snapshot_id"] = snapshot_id
         if snapshot.origin_snapshot_id is not None:
             self.metadata["origin_snapshot_id"] = snapshot.origin_snapshot_id

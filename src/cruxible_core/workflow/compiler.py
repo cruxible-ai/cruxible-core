@@ -6,13 +6,14 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.provider.registry import resolve_provider
+from cruxible_core.provider.registry import get_provider_entrypoint_path, resolve_provider
 from cruxible_core.workflow.contracts import validate_contract_payload
 from cruxible_core.workflow.refs import preview_value
 from cruxible_core.workflow.types import (
@@ -41,12 +42,12 @@ def get_lock_path(instance: InstanceProtocol) -> Path:
     return instance.get_config_path().parent / LOCK_FILE_NAME
 
 
-def build_lock(config: CoreConfig) -> WorkflowLock:
+def build_lock(config: CoreConfig, config_base_path: Path | None = None) -> WorkflowLock:
     """Generate a workflow lock from config/provider/artifact declarations."""
     for provider_name, provider in config.providers.items():
         resolve_provider(provider_name, provider)
 
-    return WorkflowLock(
+    lock = WorkflowLock(
         config_digest=compute_lock_config_digest(config),
         artifacts={
             name: LockedArtifact(
@@ -61,6 +62,10 @@ def build_lock(config: CoreConfig) -> WorkflowLock:
             name: LockedProvider(
                 version=provider.version,
                 ref=provider.ref,
+                provider_entrypoint_sha256=_compute_provider_entrypoint_sha256(
+                    provider_name=name,
+                    config=config,
+                ),
                 runtime=provider.runtime,
                 deterministic=provider.deterministic,
                 side_effects=provider.side_effects,
@@ -70,10 +75,25 @@ def build_lock(config: CoreConfig) -> WorkflowLock:
             for name, provider in config.providers.items()
         },
     )
+    lock.lock_digest = compute_lock_digest(lock)
+    return lock
+
+
+def compute_lock_digest(lock: WorkflowLock) -> str:
+    """Compute a stable digest for a lock file, excluding volatile timestamps."""
+    dumped = lock.model_dump(
+        mode="python",
+        exclude_none=True,
+        exclude={"generated_at", "lock_digest"},
+    )
+    encoded = json.dumps(dumped, sort_keys=True, default=str)
+    return f"sha256:{hashlib.sha256(encoded.encode()).hexdigest()}"
 
 
 def write_lock(lock: WorkflowLock, path: Path) -> None:
     """Write a generated workflow lock to disk."""
+    if lock.lock_digest is None:
+        lock.lock_digest = compute_lock_digest(lock)
     data = lock.model_dump(mode="python", exclude_none=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False))
 
@@ -94,12 +114,20 @@ def compile_workflow(
     lock: WorkflowLock,
     workflow_name: str,
     input_payload: dict[str, Any],
+    *,
+    config_base_path: Path | None = None,
 ) -> CompiledPlan:
     """Compile a workflow and validate input against its contract."""
     digest = compute_lock_config_digest(config)
     if lock.config_digest != digest:
         raise ConfigError(
             "Lock file config digest does not match current config. Run `cruxible lock`."
+        )
+    expected_lock_digest = compute_lock_digest(lock)
+    if lock.lock_digest != expected_lock_digest:
+        raise ConfigError(
+            "Lock file digest does not match current lock contents. "
+            "Run `cruxible lock`."
         )
 
     workflow = config.workflows.get(workflow_name)
@@ -125,6 +153,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="query",
+                    canonical=workflow.canonical,
                     as_name=step.as_,
                     query_name=step.query,
                     params_template=step.params,
@@ -139,14 +168,52 @@ def compile_workflow(
                 raise ConfigError(
                     f"Provider '{step.provider}' missing from lock file. Run `cruxible lock`."
                 )
+            provider_schema = config.providers[step.provider]
+            current_entrypoint_sha = _compute_provider_entrypoint_sha256(
+                provider_name=step.provider,
+                config=config,
+            )
+            if current_entrypoint_sha != locked.provider_entrypoint_sha256:
+                raise ConfigError(
+                    f"Provider '{step.provider}' entrypoint changed since lock generation. "
+                    "Run `cruxible lock`."
+                )
+            if workflow.canonical:
+                if provider_schema.runtime != "python":
+                    raise ConfigError(
+                        f"Canonical workflow '{workflow_name}' requires python providers"
+                    )
+                if not provider_schema.deterministic or provider_schema.side_effects:
+                    raise ConfigError(
+                        f"Canonical workflow '{workflow_name}' requires deterministic, "
+                        "side-effect-free providers"
+                    )
+                if locked.artifact is None:
+                    raise ConfigError(
+                        f"Canonical workflow '{workflow_name}' provider '{step.provider}' "
+                        "must declare an artifact bundle"
+                    )
+                if config_base_path is None:
+                    raise ConfigError(
+                        f"Canonical workflow '{workflow_name}' requires config_base_path for "
+                        "artifact verification"
+                    )
+                locked_artifact = lock.artifacts[locked.artifact]
+                _verify_local_artifact_hash(
+                    locked_artifact.uri,
+                    locked_artifact.sha256,
+                    config_base_path,
+                )
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="provider",
+                    canonical=workflow.canonical,
                     as_name=step.as_,
                     provider_name=step.provider,
                     provider_ref=locked.ref,
                     provider_version=locked.version,
+                    provider_entrypoint_sha256=locked.provider_entrypoint_sha256,
                     artifact_name=locked.artifact,
                     artifact_sha256=(
                         lock.artifacts[locked.artifact].sha256 if locked.artifact else None
@@ -158,48 +225,93 @@ def compile_workflow(
             continue
 
         if step.make_candidates is not None:
-            step_config = step.make_candidates.model_dump(mode="python", exclude_none=True)
-            step_config["items_preview"] = preview_value(
-                step.make_candidates.items, normalized_input
-            )
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="make_candidates",
+                    canonical=workflow.canonical,
                     as_name=step.as_,
-                    step_config=step_config,
+                    make_candidates_spec=step.make_candidates,
                 )
             )
             continue
 
         if step.map_signals is not None:
-            step_config = step.map_signals.model_dump(mode="python", exclude_none=True)
-            step_config["items_preview"] = preview_value(step.map_signals.items, normalized_input)
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="map_signals",
+                    canonical=workflow.canonical,
                     as_name=step.as_,
-                    step_config=step_config,
+                    map_signals_spec=step.map_signals,
                 )
             )
             continue
 
         if step.propose_relationship_group is not None:
-            step_config = step.propose_relationship_group.model_dump(
-                mode="python",
-                exclude_none=True,
-            )
-            step_config["thesis_text_preview"] = preview_value(
-                step.propose_relationship_group.thesis_text,
-                normalized_input,
-            )
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="propose_relationship_group",
+                    canonical=workflow.canonical,
                     as_name=step.as_,
-                    step_config=step_config,
+                    propose_relationship_group_spec=step.propose_relationship_group,
+                )
+            )
+            continue
+
+        if step.make_entities is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="make_entities",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    make_entities_spec=step.make_entities,
+                )
+            )
+            continue
+
+        if step.make_relationships is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="make_relationships",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    make_relationships_spec=step.make_relationships,
+                )
+            )
+            continue
+
+        if step.apply_entities is not None:
+            if not workflow.canonical:
+                raise ConfigError(
+                    f"Workflow '{workflow_name}' must be canonical to use apply_entities"
+                )
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="apply_entities",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    apply_entities_spec=step.apply_entities,
+                )
+            )
+            continue
+
+        if step.apply_relationships is not None:
+            if not workflow.canonical:
+                raise ConfigError(
+                    f"Workflow '{workflow_name}' must be canonical to use apply_relationships"
+                )
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="apply_relationships",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    apply_relationships_spec=step.apply_relationships,
                 )
             )
             continue
@@ -209,10 +321,8 @@ def compile_workflow(
             CompiledPlanStep(
                 step_id=step.id,
                 kind="assert",
-                assert_left=preview_value(step.assert_spec.left, normalized_input),
-                assert_right=preview_value(step.assert_spec.right, normalized_input),
-                assert_op=step.assert_spec.op,
-                message=step.assert_spec.message,
+                canonical=workflow.canonical,
+                assert_spec=step.assert_spec,
             )
         )
 
@@ -220,7 +330,62 @@ def compile_workflow(
         workflow=workflow_name,
         contract_in=workflow.contract_in,
         config_digest=digest,
+        lock_digest=lock.lock_digest,
+        canonical=workflow.canonical,
         steps=compiled_steps,
         returns=workflow.returns,
         input_payload=normalized_input,
     )
+
+
+def _compute_provider_entrypoint_sha256(provider_name: str, config: CoreConfig) -> str | None:
+    provider = config.providers[provider_name]
+    path = get_provider_entrypoint_path(provider_name, provider)
+    if path is None:
+        return None
+    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def _verify_local_artifact_hash(uri: str, expected_sha256: str, config_base_path: Path) -> None:
+    if not expected_sha256:
+        raise ConfigError("Canonical workflow artifact is missing sha256")
+    artifact_path = _resolve_local_artifact_path(uri, config_base_path)
+    if artifact_path is None:
+        raise ConfigError("Canonical workflows require local file or directory artifacts")
+    if not artifact_path.exists():
+        raise ConfigError(f"Artifact path does not exist: {artifact_path}")
+    actual_sha256 = _compute_path_sha256(artifact_path)
+    if actual_sha256 != expected_sha256:
+        raise ConfigError(
+            f"Artifact hash mismatch for {artifact_path}. "
+            f"Expected {expected_sha256}, got {actual_sha256}. "
+            "Run `cruxible lock` or fix the artifact."
+        )
+
+
+def _resolve_local_artifact_path(uri: str, config_base_path: Path) -> Path | None:
+    parsed = urlparse(uri)
+    if parsed.scheme in {"", "file"}:
+        if parsed.scheme == "file":
+            raw_path = Path(parsed.path)
+        else:
+            raw_path = Path(uri)
+        if not raw_path.is_absolute():
+            raw_path = (config_base_path / raw_path).resolve()
+        return raw_path
+    return None
+
+
+def _compute_path_sha256(path: Path) -> str:
+    if path.is_file():
+        return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+    if path.is_dir():
+        digest = hashlib.sha256()
+        for child in sorted(item for item in path.rglob("*") if item.is_file()):
+            relative = child.relative_to(path).as_posix()
+            digest.update(relative.encode())
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(child.read_bytes()).hexdigest().encode())
+            digest.update(b"\0")
+        return f"sha256:{digest.hexdigest()}"
+    raise ConfigError(f"Unsupported artifact path type: {path}")

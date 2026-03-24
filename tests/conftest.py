@@ -1,8 +1,12 @@
 """Shared test fixtures for cruxible-core."""
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
+
+from cruxible_core.cli.instance import CruxibleInstance
 
 WORKFLOW_CONFIG_YAML = """\
 version: "1.0"
@@ -298,3 +302,199 @@ def workflow_config_yaml() -> str:
 def proposal_workflow_config_yaml() -> str:
     """Raw YAML string for relationship proposal workflow tests."""
     return PROPOSAL_WORKFLOW_CONFIG_YAML
+
+
+@pytest.fixture
+def canonical_workflow_project(tmp_path: Path) -> Path:
+    """Project root for canonical preview/apply workflow tests."""
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    rows = [
+        {
+            "vendor_id": "vendor-acme",
+            "vendor_name": "Acme",
+            "product_id": "product-acme-widget",
+            "product_name": "Widget",
+            "cve_id": "CVE-2026-0001",
+            "description": "Widget issue",
+        },
+        {
+            "vendor_id": "vendor-acme",
+            "vendor_name": "Acme",
+            "product_id": "product-acme-widget-pro",
+            "product_name": "Widget Pro",
+            "cve_id": "CVE-2026-0002",
+            "description": "Widget Pro issue",
+        },
+    ]
+    (bundle_dir / "rows.json").write_text(json.dumps(rows, indent=2, sort_keys=True))
+    bundle_sha256 = _compute_directory_sha256(bundle_dir)
+
+    config_yaml = f"""\
+version: "1.0"
+name: canonical_reference_workflow
+kind: world_model
+
+entity_types:
+  Vendor:
+    properties:
+      vendor_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+  Vulnerability:
+    properties:
+      cve_id:
+        type: string
+        primary_key: true
+      description:
+        type: string
+
+relationships:
+  - name: product_from_vendor
+    from: Product
+    to: Vendor
+  - name: vulnerability_affects_product
+    from: Vulnerability
+    to: Product
+
+named_queries:
+  get_vendors:
+    entry_point: Vendor
+    traversal: []
+    returns: "list[Vendor]"
+
+contracts:
+  EmptyInput:
+    fields: {{}}
+  BundleRows:
+    fields:
+      items:
+        type: json
+
+artifacts:
+  canonical_bundle:
+    kind: directory
+    uri: ./bundle
+    sha256: {bundle_sha256}
+
+providers:
+  reference_loader:
+    kind: function
+    contract_in: EmptyInput
+    contract_out: BundleRows
+    ref: tests.support.workflow_test_providers.reference_bundle_loader
+    version: 1.0.0
+    deterministic: true
+    runtime: python
+    artifact: canonical_bundle
+
+workflows:
+  build_reference:
+    canonical: true
+    contract_in: EmptyInput
+    steps:
+      - id: rows
+        provider: reference_loader
+        input: {{}}
+        as: rows
+      - id: vendors
+        make_entities:
+          entity_type: Vendor
+          items: $steps.rows.items
+          entity_id: $item.vendor_id
+          properties:
+            vendor_id: $item.vendor_id
+            name: $item.vendor_name
+        as: vendors
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: $steps.rows.items
+          entity_id: $item.product_id
+          properties:
+            product_id: $item.product_id
+            name: $item.product_name
+        as: products
+      - id: vulnerabilities
+        make_entities:
+          entity_type: Vulnerability
+          items: $steps.rows.items
+          entity_id: $item.cve_id
+          properties:
+            cve_id: $item.cve_id
+            description: $item.description
+        as: vulnerabilities
+      - id: product_vendor
+        make_relationships:
+          relationship_type: product_from_vendor
+          items: $steps.rows.items
+          from_type: Product
+          from_id: $item.product_id
+          to_type: Vendor
+          to_id: $item.vendor_id
+        as: product_vendor
+      - id: vulnerability_product
+        make_relationships:
+          relationship_type: vulnerability_affects_product
+          items: $steps.rows.items
+          from_type: Vulnerability
+          from_id: $item.cve_id
+          to_type: Product
+          to_id: $item.product_id
+        as: vulnerability_product
+      - id: apply_vendors
+        apply_entities:
+          entities_from: vendors
+        as: apply_vendors
+      - id: apply_products
+        apply_entities:
+          entities_from: products
+        as: apply_products
+      - id: apply_vulnerabilities
+        apply_entities:
+          entities_from: vulnerabilities
+        as: apply_vulnerabilities
+      - id: apply_product_vendor
+        apply_relationships:
+          relationships_from: product_vendor
+        as: apply_product_vendor
+      - id: apply_vulnerability_product
+        apply_relationships:
+          relationships_from: vulnerability_product
+        as: apply_vulnerability_product
+      - id: vendors_query
+        query: get_vendors
+        params:
+          vendor_id: vendor-acme
+        as: vendors_query
+    returns: vendors_query
+"""
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+    return tmp_path
+
+
+@pytest.fixture
+def canonical_workflow_instance(canonical_workflow_project: Path) -> CruxibleInstance:
+    """Filesystem instance for canonical preview/apply workflow tests."""
+    return CruxibleInstance.init(canonical_workflow_project, "config.yaml")
+
+
+def _compute_directory_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        digest.update(child.relative_to(path).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(child.read_bytes()).hexdigest().encode())
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"

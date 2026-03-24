@@ -204,6 +204,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
     contract_names = set(config.contracts.keys())
     provider_names = set(config.providers.keys())
     query_names = set(config.named_queries.keys())
+    entity_names = set(config.entity_types.keys())
     relationship_names = {rel.name for rel in config.relationships}
     integration_names = set(config.integrations.keys())
 
@@ -217,6 +218,8 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
 
         produced_aliases: set[str] = set()
         step_ids: set[str] = set()
+        uses_apply_steps = False
+        providers_used: set[str] = set()
 
         for step in workflow.steps:
             if step.id in step_ids:
@@ -250,6 +253,8 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         f"'{workflow_name}' step '{step.id}': provider "
                         f"'{step.provider}' not found in providers"
                     )
+                else:
+                    providers_used.add(step.provider)
                 for ref in _iter_refs(step.input):
                     _validate_workflow_ref(
                         workflow_name,
@@ -359,6 +364,86 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     produced_aliases.add(step.as_)
                 continue
 
+            if step.make_entities is not None:
+                if step.make_entities.entity_type not in entity_names:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': make_entities entity_type "
+                        f"'{step.make_entities.entity_type}' not found in entity_types"
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.make_entities.items,
+                        step.make_entities.entity_id,
+                        step.make_entities.properties,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.make_relationships is not None:
+                if step.make_relationships.relationship_type not in relationship_names:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': make_relationships "
+                        f"relationship_type '{step.make_relationships.relationship_type}' "
+                        "not found in relationships"
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.make_relationships.items,
+                        step.make_relationships.from_type,
+                        step.make_relationships.from_id,
+                        step.make_relationships.to_type,
+                        step.make_relationships.to_id,
+                        step.make_relationships.properties,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.apply_entities is not None:
+                uses_apply_steps = True
+                if step.apply_entities.entities_from not in produced_aliases:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': entities_from alias "
+                        f"'{step.apply_entities.entities_from}' is unknown or future"
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.apply_relationships is not None:
+                uses_apply_steps = True
+                if step.apply_relationships.relationships_from not in produced_aliases:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': relationships_from alias "
+                        f"'{step.apply_relationships.relationships_from}' is unknown or future"
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
             assert step.assert_spec is not None
             for ref in _iter_refs([step.assert_spec.left, step.assert_spec.right]):
                 _validate_workflow_ref(
@@ -375,6 +460,35 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 f"'{workflow_name}': returns alias '{workflow.returns}' "
                 "not produced by any prior step"
             )
+
+        if uses_apply_steps and not workflow.canonical:
+            errors.append(
+                f"Workflow '{workflow_name}': apply_* steps require canonical: true"
+            )
+
+        if workflow.canonical:
+            for provider_name in providers_used:
+                provider = config.providers[provider_name]
+                if provider.runtime != "python":
+                    errors.append(
+                        f"Workflow '{workflow_name}': canonical provider '{provider_name}' "
+                        "must use runtime 'python'"
+                    )
+                if not provider.deterministic:
+                    errors.append(
+                        f"Workflow '{workflow_name}': canonical provider '{provider_name}' "
+                        "must be deterministic"
+                    )
+                if provider.side_effects:
+                    errors.append(
+                        f"Workflow '{workflow_name}': canonical provider '{provider_name}' "
+                        "must not declare side_effects"
+                    )
+                if provider.artifact is None:
+                    errors.append(
+                        f"Workflow '{workflow_name}': canonical provider '{provider_name}' "
+                        "must declare an artifact bundle"
+                    )
 
 
 def _validate_tests(config: CoreConfig, errors: list[str]) -> None:

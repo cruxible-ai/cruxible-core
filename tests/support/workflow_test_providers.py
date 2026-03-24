@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from cruxible_core.provider.types import ProviderContext
@@ -52,3 +54,14 @@ def campaign_recommendations(
 def broken_provider(_input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
     """Return an invalid output shape for contract failure tests."""
     return {"unexpected": "value"}
+
+
+def reference_bundle_loader(
+    _input_payload: dict[str, Any], context: ProviderContext
+) -> dict[str, Any]:
+    """Load canonical rows from a directory artifact bundle."""
+    if context.artifact is None or context.artifact.local_path is None:
+        raise ValueError("reference_bundle_loader requires a local artifact bundle")
+    bundle_root = Path(context.artifact.local_path)
+    rows_path = bundle_root / "rows.json"
+    return {"items": json.loads(rows_path.read_text())}
