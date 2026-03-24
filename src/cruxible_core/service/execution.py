@@ -25,6 +25,7 @@ from cruxible_core.workflow import (
     execute_workflow,
     get_lock_path,
     load_lock,
+    resolve_lock_path,
     write_lock,
 )
 from cruxible_core.workflow.types import (
@@ -54,7 +55,7 @@ def service_plan(
 ) -> PlanServiceResult:
     """Compile a workflow plan using the current config and generated lock."""
     config = instance.load_config()
-    lock = load_lock(get_lock_path(instance))
+    lock = load_lock(resolve_lock_path(instance))
     plan = compile_workflow(
         config,
         lock,
@@ -120,7 +121,7 @@ def service_apply_workflow(
     if preview.head_snapshot_id != expected_head_snapshot_id:
         raise ConfigError("Workflow head snapshot changed; rerun workflow preview before apply")
 
-    current_lock = load_lock(get_lock_path(instance))
+    current_lock = load_lock(resolve_lock_path(instance))
     current_lock_digest = compute_lock_digest(current_lock)
     if preview.receipt.nodes[0].detail.get("lock_digest") != current_lock_digest:
         raise ConfigError("Workflow lock changed; rerun workflow preview before apply")

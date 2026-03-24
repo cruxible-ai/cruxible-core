@@ -18,11 +18,13 @@ from cruxible_core.cli.formatting import (
     feedback_table,
     group_detail_table,
     groups_table,
+    inspect_neighbors_table,
     outcomes_table,
     receipts_table,
     relationship_table,
     resolutions_table,
     schema_table,
+    stats_table,
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
@@ -31,7 +33,7 @@ from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import ConstraintSchema, CoreConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.entity_proposal.types import EntityChangeMember, EntityChangeProposal
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.feedback.types import (
     EdgeTarget,
     FeedbackBatchItem,
@@ -46,6 +48,7 @@ from cruxible_core.receipt import serializer
 from cruxible_core.server.config import get_server_token
 from cruxible_core.service import (
     EntityUpsertInput,
+    InspectEntityResult,
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
@@ -63,6 +66,7 @@ from cruxible_core.service import (
     service_get_relationship,
     service_ingest,
     service_init,
+    service_inspect_entity,
     service_list,
     service_list_entity_proposals,
     service_list_groups,
@@ -75,11 +79,13 @@ from cruxible_core.service import (
     service_propose_group,
     service_propose_workflow,
     service_query,
+    service_reload_config,
     service_resolve_entity_proposal,
     service_resolve_group,
     service_run,
     service_sample,
     service_schema,
+    service_stats,
     service_test,
     service_update_trust_status,
     service_validate,
@@ -152,6 +158,102 @@ def _read_input_payload(path_str: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ConfigError(f"Input file {path} must contain a top-level mapping")
     return payload
+
+
+def _parse_inline_mapping(raw: str, *, source: str) -> dict[str, Any]:
+    try:
+        payload = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Failed to parse {source}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ConfigError(f"{source} must contain a top-level mapping")
+    return payload
+
+
+def _resolve_workflow_input(
+    *,
+    input_text: str | None,
+    input_file: str | None,
+) -> dict[str, Any]:
+    if input_text is not None and input_file is not None:
+        raise click.UsageError("Provide either --input or --input-file, not both")
+    if input_text is not None:
+        return _parse_inline_mapping(input_text, source="--input")
+    if input_file is not None:
+        return _read_input_payload(input_file)
+    return {}
+
+
+def _print_apply_previews(apply_previews: dict[str, Any]) -> None:
+    if not apply_previews:
+        return
+    click.echo("Apply previews:")
+    for step_id, preview in apply_previews.items():
+        target = preview.get("entity_type") or preview.get("relationship_type") or step_id
+        click.echo(
+            f"  {step_id}: {target} "
+            f"creates={preview.get('create_count', 0)} "
+            f"updates={preview.get('update_count', 0)} "
+            f"noops={preview.get('noop_count', 0)}"
+        )
+
+
+def _print_query_param_hints(hints: contracts.QueryParamHints | None) -> None:
+    if hints is None:
+        return
+    click.echo("Param hints:")
+    click.echo(f"  entry_point={hints.entry_point}")
+    if hints.primary_key is not None:
+        click.echo(f"  primary_key={hints.primary_key}")
+    if hints.required_params:
+        click.echo(f"  required={', '.join(hints.required_params)}")
+    if hints.example_ids:
+        click.echo(f"  examples={', '.join(hints.example_ids)}")
+
+
+def _build_query_param_hints(
+    config: CoreConfig,
+    query_name: str,
+    example_entities: list[EntityInstance],
+) -> contracts.QueryParamHints | None:
+    query_schema = config.named_queries.get(query_name)
+    if query_schema is None:
+        return None
+    entity_schema = config.get_entity_type(query_schema.entry_point)
+    primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
+    required_params = [primary_key] if primary_key is not None else []
+    return contracts.QueryParamHints(
+        entry_point=query_schema.entry_point,
+        required_params=required_params,
+        primary_key=primary_key,
+        example_ids=sorted(entity.entity_id for entity in example_entities),
+    )
+
+
+def _lookup_query_param_hints_local(
+    instance: CruxibleInstance,
+    query_name: str,
+) -> contracts.QueryParamHints | None:
+    config = service_schema(instance)
+    query_schema = config.named_queries.get(query_name)
+    if query_schema is None:
+        return None
+    examples = service_sample(instance, query_schema.entry_point, limit=3)
+    return _build_query_param_hints(config, query_name, examples)
+
+
+def _lookup_query_param_hints_server(
+    client: CruxibleClient,
+    instance_id: str,
+    query_name: str,
+) -> contracts.QueryParamHints | None:
+    config = CoreConfig.model_validate(client.schema(instance_id))
+    query_schema = config.named_queries.get(query_name)
+    if query_schema is None:
+        return None
+    sample = client.sample(instance_id, query_schema.entry_point, limit=3)
+    examples = _entities_from_payload(sample.entities)
+    return _build_query_param_hints(config, query_name, examples)
 
 
 def _entities_from_payload(items: list[dict[str, Any]]) -> list[EntityInstance]:
@@ -276,42 +378,45 @@ def lock_cmd() -> None:
 
 @click.command("plan")
 @click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option("--input", "input_text", default=None, help="Inline JSON or YAML workflow input.")
 @click.option(
     "--input-file",
-    required=True,
+    default=None,
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
 @handle_errors
-def plan_cmd(workflow_name: str, input_file: str) -> None:
+def plan_cmd(workflow_name: str, input_text: str | None, input_file: str | None) -> None:
     """Compile a workflow plan for the current instance."""
+    payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     client = _get_client()
     if client is not None:
         result = client.workflow_plan(
             _require_instance_id(),
             workflow_name=workflow_name,
-            input_payload=_read_input_payload(input_file),
+            input_payload=payload,
         )
         click.echo(json.dumps(result.plan, indent=2, sort_keys=True))
         return
 
     instance = CruxibleInstance.load()
-    result = service_plan(instance, workflow_name, _read_input_payload(input_file))
+    result = service_plan(instance, workflow_name, payload)
     click.echo(result.plan.model_dump_json(indent=2))
 
 
 @click.command("run")
 @click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option("--input", "input_text", default=None, help="Inline JSON or YAML workflow input.")
 @click.option(
     "--input-file",
-    required=True,
+    default=None,
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
 @handle_errors
-def run_cmd(workflow_name: str, input_file: str) -> None:
+def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None) -> None:
     """Execute a workflow for the current instance."""
-    payload = _read_input_payload(input_file)
+    payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     client = _get_client()
     if client is not None:
         result = client.workflow_run(
@@ -329,6 +434,7 @@ def run_cmd(workflow_name: str, input_file: str) -> None:
         click.echo(f"Apply digest: {result.apply_digest}")
     if result.head_snapshot_id:
         click.echo(f"Head snapshot: {result.head_snapshot_id}")
+    _print_apply_previews(result.apply_previews)
     click.echo(f"Receipt ID: {result.receipt_id}")
     if result.query_receipt_ids:
         click.echo(f"Query receipt IDs: {', '.join(result.query_receipt_ids)}")
@@ -339,9 +445,10 @@ def run_cmd(workflow_name: str, input_file: str) -> None:
 
 @click.command("apply")
 @click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option("--input", "input_text", default=None, help="Inline JSON or YAML workflow input.")
 @click.option(
     "--input-file",
-    required=True,
+    default=None,
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
@@ -354,12 +461,13 @@ def run_cmd(workflow_name: str, input_file: str) -> None:
 @handle_errors
 def apply_cmd(
     workflow_name: str,
-    input_file: str,
+    input_text: str | None,
+    input_file: str | None,
     apply_digest: str,
     head_snapshot: str | None,
 ) -> None:
     """Apply a canonical workflow after verifying preview identity."""
-    payload = _read_input_payload(input_file)
+    payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     client = _get_client()
     if client is not None:
         result = client.workflow_apply(
@@ -381,6 +489,7 @@ def apply_cmd(
     click.echo(f"Workflow {result.workflow} applied.")
     if result.committed_snapshot_id:
         click.echo(f"Committed snapshot: {result.committed_snapshot_id}")
+    _print_apply_previews(result.apply_previews)
     click.echo(f"Receipt ID: {result.receipt_id}")
     if result.trace_ids:
         click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
@@ -410,16 +519,17 @@ def test_cmd(test_name: str | None) -> None:
 
 @click.command("propose")
 @click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option("--input", "input_text", default=None, help="Inline JSON or YAML workflow input.")
 @click.option(
     "--input-file",
-    required=True,
+    default=None,
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
 @handle_errors
-def propose_cmd(workflow_name: str, input_file: str) -> None:
+def propose_cmd(workflow_name: str, input_text: str | None, input_file: str | None) -> None:
     """Execute a workflow and bridge its output into a candidate group."""
-    payload = _read_input_payload(input_file)
+    payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     client = _get_client()
     if client is not None:
         result = client.propose_workflow(
@@ -542,39 +652,79 @@ def ingest(mapping: str, file_path: str) -> None:
 @click.option("--query", "query_name", required=True, help="Named query from config.")
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
+@click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @handle_errors
-def query(query_name: str, param: tuple[str, ...], limit: int | None) -> None:
+def query(
+    query_name: str,
+    param: tuple[str, ...],
+    limit: int | None,
+    count_only: bool,
+) -> None:
     """Execute a named query and save the receipt."""
     params = _parse_params(param)
     client = _get_client()
     if client is not None:
-        result = client.query(_require_instance_id(), query_name, params, limit=limit)
+        effective_limit = 1 if count_only and limit is None else limit
+        instance_id = _require_instance_id()
+        try:
+            result = client.query(instance_id, query_name, params, limit=effective_limit)
+        except CoreError:
+            hints = _lookup_query_param_hints_server(
+                client, instance_id, query_name,
+            )
+            _print_query_param_hints(hints)
+            raise
         results = _entities_from_payload(result.results)
         total = result.total_results
-        if limit is not None and len(results) > limit:
-            results = results[:limit]
+        click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
+        if count_only:
+            _print_query_param_hints(result.param_hints)
+        elif limit is not None and result.truncated:
             console.print(entities_table(results, query_name))
-            click.echo(f"\nShowing {limit} of {total} results (use --limit to adjust).")
+            click.echo(f"Showing {len(results)} of {total} results (use --limit to adjust).")
         else:
             console.print(entities_table(results, query_name))
-            click.echo(f"\n{total} result(s), {result.steps_executed} step(s) executed.")
+        if total == 0 and not count_only:
+            _print_query_param_hints(result.param_hints)
         if result.receipt_id:
             click.echo(f"Receipt: {result.receipt_id}")
         return
 
     instance = CruxibleInstance.load()
-    result = service_query(instance, query_name, params)
+    try:
+        result = service_query(instance, query_name, params)
+    except CoreError:
+        _print_query_param_hints(_lookup_query_param_hints_local(instance, query_name))
+        raise
 
-    # Display results (apply limit if set)
     results = result.results
     total = result.total_results
-    if limit is not None and len(results) > limit:
+    click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
+    if count_only:
+        hints = None
+        if result.param_hints is not None:
+            hints = contracts.QueryParamHints(
+                entry_point=result.param_hints.entry_point,
+                required_params=result.param_hints.required_params,
+                primary_key=result.param_hints.primary_key,
+                example_ids=result.param_hints.example_ids,
+            )
+        _print_query_param_hints(hints)
+    elif limit is not None and len(results) > limit:
         results = results[:limit]
         console.print(entities_table(results, query_name))
-        click.echo(f"\nShowing {limit} of {total} results (use --limit to adjust).")
+        click.echo(f"Showing {limit} of {total} results (use --limit to adjust).")
     else:
         console.print(entities_table(results, query_name))
-        click.echo(f"\n{total} result(s), {result.steps_executed} step(s) executed.")
+    if total == 0 and not count_only and result.param_hints is not None:
+        _print_query_param_hints(
+            contracts.QueryParamHints(
+                entry_point=result.param_hints.entry_point,
+                required_params=result.param_hints.required_params,
+                primary_key=result.param_hints.primary_key,
+                example_ids=result.param_hints.example_ids,
+            )
+        )
     if result.receipt_id:
         click.echo(f"Receipt: {result.receipt_id}")
 
@@ -1047,6 +1197,32 @@ def schema() -> None:
     console.print(schema_table(config))
 
 
+@click.command("stats")
+@handle_errors
+def stats_cmd() -> None:
+    """Display entity and relationship counts for this instance."""
+    client = _get_client()
+    if client is not None:
+        result = client.stats(_require_instance_id())
+        entity_count = result.entity_count
+        edge_count = result.edge_count
+        entity_counts = result.entity_counts
+        relationship_counts = result.relationship_counts
+        head_snapshot_id = result.head_snapshot_id
+    else:
+        instance = CruxibleInstance.load()
+        result = service_stats(instance)
+        entity_count = result.entity_count
+        edge_count = result.edge_count
+        entity_counts = result.entity_counts
+        relationship_counts = result.relationship_counts
+        head_snapshot_id = result.head_snapshot_id
+    click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
+    if head_snapshot_id:
+        click.echo(f"Head snapshot: {head_snapshot_id}")
+    console.print(stats_table(entity_counts, relationship_counts))
+
+
 # ---------------------------------------------------------------------------
 # sample
 # ---------------------------------------------------------------------------
@@ -1066,6 +1242,120 @@ def sample(entity_type: str, limit: int) -> None:
         instance = CruxibleInstance.load()
         entities = service_sample(instance, entity_type, limit=limit)
     console.print(entities_table(entities, entity_type))
+
+
+@click.group("inspect")
+def inspect_group() -> None:
+    """Inspect entities and their immediate graph context."""
+
+
+@inspect_group.command("entity")
+@click.option("--type", "entity_type", required=True, help="Entity type.")
+@click.option("--id", "entity_id", required=True, help="Entity ID.")
+@click.option(
+    "--direction",
+    type=click.Choice(["incoming", "outgoing", "both"]),
+    default="both",
+    show_default=True,
+    help="Neighbor traversal direction.",
+)
+@click.option(
+    "--relationship", "relationship_type",
+    default=None, help="Optional relationship filter.",
+)
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max neighbors to show.")
+@handle_errors
+def inspect_entity_cmd(
+    entity_type: str,
+    entity_id: str,
+    direction: str,
+    relationship_type: str | None,
+    limit: int | None,
+) -> None:
+    """Inspect an entity and its immediate neighbors."""
+    client = _get_client()
+    if client is not None:
+        result = client.inspect_entity(
+            _require_instance_id(),
+            entity_type,
+            entity_id,
+            direction=direction,
+            relationship_type=relationship_type,
+            limit=limit,
+        )
+        inspect_result = InspectEntityResult(
+            found=result.found,
+            entity_type=result.entity_type,
+            entity_id=result.entity_id,
+            properties=result.properties,
+            neighbors=[],
+            total_neighbors=result.total_neighbors,
+        )
+        neighbor_rows = [
+            {
+                "direction": neighbor.direction,
+                "relationship_type": neighbor.relationship_type,
+                "edge_key": neighbor.edge_key,
+                "properties": neighbor.properties,
+                "entity": neighbor.entity,
+            }
+            for neighbor in result.neighbors
+        ]
+    else:
+        instance = CruxibleInstance.load()
+        inspect_result = service_inspect_entity(
+            instance,
+            entity_type,
+            entity_id,
+            direction=cast(Any, direction),
+            relationship_type=relationship_type,
+            limit=limit,
+        )
+        neighbor_rows = [
+            {
+                "direction": neighbor.direction,
+                "relationship_type": neighbor.relationship_type,
+                "edge_key": neighbor.edge_key,
+                "properties": neighbor.properties,
+                "entity": neighbor.entity.model_dump(mode="json") if neighbor.entity else {},
+            }
+            for neighbor in inspect_result.neighbors
+        ]
+    if not inspect_result.found:
+        click.echo("Not found.")
+        return
+    console.print(
+        entities_table(
+            [
+                EntityInstance(
+                    entity_type=inspect_result.entity_type,
+                    entity_id=inspect_result.entity_id,
+                    properties=inspect_result.properties,
+                )
+            ],
+            inspect_result.entity_type,
+        )
+    )
+    click.echo(f"Neighbors: {inspect_result.total_neighbors}")
+    if neighbor_rows:
+        console.print(inspect_neighbors_table(neighbor_rows))
+
+
+@click.command("reload-config")
+@click.option("--config", "config_path", default=None, help="Optional new config path.")
+@handle_errors
+def reload_config_cmd(config_path: str | None) -> None:
+    """Validate the active config or repoint the instance to a new config file."""
+    client = _get_client()
+    if client is not None:
+        result = client.reload_config(_require_instance_id(), config_path=config_path)
+    else:
+        instance = CruxibleInstance.load()
+        result = service_reload_config(instance, config_path=config_path)
+    status = "updated" if result.updated else "validated"
+    click.echo(f"Config {status}: {result.config_path}")
+    for warning in result.warnings:
+        click.secho(f"  Warning: {warning}", fg="yellow")
 
 
 # ---------------------------------------------------------------------------
