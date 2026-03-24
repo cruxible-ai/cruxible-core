@@ -43,6 +43,21 @@ class PropertySchema(BaseModel):
     default: Any | None = None
     enum: list[str] | None = None
     description: str | None = None
+    json_schema: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_json_schema_usage(self) -> PropertySchema:
+        if self.json_schema is None:
+            return self
+        if self.type != "json":
+            msg = "json_schema is only allowed on properties with type 'json'"
+            raise ValueError(msg)
+        try:
+            _json.dumps(self.json_schema, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            msg = f"json_schema must be JSON-serializable: {exc}"
+            raise ValueError(msg) from exc
+        return self
 
 
 # ---------------------------------------------------------------------------

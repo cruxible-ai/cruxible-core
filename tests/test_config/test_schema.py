@@ -49,6 +49,17 @@ class TestPropertySchema:
         assert prop.indexed is True
         assert prop.enum == ["a", "b"]
 
+    def test_json_schema_allowed_for_json_type(self):
+        prop = PropertySchema(
+            type="json",
+            json_schema={"type": "array", "items": {"type": "object"}},
+        )
+        assert prop.json_schema == {"type": "array", "items": {"type": "object"}}
+
+    def test_json_schema_rejected_for_non_json_type(self):
+        with pytest.raises(ValidationError, match="json_schema is only allowed"):
+            PropertySchema(type="string", json_schema={"type": "string"})
+
 
 class TestEntityTypeSchema:
     def test_get_primary_key(self):
