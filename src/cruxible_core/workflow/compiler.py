@@ -47,17 +47,30 @@ def build_lock(config: CoreConfig, config_base_path: Path | None = None) -> Work
     for provider_name, provider in config.providers.items():
         resolve_provider(provider_name, provider)
 
+    canonical_artifact_names = _collect_canonical_artifact_names(config)
+    locked_artifacts: dict[str, LockedArtifact] = {}
+    for name, artifact in config.artifacts.items():
+        locked_sha256 = artifact.sha256 or ""
+        if name in canonical_artifact_names and config_base_path is not None:
+            artifact_path = _resolve_local_artifact_path(artifact.uri, config_base_path)
+            if artifact_path is not None:
+                actual_sha256 = _compute_path_sha256(artifact_path)
+                if artifact.sha256 and artifact.sha256 != actual_sha256:
+                    raise ConfigError(
+                        f"Artifact '{name}' sha256 does not match live contents. "
+                        "Update the config artifact hash or restore the expected artifact."
+                    )
+                locked_sha256 = actual_sha256
+        locked_artifacts[name] = LockedArtifact(
+            kind=artifact.kind,
+            uri=artifact.uri,
+            sha256=locked_sha256,
+            metadata=artifact.metadata,
+        )
+
     lock = WorkflowLock(
         config_digest=compute_lock_config_digest(config),
-        artifacts={
-            name: LockedArtifact(
-                kind=artifact.kind,
-                uri=artifact.uri,
-                sha256=artifact.sha256 or "",
-                metadata=artifact.metadata,
-            )
-            for name, artifact in config.artifacts.items()
-        },
+        artifacts=locked_artifacts,
         providers={
             name: LockedProvider(
                 version=provider.version,
@@ -344,6 +357,20 @@ def _compute_provider_entrypoint_sha256(provider_name: str, config: CoreConfig) 
     if path is None:
         return None
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def _collect_canonical_artifact_names(config: CoreConfig) -> set[str]:
+    artifact_names: set[str] = set()
+    for workflow in config.workflows.values():
+        if not workflow.canonical:
+            continue
+        for step in workflow.steps:
+            if step.provider is None:
+                continue
+            provider = config.providers.get(step.provider)
+            if provider is not None and provider.artifact is not None:
+                artifact_names.add(provider.artifact)
+    return artifact_names
 
 
 def _verify_local_artifact_hash(uri: str, expected_sha256: str, config_base_path: Path) -> None:

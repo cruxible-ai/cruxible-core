@@ -195,6 +195,19 @@ class TestWorkflowCompiler:
                 config_base_path=canonical_workflow_instance.get_config_path().parent,
             )
 
+    def test_build_lock_rejects_stale_canonical_artifact_hash(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        config.artifacts["canonical_bundle"].sha256 = "sha256:bad"
+        canonical_workflow_instance.save_config(config)
+
+        with pytest.raises(ConfigError, match="sha256 does not match live contents"):
+            build_lock(
+                canonical_workflow_instance.load_config(),
+                canonical_workflow_instance.get_config_path().parent,
+            )
+
 
 class TestWorkflowExecutor:
     def test_execute_workflow_success(self, workflow_instance: CruxibleInstance) -> None:
