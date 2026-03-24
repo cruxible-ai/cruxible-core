@@ -39,7 +39,23 @@ def compute_lock_config_digest(config: CoreConfig) -> str:
 
 def get_lock_path(instance: InstanceProtocol) -> Path:
     """Return the workflow lock path for an instance."""
+    return instance.get_instance_dir() / LOCK_FILE_NAME
+
+
+def get_legacy_lock_path(instance: InstanceProtocol) -> Path:
+    """Return the legacy config-adjacent workflow lock path for an instance."""
     return instance.get_config_path().parent / LOCK_FILE_NAME
+
+
+def resolve_lock_path(instance: InstanceProtocol) -> Path:
+    """Resolve the active workflow lock path, preferring the instance-local location."""
+    current = get_lock_path(instance)
+    if current.exists():
+        return current
+    legacy = get_legacy_lock_path(instance)
+    if legacy.exists():
+        return legacy
+    return current
 
 
 def build_lock(config: CoreConfig, config_base_path: Path | None = None) -> WorkflowLock:
@@ -153,6 +169,7 @@ def compile_workflow(
         input_payload,
         subject=f"Workflow '{workflow_name}' input",
         error_factory=ConfigError,
+        empty_payload_hint="Use --input or --input-file to provide workflow input.",
     )
 
     compiled_steps: list[CompiledPlanStep] = []

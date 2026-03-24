@@ -6,8 +6,10 @@ from cruxible_core.workflow.compiler import (
     compile_workflow,
     compute_lock_config_digest,
     compute_lock_digest,
+    get_legacy_lock_path,
     get_lock_path,
     load_lock,
+    resolve_lock_path,
     write_lock,
 )
 from cruxible_core.workflow.executor import execute_workflow
@@ -37,7 +39,9 @@ __all__ = [
     "compute_lock_config_digest",
     "compute_lock_digest",
     "execute_workflow",
+    "get_legacy_lock_path",
     "get_lock_path",
     "load_lock",
+    "resolve_lock_path",
     "write_lock",
 ]

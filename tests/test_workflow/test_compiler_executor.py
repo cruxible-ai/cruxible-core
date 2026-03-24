@@ -15,6 +15,7 @@ from cruxible_core.workflow import (
     build_lock,
     compile_workflow,
     execute_workflow,
+    get_legacy_lock_path,
     get_lock_path,
     write_lock,
 )
@@ -112,6 +113,28 @@ class TestWorkflowCompiler:
                 {"sku": "SKU-123", "start_date": "2026-03-01"},
             )
 
+    def test_compile_workflow_empty_input_error_mentions_cli_flags(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        _write_lock_for_instance(workflow_instance)
+        config = workflow_instance.load_config()
+
+        with pytest.raises(ConfigError, match="empty input payload provided"):
+            compile_workflow(
+                config,
+                build_lock(config),
+                "evaluate_promo",
+                {},
+            )
+
+        with pytest.raises(ConfigError, match="Use --input or --input-file"):
+            compile_workflow(
+                config,
+                build_lock(config),
+                "evaluate_promo",
+                {},
+            )
+
     def test_compile_workflow_rejects_lock_digest_mismatch(
         self, workflow_instance: CruxibleInstance
     ) -> None:
@@ -207,6 +230,26 @@ class TestWorkflowCompiler:
                 canonical_workflow_instance.load_config(),
                 canonical_workflow_instance.get_config_path().parent,
             )
+
+    def test_executor_uses_legacy_lock_path_as_fallback(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        legacy_path = get_legacy_lock_path(workflow_instance)
+        write_lock(build_lock(config, workflow_instance.get_config_path().parent), legacy_path)
+
+        result = execute_workflow(
+            workflow_instance,
+            config,
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert result.output["decision"] == "approve"
 
 
 class TestWorkflowExecutor:

@@ -31,7 +31,11 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.store import GroupStore
 from cruxible_core.snapshot.types import WorldSnapshot
 from cruxible_core.storage.sqlite import SQLiteStore
-from cruxible_core.workflow.compiler import LOCK_FILE_NAME, compute_lock_config_digest
+from cruxible_core.workflow.compiler import (
+    LOCK_FILE_NAME,
+    compute_lock_config_digest,
+    resolve_lock_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +122,11 @@ class CruxibleInstance:
     def save_config(self, config: CoreConfig) -> None:
         """Save the CoreConfig back to the YAML file on disk."""
         save_config(config, self.get_config_path())
+
+    def set_config_path(self, config_path: str) -> None:
+        """Update the config path recorded in instance metadata."""
+        self.metadata["config_path"] = config_path
+        self._write_metadata()
 
     def get_config_path(self) -> Path:
         """Return the resolved config path for the instance."""
@@ -224,7 +233,7 @@ class CruxibleInstance:
         (snapshot_dir / "graph.json").write_text(graph_json)
         (snapshot_dir / "config.yaml").write_text(config_path.read_text())
 
-        lock_path = config_path.parent / LOCK_FILE_NAME
+        lock_path = resolve_lock_path(self)
         lock_digest: str | None = None
         if lock_path.exists():
             lock_bytes = lock_path.read_bytes()
@@ -304,7 +313,7 @@ class CruxibleInstance:
 
         snapshot_lock = snapshot_dir / LOCK_FILE_NAME
         if snapshot_lock.exists():
-            shutil.copy2(snapshot_lock, instance.get_config_path().parent / LOCK_FILE_NAME)
+            shutil.copy2(snapshot_lock, instance.get_instance_dir() / LOCK_FILE_NAME)
 
         instance.metadata["head_snapshot_id"] = snapshot.snapshot_id
         instance.metadata["origin_snapshot_id"] = (
