@@ -11,6 +11,7 @@ from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import (
+    service_apply_workflow,
     service_create_snapshot,
     service_fork_snapshot,
     service_list_snapshots,
@@ -123,6 +124,52 @@ class TestWorkflowExecutionServices:
         assert len(result.query_receipt_ids) == 1
         assert len(result.trace_ids) == 2
         assert all(trace_id.startswith("TRC-") for trace_id in result.trace_ids)
+
+    def test_service_run_previews_canonical_workflow(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+
+        result = service_run(canonical_workflow_instance, "build_reference", {})
+
+        assert result.mode == "preview"
+        assert result.canonical is True
+        assert result.apply_digest is not None
+        assert result.committed_snapshot_id is None
+        assert canonical_workflow_instance.load_graph().list_entities("Vendor") == []
+
+    def test_service_apply_workflow_commits_canonical_workflow(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+
+        applied = service_apply_workflow(
+            canonical_workflow_instance,
+            "build_reference",
+            {},
+            expected_apply_digest=preview.apply_digest or "",
+            expected_head_snapshot_id=preview.head_snapshot_id,
+        )
+
+        assert applied.mode == "apply"
+        assert applied.committed_snapshot_id is not None
+        assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+
+    def test_service_apply_workflow_rejects_digest_mismatch(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+
+        with pytest.raises(ConfigError, match="digest mismatch"):
+            service_apply_workflow(
+                canonical_workflow_instance,
+                "build_reference",
+                {},
+                expected_apply_digest="sha256:bad",
+                expected_head_snapshot_id=preview.head_snapshot_id,
+            )
 
     def test_service_test_supports_expected_error_cases(
         self, workflow_instance: CruxibleInstance

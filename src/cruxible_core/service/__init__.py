@@ -13,6 +13,7 @@ from cruxible_core.service.entity_proposals import (
     service_resolve_entity_proposal,
 )
 from cruxible_core.service.execution import (
+    service_apply_workflow,
     service_lock,
     service_plan,
     service_propose_workflow,
@@ -53,6 +54,7 @@ from cruxible_core.service.snapshots import (
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
+    ApplyWorkflowResult,
     EntityUpsertInput,
     FeedbackBatchServiceResult,
     FeedbackServiceResult,
@@ -86,6 +88,7 @@ __all__ = [
     # Types
     "AddEntityResult",
     "AddRelationshipResult",
+    "ApplyWorkflowResult",
     "EntityUpsertInput",
     "FeedbackBatchServiceResult",
     "FeedbackServiceResult",
@@ -116,6 +119,7 @@ __all__ = [
     # Execution
     "service_lock",
     "service_plan",
+    "service_apply_workflow",
     "service_propose_workflow",
     "service_run",
     "service_test",

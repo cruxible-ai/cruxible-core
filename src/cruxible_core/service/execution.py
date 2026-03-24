@@ -11,6 +11,7 @@ from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.service.groups import service_propose_group
 from cruxible_core.service.types import (
+    ApplyWorkflowResult,
     LockServiceResult,
     PlanServiceResult,
     ProposeWorkflowResult,
@@ -20,6 +21,7 @@ from cruxible_core.service.types import (
 from cruxible_core.workflow import (
     build_lock,
     compile_workflow,
+    compute_lock_digest,
     execute_workflow,
     get_lock_path,
     load_lock,
@@ -34,7 +36,7 @@ from cruxible_core.workflow.types import (
 def service_lock(instance: InstanceProtocol) -> LockServiceResult:
     """Generate and persist a workflow lock file for the instance config."""
     config = instance.load_config()
-    lock = build_lock(config)
+    lock = build_lock(config, instance.get_config_path().parent)
     lock_path = get_lock_path(instance)
     write_lock(lock, lock_path)
     return LockServiceResult(
@@ -53,7 +55,13 @@ def service_plan(
     """Compile a workflow plan using the current config and generated lock."""
     config = instance.load_config()
     lock = load_lock(get_lock_path(instance))
-    plan = compile_workflow(config, lock, workflow_name, input_payload)
+    plan = compile_workflow(
+        config,
+        lock,
+        workflow_name,
+        input_payload,
+        config_base_path=instance.get_config_path().parent,
+    )
     return PlanServiceResult(plan=plan)
 
 
@@ -69,6 +77,73 @@ def service_run(
         workflow=result.workflow,
         output=result.output,
         receipt_id=result.receipt.receipt_id,
+        mode=result.mode,
+        canonical=result.canonical,
+        apply_digest=result.apply_digest,
+        head_snapshot_id=result.head_snapshot_id,
+        committed_snapshot_id=result.committed_snapshot_id,
+        apply_previews=result.apply_previews,
+        query_receipt_ids=result.query_receipt_ids,
+        trace_ids=[trace.trace_id for trace in result.traces],
+        receipt=result.receipt,
+        traces=result.traces,
+    )
+
+
+def service_apply_workflow(
+    instance: InstanceProtocol,
+    workflow_name: str,
+    input_payload: dict[str, Any],
+    *,
+    expected_apply_digest: str,
+    expected_head_snapshot_id: str | None,
+) -> ApplyWorkflowResult:
+    """Apply a canonical workflow after verifying preview identity."""
+    config = instance.load_config()
+    workflow = config.workflows.get(workflow_name)
+    if workflow is None:
+        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+    if not workflow.canonical:
+        raise ConfigError(f"Workflow '{workflow_name}' is not canonical and cannot be applied")
+
+    preview = execute_workflow(
+        instance,
+        config,
+        workflow_name,
+        input_payload,
+        mode="preview",
+        persist_receipt=False,
+        persist_traces=False,
+    )
+    if preview.apply_digest != expected_apply_digest:
+        raise ConfigError("Workflow apply digest mismatch; rerun workflow preview before apply")
+    if preview.head_snapshot_id != expected_head_snapshot_id:
+        raise ConfigError("Workflow head snapshot changed; rerun workflow preview before apply")
+
+    current_lock = load_lock(get_lock_path(instance))
+    current_lock_digest = compute_lock_digest(current_lock)
+    if preview.receipt.nodes[0].detail.get("lock_digest") != current_lock_digest:
+        raise ConfigError("Workflow lock changed; rerun workflow preview before apply")
+
+    result = execute_workflow(
+        instance,
+        config,
+        workflow_name,
+        input_payload,
+        mode="apply",
+        persist_receipt=True,
+        persist_traces=True,
+    )
+    return ApplyWorkflowResult(
+        workflow=result.workflow,
+        output=result.output,
+        receipt_id=result.receipt.receipt_id,
+        mode=result.mode,
+        canonical=result.canonical,
+        apply_digest=result.apply_digest,
+        head_snapshot_id=result.head_snapshot_id,
+        committed_snapshot_id=result.committed_snapshot_id,
+        apply_previews=result.apply_previews,
         query_receipt_ids=result.query_receipt_ids,
         trace_ids=[trace.trace_id for trace in result.traces],
         receipt=result.receipt,
@@ -83,6 +158,13 @@ def service_propose_workflow(
 ) -> ProposeWorkflowResult:
     """Execute a workflow and bridge its returned proposal artifact into a candidate group."""
     config = instance.load_config()
+    workflow = config.workflows.get(workflow_name)
+    if workflow is None:
+        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+    if workflow.canonical:
+        raise ConfigError(
+            f"Canonical workflow '{workflow_name}' cannot be used with propose_workflow"
+        )
     result = execute_workflow(instance, config, workflow_name, input_payload)
     try:
         proposal_payload = RelationshipGroupProposalArtifact.model_validate(result.output)

@@ -135,6 +135,29 @@ class RunServiceResult:
     workflow: str
     output: Any
     receipt_id: str
+    mode: str = "run"
+    canonical: bool = False
+    apply_digest: str | None = None
+    head_snapshot_id: str | None = None
+    committed_snapshot_id: str | None = None
+    apply_previews: dict[str, Any] = field(default_factory=dict)
+    query_receipt_ids: list[str] = field(default_factory=list)
+    trace_ids: list[str] = field(default_factory=list)
+    receipt: Receipt | None = None
+    traces: list[ExecutionTrace] = field(default_factory=list)
+
+
+@dataclass
+class ApplyWorkflowResult:
+    workflow: str
+    output: Any
+    receipt_id: str
+    mode: str = "apply"
+    canonical: bool = True
+    apply_digest: str | None = None
+    head_snapshot_id: str | None = None
+    committed_snapshot_id: str | None = None
+    apply_previews: dict[str, Any] = field(default_factory=dict)
     query_receipt_ids: list[str] = field(default_factory=list)
     trace_ids: list[str] = field(default_factory=list)
     receipt: Receipt | None = None
