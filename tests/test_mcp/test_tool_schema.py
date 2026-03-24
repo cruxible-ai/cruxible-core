@@ -176,6 +176,7 @@ class TestOutputSchema:
                     "total_results",
                     "truncated",
                     "steps_executed",
+                    "param_hints",
                 },
             ),
             ("cruxible_feedback", {"feedback_id", "applied", "receipt_id"}),

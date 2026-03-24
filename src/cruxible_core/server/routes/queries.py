@@ -15,6 +15,7 @@ from cruxible_core.mcp.handlers import (
     _handle_get_entity_local,
     _handle_get_group_local,
     _handle_get_relationship_local,
+    _handle_inspect_entity_local,
     _handle_list_groups_local,
     _handle_list_local,
     _handle_list_resolutions_local,
@@ -22,6 +23,7 @@ from cruxible_core.mcp.handlers import (
     _handle_receipt_local,
     _handle_sample_local,
     _handle_schema_local,
+    _handle_stats_local,
 )
 from cruxible_core.server.request_models import EvaluateRequest, FindCandidatesRequest, QueryRequest
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -91,6 +93,11 @@ async def schema(instance_id: str) -> dict[str, Any]:
     return _handle_schema_local(resolve_server_instance_id(instance_id))
 
 
+@router.get("/{instance_id}/stats", response_model=contracts.StatsResult)
+async def stats(instance_id: str) -> contracts.StatsResult:
+    return _handle_stats_local(resolve_server_instance_id(instance_id))
+
+
 @router.get("/{instance_id}/sample/{entity_type}", response_model=contracts.SampleResult)
 async def sample(instance_id: str, entity_type: str, limit: int = 5) -> contracts.SampleResult:
     return _handle_sample_local(
@@ -143,6 +150,28 @@ async def get_entity(
         resolve_server_instance_id(instance_id),
         entity_type,
         entity_id,
+    )
+
+
+@router.get(
+    "/{instance_id}/inspect/entity/{entity_type}/{entity_id}",
+    response_model=contracts.InspectEntityResult,
+)
+async def inspect_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    direction: str = Query("both"),
+    relationship_type: str | None = None,
+    limit: int | None = None,
+) -> contracts.InspectEntityResult:
+    return _handle_inspect_entity_local(
+        resolve_server_instance_id(instance_id),
+        entity_type,
+        entity_id,
+        direction=direction,
+        relationship_type=relationship_type,
+        limit=limit,
     )
 
 

@@ -92,7 +92,7 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
         def workflow_lock(self, instance_id):
             assert instance_id == "inst_123"
             return contracts.WorkflowLockResult(
-                lock_path="/srv/project/cruxible.lock.yaml",
+                lock_path="/srv/project/.cruxible/cruxible.lock.yaml",
                 config_digest="sha256:abc",
                 providers_locked=1,
                 artifacts_locked=0,

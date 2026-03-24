@@ -298,6 +298,42 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/schema")
         return self._parse_json(response)
 
+    def stats(self, instance_id: str) -> contracts.StatsResult:
+        response = self._client.get(f"/api/v1/{instance_id}/stats")
+        return self._parse_model(response, contracts.StatsResult)
+
+    def inspect_entity(
+        self,
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        *,
+        direction: str = "both",
+        relationship_type: str | None = None,
+        limit: int | None = None,
+    ) -> contracts.InspectEntityResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}",
+            params={
+                "direction": direction,
+                "relationship_type": relationship_type,
+                "limit": limit,
+            },
+        )
+        return self._parse_model(response, contracts.InspectEntityResult)
+
+    def reload_config(
+        self,
+        instance_id: str,
+        *,
+        config_path: str | None = None,
+    ) -> contracts.ReloadConfigResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/config/reload",
+            json={"config_path": config_path},
+        )
+        return self._parse_model(response, contracts.ReloadConfigResult)
+
     def sample(self, instance_id: str, entity_type: str, limit: int = 5) -> contracts.SampleResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/sample/{entity_type}",

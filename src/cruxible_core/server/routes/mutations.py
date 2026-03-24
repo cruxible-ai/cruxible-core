@@ -16,12 +16,14 @@ from cruxible_core.mcp.handlers import (
     _handle_add_entity_local,
     _handle_add_relationship_impl,
     _handle_ingest_local,
+    _handle_reload_config_local,
 )
 from cruxible_core.server.request_models import (
     AddConstraintRequest,
     AddEntitiesRequest,
     AddRelationshipsRequest,
     IngestRequest,
+    ReloadConfigRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 
@@ -133,4 +135,15 @@ async def add_constraint(
         rule=req.rule,
         severity=req.severity,
         description=req.description,
+    )
+
+
+@router.post("/{instance_id}/config/reload", response_model=contracts.ReloadConfigResult)
+async def reload_config(
+    instance_id: str,
+    req: ReloadConfigRequest,
+) -> contracts.ReloadConfigResult:
+    return _handle_reload_config_local(
+        instance_id=resolve_server_instance_id(instance_id),
+        config_path=req.config_path,
     )

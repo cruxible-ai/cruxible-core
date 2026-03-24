@@ -203,3 +203,57 @@ def test_snapshot_create_uses_expected_route():
     assert result.snapshot.snapshot_id == "snap_1"
     assert captured["path"].endswith("/api/v1/inst_123/snapshots")
     assert captured["payload"]["label"] == "baseline"
+
+
+def test_stats_inspect_and_reload_use_expected_routes():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        if request.url.path.endswith("/stats"):
+            return httpx.Response(
+                200,
+                json={
+                    "entity_count": 4,
+                    "edge_count": 3,
+                    "entity_counts": {"Vehicle": 2},
+                    "relationship_counts": {"fits": 3},
+                    "head_snapshot_id": "snap_1",
+                },
+            )
+        if "/inspect/entity/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "found": True,
+                    "entity_type": "Vehicle",
+                    "entity_id": "V-1",
+                    "properties": {"vehicle_id": "V-1"},
+                    "neighbors": [],
+                    "total_neighbors": 0,
+                },
+            )
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "config_path": "/srv/project/config.yaml",
+                "updated": True,
+                "warnings": [],
+            },
+        )
+
+    client = _build_client(handler)
+
+    stats_result = client.stats("inst_123")
+    assert stats_result.entity_count == 4
+    assert captured["path"].endswith("/api/v1/inst_123/stats")
+
+    inspect_result = client.inspect_entity("inst_123", "Vehicle", "V-1", direction="both")
+    assert inspect_result.found is True
+    assert "/api/v1/inst_123/inspect/entity/Vehicle/V-1" in captured["path"]
+
+    reload_result = client.reload_config("inst_123", config_path="/srv/project/config.yaml")
+    assert reload_result.updated is True
+    assert captured["path"].endswith("/api/v1/inst_123/config/reload")
+    assert captured["payload"]["config_path"] == "/srv/project/config.yaml"

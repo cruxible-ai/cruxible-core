@@ -127,6 +127,66 @@ def test_init_then_ingest_then_query_round_trip(
     payload = response.json()
     assert payload["total_results"] == 2
     assert payload["receipt_id"]
+    assert payload["param_hints"]["primary_key"] == "vehicle_id"
+
+
+def test_stats_and_inspect_routes_return_expected_shapes(
+    app_client: TestClient,
+    server_project: Path,
+    vehicles_csv: Path,
+    parts_csv: Path,
+    fitments_csv: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    for mapping, csv_path in [
+        ("vehicles", vehicles_csv),
+        ("parts", parts_csv),
+        ("fitments", fitments_csv),
+    ]:
+        with csv_path.open("rb") as handle:
+            response = app_client.post(
+                f"/api/v1/{instance_id}/ingest",
+                data={"mapping_name": mapping},
+                files={"file": (csv_path.name, handle, "text/csv")},
+            )
+        assert response.status_code == 200
+
+    stats = app_client.get(f"/api/v1/{instance_id}/stats")
+    assert stats.status_code == 200
+    stats_payload = stats.json()
+    assert stats_payload["entity_count"] == 4
+    assert stats_payload["edge_count"] == 3
+    assert stats_payload["entity_counts"]["Vehicle"] == 2
+
+    inspect = app_client.get(
+        f"/api/v1/{instance_id}/inspect/entity/Vehicle/V-2024-CIVIC-EX"
+    )
+    assert inspect.status_code == 200
+    inspect_payload = inspect.json()
+    assert inspect_payload["found"] is True
+    assert inspect_payload["total_neighbors"] == 2
+    assert inspect_payload["neighbors"][0]["relationship_type"] == "fits"
+
+
+def test_reload_config_route_updates_instance_path(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    new_config = tmp_path / "alt-config.yaml"
+    new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/config/reload",
+        json={"config_path": str(new_config)},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["updated"] is True
+    assert payload["config_path"] == str(new_config)
 
 
 def test_repeated_init_returns_same_opaque_id(app_client: TestClient, server_project: Path):

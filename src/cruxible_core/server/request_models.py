@@ -131,6 +131,10 @@ class WorkflowTestRequest(BaseModel):
     name: str | None = None
 
 
+class ReloadConfigRequest(BaseModel):
+    config_path: str | None = None
+
+
 class ProposeEntityChangesRequest(BaseModel):
     members: list[contracts.EntityChangeInput]
     thesis_text: str = ""
