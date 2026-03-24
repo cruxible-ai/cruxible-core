@@ -154,6 +154,48 @@ def edges_table(edges: list[dict[str, Any]]) -> Table:
     return table
 
 
+def inspect_neighbors_table(neighbors: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for entity-neighbor inspection results."""
+    table = Table(title="Neighbors")
+    table.add_column("Direction")
+    table.add_column("Relationship")
+    table.add_column("Neighbor", style="cyan")
+    table.add_column("Edge Key", justify="right")
+    table.add_column("Properties")
+
+    for neighbor in neighbors:
+        entity = neighbor.get("entity", {})
+        label = f"{entity.get('entity_type', '')}:{entity.get('entity_id', '')}"
+        props = neighbor.get("properties", {})
+        props_str = ", ".join(f"{k}={v}" for k, v in props.items() if k != "_provenance")
+        table.add_row(
+            str(neighbor.get("direction", "")),
+            str(neighbor.get("relationship_type", "")),
+            label,
+            str(neighbor.get("edge_key", "")),
+            props_str,
+        )
+
+    return table
+
+
+def stats_table(
+    entity_counts: dict[str, int],
+    relationship_counts: dict[str, int],
+) -> Table:
+    """Build a Rich table for graph counts by type."""
+    table = Table(title="Graph Stats")
+    table.add_column("Section", style="cyan")
+    table.add_column("Name")
+    table.add_column("Count", justify="right")
+
+    for name, count in sorted(entity_counts.items()):
+        table.add_row("Entity", name, str(count))
+    for name, count in sorted(relationship_counts.items()):
+        table.add_row("Relationship", name, str(count))
+    return table
+
+
 def groups_table(groups: list[CandidateGroup]) -> Table:
     """Build a Rich table for a list of candidate groups."""
     table = Table(title="Candidate Groups")
@@ -236,19 +278,36 @@ def schema_table(config: CoreConfig) -> Table:
 
     for name, et in config.entity_types.items():
         pk = et.get_primary_key() or "-"
-        props = ", ".join(et.properties.keys())
+        props = ", ".join(
+            _format_property_name(prop_name, prop)
+            for prop_name, prop in et.properties.items()
+        )
         table.add_row("Entity", name, f"pk={pk}  props=[{props}]")
 
     for rel in config.relationships:
+        prop_names = ", ".join(
+            _format_property_name(prop_name, prop)
+            for prop_name, prop in rel.properties.items()
+        )
+        details = f"{rel.from_entity} -> {rel.to_entity}  ({rel.cardinality})"
+        if prop_names:
+            details = f"{details}  props=[{prop_names}]"
         table.add_row(
             "Relationship",
             rel.name,
-            f"{rel.from_entity} -> {rel.to_entity}  ({rel.cardinality})",
+            details,
         )
 
     for name, q in config.named_queries.items():
         steps = len(q.traversal)
         table.add_row("Query", name, f"entry={q.entry_point}  steps={steps}")
+
+    for name, contract in config.contracts.items():
+        fields = ", ".join(
+            _format_property_name(field_name, field_schema)
+            for field_name, field_schema in contract.fields.items()
+        )
+        table.add_row("Contract", name, f"fields=[{fields}]")
 
     for name, m in config.ingestion.items():
         if m.is_entity:
@@ -257,3 +316,9 @@ def schema_table(config: CoreConfig) -> Table:
             table.add_row("Ingestion", name, f"relationship={m.relationship_type}")
 
     return table
+
+
+def _format_property_name(name: str, schema: Any) -> str:
+    if getattr(schema, "json_schema", None) is not None:
+        return f"{name}{{json}}"
+    return name

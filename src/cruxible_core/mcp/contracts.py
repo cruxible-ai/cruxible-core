@@ -123,6 +123,7 @@ class QueryToolResult(BaseModel):
     total_results: int
     truncated: bool = False
     steps_executed: int
+    param_hints: "QueryParamHints | None" = None
 
 
 class FeedbackResult(BaseModel):
@@ -200,6 +201,44 @@ class GetRelationshipResult(BaseModel):
     to_id: str
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class QueryParamHints(BaseModel):
+    entry_point: str
+    required_params: list[str] = Field(default_factory=list)
+    primary_key: str | None = None
+    example_ids: list[str] = Field(default_factory=list)
+
+
+class StatsResult(BaseModel):
+    entity_count: int
+    edge_count: int
+    entity_counts: dict[str, int] = Field(default_factory=dict)
+    relationship_counts: dict[str, int] = Field(default_factory=dict)
+    head_snapshot_id: str | None = None
+
+
+class InspectNeighborResult(BaseModel):
+    direction: Literal["incoming", "outgoing"]
+    relationship_type: str
+    edge_key: int | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    entity: dict[str, Any]
+
+
+class InspectEntityResult(BaseModel):
+    found: bool
+    entity_type: str
+    entity_id: str
+    properties: dict[str, Any] = Field(default_factory=dict)
+    neighbors: list[InspectNeighborResult] = Field(default_factory=list)
+    total_neighbors: int = 0
+
+
+class ReloadConfigResult(BaseModel):
+    config_path: str
+    updated: bool
+    warnings: list[str] = Field(default_factory=list)
 
 
 class WorkflowLockResult(BaseModel):

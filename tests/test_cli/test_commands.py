@@ -158,6 +158,7 @@ class TestQuery:
         )
         assert result.exit_code == 0
         assert "Receipt:" in result.output
+        assert "2 result(s), 1 step(s) executed." in result.output
 
     def test_query_bad_name(
         self,
@@ -170,6 +171,44 @@ class TestQuery:
             ["query", "--query", "nonexistent", "--param", "id=1"],
         )
         assert result.exit_code == 1
+
+    def test_query_count_mode_prints_summary_and_hints(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "--query",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--count",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "2 result(s), 1 step(s) executed." in result.output
+        assert "Param hints:" in result.output
+        assert "primary_key=vehicle_id" in result.output
+        assert "Part entities" not in result.output
+
+    def test_query_zero_results_prints_hints(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=UNKNOWN"],
+        )
+        assert result.exit_code == 1
+        assert "Param hints:" in result.output
+        assert "primary_key=vehicle_id" in result.output
+        assert "examples=V-2024-ACCORD-SPORT, V-2024-CIVIC-EX" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +287,58 @@ class TestExplain:
             ["explain", "--receipt", "RCP-nonexistent"],
         )
         assert result.exit_code == 1
+
+
+class TestStatsInspectReload:
+    def test_stats_outputs_counts(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(runner, populated_instance.root, ["stats"])
+        assert result.exit_code == 0
+        assert "Graph: 4 entities, 4 edges" in result.output
+        assert "Vehicle" in result.output
+        assert "fits" in result.output
+
+    def test_inspect_entity_outputs_neighbors(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["inspect", "entity", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
+        )
+        assert result.exit_code == 0
+        assert "Neighbors: 2" in result.output
+        assert "Part:BP-1001" in result.output
+        assert "fits" in result.output
+
+    def test_reload_config_repoints_instance(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        tmp_path: Path,
+    ) -> None:
+        new_config = tmp_path / "alt-config.yaml"
+        new_config.write_text(
+            (populated_instance.root / "config.yaml")
+            .read_text()
+            .replace("car_parts_compatibility", "alt_name")
+        )
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["reload-config", "--config", str(new_config)],
+        )
+
+        assert result.exit_code == 0
+        assert "Config updated:" in result.output
+        reloaded = CruxibleInstance.load(populated_instance.root)
+        assert reloaded.load_config().name == "alt_name"
 
 
 # ---------------------------------------------------------------------------

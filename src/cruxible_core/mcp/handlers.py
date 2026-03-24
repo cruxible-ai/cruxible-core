@@ -49,6 +49,7 @@ from cruxible_core.service import (
     service_get_relationship,
     service_ingest,
     service_init,
+    service_inspect_entity,
     service_list,
     service_list_entity_proposals,
     service_list_groups,
@@ -61,11 +62,13 @@ from cruxible_core.service import (
     service_propose_group,
     service_propose_workflow,
     service_query,
+    service_reload_config,
     service_resolve_entity_proposal,
     service_resolve_group,
     service_run,
     service_sample,
     service_schema,
+    service_stats,
     service_test,
     service_update_trust_status,
     service_validate,
@@ -588,6 +591,16 @@ def _handle_query_local(
         total_results=total,
         truncated=truncated,
         steps_executed=result.steps_executed,
+        param_hints=(
+            contracts.QueryParamHints(
+                entry_point=result.param_hints.entry_point,
+                required_params=result.param_hints.required_params,
+                primary_key=result.param_hints.primary_key,
+                example_ids=result.param_hints.example_ids,
+            )
+            if result.param_hints is not None
+            else None
+        ),
     )
 
 
@@ -990,6 +1003,86 @@ def _handle_schema_local(instance_id: str) -> dict[str, Any]:
     instance = _manager.get(instance_id)
     config = service_schema(instance)
     return config.model_dump(mode="json")
+
+
+def _handle_stats_local(instance_id: str) -> contracts.StatsResult:
+    """Return grouped entity and relationship counts."""
+    check_permission(
+        "cruxible_stats",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = _manager.get(instance_id)
+    result = service_stats(instance)
+    return contracts.StatsResult(
+        entity_count=result.entity_count,
+        edge_count=result.edge_count,
+        entity_counts=result.entity_counts,
+        relationship_counts=result.relationship_counts,
+        head_snapshot_id=result.head_snapshot_id,
+    )
+
+
+def _handle_inspect_entity_local(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    *,
+    direction: str = "both",
+    relationship_type: str | None = None,
+    limit: int | None = None,
+) -> contracts.InspectEntityResult:
+    """Inspect an entity and its immediate neighbors."""
+    check_permission(
+        "cruxible_inspect_entity",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = _manager.get(instance_id)
+    result = service_inspect_entity(
+        instance,
+        entity_type,
+        entity_id,
+        direction=direction,  # type: ignore[arg-type]
+        relationship_type=relationship_type,
+        limit=limit,
+    )
+    return contracts.InspectEntityResult(
+        found=result.found,
+        entity_type=result.entity_type,
+        entity_id=result.entity_id,
+        properties=result.properties,
+        neighbors=[
+            contracts.InspectNeighborResult(
+                direction=neighbor.direction,  # type: ignore[arg-type]
+                relationship_type=neighbor.relationship_type,
+                edge_key=neighbor.edge_key,
+                properties=neighbor.properties,
+                entity=neighbor.entity.model_dump(mode="json") if neighbor.entity else {},
+            )
+            for neighbor in result.neighbors
+        ],
+        total_neighbors=result.total_neighbors,
+    )
+
+
+def _handle_reload_config_local(
+    instance_id: str,
+    config_path: str | None = None,
+) -> contracts.ReloadConfigResult:
+    """Validate the current config or repoint the instance to a new config path."""
+    check_permission(
+        "cruxible_reload_config",
+        instance_id=instance_id,
+        required_mode=PermissionMode.ADMIN,
+    )
+    instance = _manager.get(instance_id)
+    result = service_reload_config(instance, config_path=config_path)
+    return contracts.ReloadConfigResult(
+        config_path=result.config_path,
+        updated=result.updated,
+        warnings=result.warnings,
+    )
 
 
 def handle_schema(instance_id: str) -> dict[str, Any]:
