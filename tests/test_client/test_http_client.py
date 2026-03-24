@@ -137,6 +137,45 @@ def test_workflow_propose_uses_expected_route():
     assert captured["payload"]["workflow_name"] == "wf"
 
 
+def test_workflow_apply_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "workflow": "wf",
+                "output": {"total_results": 1},
+                "receipt_id": "RCP-2",
+                "mode": "apply",
+                "canonical": True,
+                "apply_digest": "sha256:abc",
+                "head_snapshot_id": None,
+                "committed_snapshot_id": "snap_2",
+                "apply_previews": {},
+                "query_receipt_ids": [],
+                "trace_ids": ["TRC-2"],
+                "receipt": None,
+                "traces": [],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.workflow_apply(
+        "inst_123",
+        workflow_name="wf",
+        expected_apply_digest="sha256:abc",
+        expected_head_snapshot_id=None,
+        input_payload={"id": "1"},
+    )
+    assert result.committed_snapshot_id == "snap_2"
+    assert captured["path"].endswith("/api/v1/inst_123/workflows/apply")
+    assert captured["payload"]["workflow_name"] == "wf"
+    assert captured["payload"]["expected_apply_digest"] == "sha256:abc"
+
+
 def test_snapshot_create_uses_expected_route():
     captured: dict[str, Any] = {}
 

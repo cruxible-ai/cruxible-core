@@ -357,6 +357,26 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.WorkflowRunResult)
 
+    def workflow_apply(
+        self,
+        instance_id: str,
+        *,
+        workflow_name: str,
+        expected_apply_digest: str,
+        expected_head_snapshot_id: str | None = None,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowApplyResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/workflows/apply",
+            json={
+                "workflow_name": workflow_name,
+                "input": input_payload or {},
+                "expected_apply_digest": expected_apply_digest,
+                "expected_head_snapshot_id": expected_head_snapshot_id,
+            },
+        )
+        return self._parse_model(response, contracts.WorkflowApplyResult)
+
     def workflow_test(
         self,
         instance_id: str,

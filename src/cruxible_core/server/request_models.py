@@ -120,6 +120,13 @@ class WorkflowInputRequest(BaseModel):
     input: dict[str, Any] | None = None
 
 
+class WorkflowApplyRequest(BaseModel):
+    workflow_name: str
+    input: dict[str, Any] | None = None
+    expected_apply_digest: str
+    expected_head_snapshot_id: str | None = None
+
+
 class WorkflowTestRequest(BaseModel):
     name: str | None = None
 

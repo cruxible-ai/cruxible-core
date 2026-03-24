@@ -35,6 +35,7 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_apply_workflow,
     service_create_snapshot,
     service_evaluate,
     service_feedback,
@@ -270,7 +271,7 @@ def _handle_workflow_lock_local(instance_id: str) -> contracts.WorkflowLockResul
     check_permission(
         "workflow_lock",
         instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
+        required_mode=PermissionMode.ADMIN,
     )
     instance = _manager.get(instance_id)
     result = service_lock(instance)
@@ -315,6 +316,50 @@ def _handle_workflow_run_local(
         workflow=result.workflow,
         output=result.output,
         receipt_id=result.receipt_id,
+        mode=result.mode,
+        canonical=result.canonical,
+        apply_digest=result.apply_digest,
+        head_snapshot_id=result.head_snapshot_id,
+        committed_snapshot_id=result.committed_snapshot_id,
+        apply_previews=result.apply_previews,
+        query_receipt_ids=result.query_receipt_ids,
+        trace_ids=result.trace_ids,
+        receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
+        traces=[trace.model_dump(mode="json") for trace in result.traces],
+    )
+
+
+def _handle_workflow_apply_local(
+    instance_id: str,
+    workflow_name: str,
+    expected_apply_digest: str,
+    expected_head_snapshot_id: str | None,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowApplyResult:
+    """Apply a canonical workflow through the governed service layer."""
+    check_permission(
+        "workflow_apply",
+        instance_id=instance_id,
+        required_mode=PermissionMode.ADMIN,
+    )
+    instance = _manager.get(instance_id)
+    result = service_apply_workflow(
+        instance,
+        workflow_name,
+        input_payload or {},
+        expected_apply_digest=expected_apply_digest,
+        expected_head_snapshot_id=expected_head_snapshot_id,
+    )
+    return contracts.WorkflowApplyResult(
+        workflow=result.workflow,
+        output=result.output,
+        receipt_id=result.receipt_id,
+        mode=result.mode,
+        canonical=result.canonical,
+        apply_digest=result.apply_digest,
+        head_snapshot_id=result.head_snapshot_id,
+        committed_snapshot_id=result.committed_snapshot_id,
+        apply_previews=result.apply_previews,
         query_receipt_ids=result.query_receipt_ids,
         trace_ids=result.trace_ids,
         receipt=result.receipt.model_dump(mode="json") if result.receipt else None,

@@ -185,6 +185,30 @@ def test_permission_denied_returns_structured_403(
     assert response.json()["error_type"] == "PermissionDeniedError"
 
 
+def test_workflow_lock_requires_admin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_server_project: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    reset_permissions()
+    reset_registry()
+    reset_client_cache()
+    get_manager().clear()
+    admin_client = TestClient(create_app())
+    instance_id = _init_instance(admin_client, workflow_server_project)
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+    reset_permissions()
+    reset_client_cache()
+    get_manager().clear()
+    client = TestClient(create_app())
+    response = client.post(f"/api/v1/{instance_id}/workflows/lock")
+
+    assert response.status_code == 403
+    assert response.json()["error_type"] == "PermissionDeniedError"
+
+
 def test_data_validation_error_returns_400_with_errors(
     app_client: TestClient,
     server_project: Path,
@@ -636,6 +660,36 @@ def test_workflow_routes_lock_plan_run_and_test(
     test = app_client.post(f"/api/v1/{instance_id}/workflows/test", json={"name": None})
     assert test.status_code == 200
     assert test.json()["failed"] == 0
+
+
+def test_workflow_apply_route_commits_canonical_snapshot(
+    app_client: TestClient,
+    canonical_workflow_project: Path,
+):
+    instance_id = _init_instance(app_client, canonical_workflow_project)
+
+    lock = app_client.post(f"/api/v1/{instance_id}/workflows/lock")
+    assert lock.status_code == 200
+
+    preview = app_client.post(
+        f"/api/v1/{instance_id}/workflows/run",
+        json={"workflow_name": "build_reference", "input": {}},
+    )
+    assert preview.status_code == 200
+    preview_json = preview.json()
+    assert preview_json["mode"] == "preview"
+
+    apply = app_client.post(
+        f"/api/v1/{instance_id}/workflows/apply",
+        json={
+            "workflow_name": "build_reference",
+            "input": {},
+            "expected_apply_digest": preview_json["apply_digest"],
+            "expected_head_snapshot_id": preview_json["head_snapshot_id"],
+        },
+    )
+    assert apply.status_code == 200
+    assert apply.json()["committed_snapshot_id"].startswith("snap_")
 
 
 def test_server_routes_reject_unknown_instance_ids(
