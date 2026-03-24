@@ -17,12 +17,14 @@ def validate_contract_payload(
     *,
     subject: str,
     error_factory: Callable[[str], Exception],
+    empty_payload_hint: str | None = None,
 ) -> dict[str, Any]:
     """Validate and normalize a payload against a named contract."""
     contract = config.contracts.get(contract_name)
     if contract is None:
         raise ConfigError(f"Contract '{contract_name}' not found for {subject}")
 
+    required_missing: list[str] = []
     errors: list[str] = []
     normalized: dict[str, Any] = {}
 
@@ -33,7 +35,7 @@ def validate_contract_payload(
                 continue
             if field_schema.optional:
                 continue
-            errors.append(f"missing required field '{field_name}'")
+            required_missing.append(field_name)
             continue
         try:
             normalized[field_name] = _normalize_value(payload[field_name], field_schema)
@@ -43,6 +45,17 @@ def validate_contract_payload(
     extra = sorted(set(payload.keys()) - set(contract.fields.keys()))
     for field_name in extra:
         errors.append(f"unexpected field '{field_name}'")
+
+    if not payload and required_missing:
+        missing = ", ".join(f"'{field_name}'" for field_name in required_missing)
+        message = f"{subject} failed contract '{contract_name}': empty input payload provided"
+        message = f"{message}; required fields: {missing}"
+        if empty_payload_hint:
+            message = f"{message}. {empty_payload_hint}"
+        raise error_factory(message)
+
+    for field_name in required_missing:
+        errors.append(f"missing required field '{field_name}'")
 
     if errors:
         raise error_factory(f"{subject} failed contract '{contract_name}': {'; '.join(errors)}")

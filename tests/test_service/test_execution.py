@@ -22,6 +22,7 @@ from cruxible_core.service import (
     service_run,
     service_test,
 )
+from cruxible_core.workflow import get_legacy_lock_path, get_lock_path
 
 
 @pytest.fixture
@@ -80,6 +81,7 @@ class TestWorkflowExecutionServices:
     ) -> None:
         result = service_lock(workflow_instance)
 
+        assert Path(result.lock_path).parent == workflow_instance.get_instance_dir()
         assert result.lock_path.endswith("cruxible.lock.yaml")
         assert result.config_digest.startswith("sha256:")
         assert result.providers_locked == 2
@@ -102,6 +104,26 @@ class TestWorkflowExecutionServices:
         assert result.plan.workflow == "evaluate_promo"
         assert result.plan.steps[0].kind == "query"
         assert result.plan.steps[1].provider_name == "lift_predictor"
+
+    def test_instance_local_lock_wins_over_legacy_fallback(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        result = service_lock(workflow_instance)
+        legacy_path = get_legacy_lock_path(workflow_instance)
+        legacy_path.write_text("config_digest: sha256:bad\nartifacts: {}\nproviders: {}\n")
+
+        planned = service_plan(
+            workflow_instance,
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert planned.plan.workflow == "evaluate_promo"
+        assert Path(result.lock_path) == get_lock_path(workflow_instance)
 
     def test_service_run_returns_receipt_and_trace_ids(
         self, workflow_instance: CruxibleInstance
@@ -317,5 +339,6 @@ class TestWorkflowExecutionServices:
         assert fork_result.snapshot.snapshot_id == created.snapshot.snapshot_id
         assert fork_result.instance.get_root_path() == fork_root
         assert fork_result.instance.metadata["origin_snapshot_id"] == created.snapshot.snapshot_id
+        assert (fork_root / ".cruxible" / "cruxible.lock.yaml").exists()
         fork_graph = fork_result.instance.load_graph()
         assert fork_graph.edge_count("recommended_for") == 2

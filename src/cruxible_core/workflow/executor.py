@@ -19,7 +19,7 @@ from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
 from cruxible_core.query.engine import execute_query
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.workflow.compiler import compile_workflow, get_lock_path, load_lock
+from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.types import (
@@ -50,7 +50,7 @@ def execute_workflow(
     persist_traces: bool = True,
 ) -> WorkflowExecutionResult:
     """Execute a workflow against the current instance and persist traces/receipts."""
-    lock = load_lock(get_lock_path(instance))
+    lock = load_lock(resolve_lock_path(instance))
     plan = compile_workflow(
         config,
         lock,

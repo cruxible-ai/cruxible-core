@@ -100,7 +100,7 @@ class TestWorkflowCli:
     ) -> None:
         result = _chdir_run(runner, workflow_project.root, ["lock"])
         assert result.exit_code == 0
-        assert (workflow_project.root / "cruxible.lock.yaml").exists()
+        assert (workflow_project.root / ".cruxible" / "cruxible.lock.yaml").exists()
         assert "digest=" in result.output
 
     def test_plan_prints_compiled_plan(
@@ -137,6 +137,55 @@ class TestWorkflowCli:
         assert "Receipt ID:" in result.output
         assert "Trace IDs:" in result.output
         assert '"decision": "approve"' in result.output
+
+    def test_run_supports_inline_input(
+        self,
+        runner: CliRunner,
+        workflow_project: CruxibleInstance,
+    ) -> None:
+        _chdir_run(runner, workflow_project.root, ["lock"])
+        result = _chdir_run(
+            runner,
+            workflow_project.root,
+            [
+                "run",
+                "--workflow",
+                "evaluate_promo",
+                "--input",
+                '{"sku":"SKU-123","start_date":"2026-03-01","end_date":"2026-03-07"}',
+            ],
+        )
+        assert result.exit_code == 0
+        assert '"decision": "approve"' in result.output
+
+    def test_run_uses_empty_input_by_default_for_empty_contract(
+        self,
+        runner: CliRunner,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        _chdir_run(runner, canonical_workflow_instance.root, ["lock"])
+        result = _chdir_run(
+            runner,
+            canonical_workflow_instance.root,
+            ["run", "--workflow", "build_reference"],
+        )
+        assert result.exit_code == 0
+        assert "Apply digest:" in result.output
+
+    def test_run_reports_clear_error_for_missing_required_input(
+        self,
+        runner: CliRunner,
+        workflow_project: CruxibleInstance,
+    ) -> None:
+        _chdir_run(runner, workflow_project.root, ["lock"])
+        result = _chdir_run(
+            runner,
+            workflow_project.root,
+            ["run", "--workflow", "evaluate_promo"],
+        )
+        assert result.exit_code == 1
+        assert "empty input payload provided" in result.output
+        assert "--input or --input-file" in result.output
 
     def test_test_executes_config_defined_tests(
         self,
