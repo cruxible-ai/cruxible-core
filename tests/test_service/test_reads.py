@@ -14,10 +14,13 @@ from cruxible_core.service import (
     service_get_receipt,
     service_get_relationship,
     service_init,
+    service_inspect_entity,
     service_list,
     service_query,
+    service_reload_config,
     service_sample,
     service_schema,
+    service_stats,
 )
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
@@ -92,6 +95,18 @@ class TestSchema:
         assert "Part" in config.entity_types
         assert any(r.name == "fits" for r in config.relationships)
 
+    def test_reload_config_repoints_instance_path(
+        self, populated_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        new_config = tmp_path / "alt-config.yaml"
+        new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
+
+        result = service_reload_config(populated_instance, str(new_config))
+
+        assert result.updated is True
+        assert populated_instance.get_config_path() == new_config
+        assert populated_instance.load_config().name == "alt_name"
+
 
 # ---------------------------------------------------------------------------
 # service_sample
@@ -124,6 +139,19 @@ class TestGetEntity:
     def test_not_found(self, populated_instance: CruxibleInstance) -> None:
         entity = service_get_entity(populated_instance, "Vehicle", "NONEXISTENT")
         assert entity is None
+
+    def test_inspect_entity_returns_neighbors(self, populated_instance: CruxibleInstance) -> None:
+        result = service_inspect_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX")
+
+        assert result.found is True
+        assert result.total_neighbors == 2
+        assert {neighbor.relationship_type for neighbor in result.neighbors} == {"fits"}
+        assert {neighbor.direction for neighbor in result.neighbors} == {"incoming"}
+
+    def test_inspect_entity_not_found(self, populated_instance: CruxibleInstance) -> None:
+        result = service_inspect_entity(populated_instance, "Vehicle", "MISSING")
+        assert result.found is False
+        assert result.neighbors == []
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +215,9 @@ class TestGetReceipt:
         assert query_result.receipt_id is not None
         receipt = service_get_receipt(populated_instance, query_result.receipt_id)
         assert receipt.receipt_id == query_result.receipt_id
+        assert query_result.param_hints is not None
+        assert query_result.param_hints.primary_key == "vehicle_id"
+        assert "V-2024-CIVIC-EX" in query_result.param_hints.example_ids
 
     def test_not_found(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ReceiptNotFoundError):
@@ -239,6 +270,18 @@ class TestList:
     def test_entities_requires_type(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="entity_type is required"):
             service_list(populated_instance, "entities")
+
+
+class TestStats:
+    def test_returns_grouped_counts(self, populated_instance: CruxibleInstance) -> None:
+        result = service_stats(populated_instance)
+
+        assert result.entity_count == 4
+        assert result.edge_count == 4
+        assert result.entity_counts["Vehicle"] == 2
+        assert result.entity_counts["Part"] == 2
+        assert result.relationship_counts["fits"] == 3
+        assert result.relationship_counts["replaces"] == 1
 
     def test_invalid_resource(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="Unknown resource"):

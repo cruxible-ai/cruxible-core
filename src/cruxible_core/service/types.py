@@ -77,12 +77,56 @@ class ValidateServiceResult:
 
 
 @dataclass
+class QueryParamHints:
+    entry_point: str
+    required_params: list[str] = field(default_factory=list)
+    primary_key: str | None = None
+    example_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class QueryServiceResult:
     results: list[EntityInstance]
     receipt_id: str | None
     receipt: Receipt | None
     total_results: int
     steps_executed: int
+    param_hints: QueryParamHints | None = None
+
+
+@dataclass
+class StatsServiceResult:
+    entity_count: int
+    edge_count: int
+    entity_counts: dict[str, int] = field(default_factory=dict)
+    relationship_counts: dict[str, int] = field(default_factory=dict)
+    head_snapshot_id: str | None = None
+
+
+@dataclass
+class InspectNeighborResult:
+    direction: str
+    relationship_type: str
+    edge_key: int | None
+    properties: dict[str, Any] = field(default_factory=dict)
+    entity: EntityInstance | None = None
+
+
+@dataclass
+class InspectEntityResult:
+    found: bool
+    entity_type: str
+    entity_id: str
+    properties: dict[str, Any] = field(default_factory=dict)
+    neighbors: list[InspectNeighborResult] = field(default_factory=list)
+    total_neighbors: int = 0
+
+
+@dataclass
+class ReloadConfigResult:
+    config_path: str
+    updated: bool
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass

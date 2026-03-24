@@ -601,6 +601,65 @@ class EntityGraph:
 
         return results
 
+    def get_neighbor_relationships(
+        self,
+        entity_type: str,
+        entity_id: str,
+        relationship_type: str | None = None,
+        direction: str = "both",
+    ) -> list[dict[str, Any]]:
+        """Get neighboring entities plus edge metadata for inspection surfaces."""
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
+            return []
+
+        results: list[dict[str, Any]] = []
+        seen_edges: set[tuple[str, str, str]] = set()
+
+        if direction in ("outgoing", "both"):
+            for source, target, key, data in self._graph.out_edges(node_id, keys=True, data=True):
+                rel_type = data.get("relationship_type")
+                if relationship_type is not None and rel_type != relationship_type:
+                    continue
+                edge_id = (source, target, str(key))
+                if edge_id in seen_edges:
+                    continue
+                seen_edges.add(edge_id)
+                entity = self.get_entity(*split_node_id(target))
+                if entity is not None:
+                    results.append(
+                        {
+                            "direction": "outgoing",
+                            "relationship_type": rel_type,
+                            "edge_key": key,
+                            "properties": data.get("properties", {}),
+                            "entity": entity,
+                        }
+                    )
+
+        if direction in ("incoming", "both"):
+            for source, target, key, data in self._graph.in_edges(node_id, keys=True, data=True):
+                rel_type = data.get("relationship_type")
+                if relationship_type is not None and rel_type != relationship_type:
+                    continue
+                edge_id = (source, target, str(key))
+                if edge_id in seen_edges:
+                    continue
+                seen_edges.add(edge_id)
+                entity = self.get_entity(*split_node_id(source))
+                if entity is not None:
+                    results.append(
+                        {
+                            "direction": "incoming",
+                            "relationship_type": rel_type,
+                            "edge_key": key,
+                            "properties": data.get("properties", {}),
+                            "entity": entity,
+                        }
+                    )
+
+        return results
+
     # -------------------------------------------------------------------------
     # Introspection
     # -------------------------------------------------------------------------
