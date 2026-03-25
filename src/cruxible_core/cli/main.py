@@ -70,7 +70,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     add_entity_cmd,
     add_relationship_cmd,
     apply_cmd,
-    entity_proposal_group,
     evaluate,
     explain,
     export_group,
@@ -130,5 +129,4 @@ cli.add_command(add_entity_cmd, "add-entity")  # type: ignore[has-type]
 cli.add_command(add_relationship_cmd, "add-relationship")  # type: ignore[has-type]
 cli.add_command(add_constraint_cmd, "add-constraint")  # type: ignore[has-type]
 cli.add_command(export_group, "export")  # type: ignore[has-type]
-cli.add_command(entity_proposal_group, "entity-proposal")  # type: ignore[has-type]
 cli.add_command(group_group, "group")  # type: ignore[has-type]

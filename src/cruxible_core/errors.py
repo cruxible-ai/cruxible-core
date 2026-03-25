@@ -278,14 +278,6 @@ class GroupNotFoundError(CoreError):
         super().__init__(f"Group '{group_id}' not found")
 
 
-class EntityProposalNotFoundError(CoreError):
-    """Entity proposal ID not found in store."""
-
-    def __init__(self, proposal_id: str):
-        self.proposal_id = proposal_id
-        super().__init__(f"Entity proposal '{proposal_id}' not found")
-
-
 # ---------------------------------------------------------------------------
 # Permission errors
 # ---------------------------------------------------------------------------

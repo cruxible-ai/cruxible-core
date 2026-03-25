@@ -24,10 +24,6 @@ GroupResolvedBy = Literal["human", "ai_review"]
 GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
 GroupProposedBy = Literal["human", "ai_review"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
-EntityProposalStatus = Literal["pending_review", "applying", "resolved"]
-EntityProposalAction = Literal["approve", "reject"]
-EntityProposalResolvedBy = Literal["human", "ai_review"]
-EntityChangeOperation = Literal["create", "patch"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -80,13 +76,6 @@ class FeedbackBatchItemInput(BaseModel):
     reason: str = ""
     corrections: dict[str, Any] | None = None
     group_override: bool = False
-
-
-class EntityChangeInput(BaseModel):
-    entity_type: str
-    entity_id: str
-    operation: EntityChangeOperation
-    properties: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Tool return contracts ─────────────────────────────────────────────
@@ -347,31 +336,6 @@ class ResolveGroupToolResult(BaseModel):
     action: str
     edges_created: int
     edges_skipped: int
-    resolution_id: str | None = None
-    receipt_id: str | None = None
-
-
-class ProposeEntityChangesToolResult(BaseModel):
-    proposal_id: str
-    status: str
-    member_count: int
-
-
-class GetEntityProposalToolResult(BaseModel):
-    proposal: dict[str, Any]
-    members: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class ListEntityProposalsToolResult(BaseModel):
-    proposals: list[dict[str, Any]] = Field(default_factory=list)
-    total: int
-
-
-class ResolveEntityProposalToolResult(BaseModel):
-    proposal_id: str
-    action: str
-    entities_created: int
-    entities_patched: int
     resolution_id: str | None = None
     receipt_id: str | None = None
 

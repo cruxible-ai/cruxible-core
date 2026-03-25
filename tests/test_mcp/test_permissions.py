@@ -114,7 +114,6 @@ class TestCheckPermission:
         check_permission("cruxible_feedback")
         check_permission("cruxible_feedback_batch")
         check_permission("cruxible_propose_workflow")
-        check_permission("cruxible_propose_entity_changes")
 
     def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
@@ -124,8 +123,6 @@ class TestCheckPermission:
             check_permission("cruxible_add_entity")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_resolve_group")
-        with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_resolve_entity_proposal")
 
     def test_admin_tool_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")

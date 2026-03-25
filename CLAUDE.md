@@ -82,7 +82,6 @@ The source of truth for all business logic. Organized by concern:
 - `feedback.py` — Feedback collection and outcome recording
 - `execution.py` — Workflow execution (plan, run, test, apply, propose, lock)
 - `groups.py` — Candidate group proposal management with resolution/trust
-- `entity_proposals.py` — Governed entity change proposals
 - `analysis.py` — Constraint evaluation and candidate finding
 - `snapshots.py` — World state snapshots for branching/recovery
 - `types.py` — All input/output types (typed dataclasses)
@@ -127,7 +126,6 @@ External provider execution with tracing. Providers are callables resolved by th
 Two parallel governed-mutation systems:
 
 - **Groups** (`group/`) — Relationship proposals using tri-state signals (support/contradict/unsure) from integrations. `CandidateGroup` tracks status: pending_review → auto_resolved/applying → resolved.
-- **Entity Proposals** (`entity_proposal/`) — Entity create/patch proposals with similar lifecycle.
 
 Both stored in feedback.db via their respective stores.
 

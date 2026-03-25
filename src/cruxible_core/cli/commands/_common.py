@@ -13,7 +13,6 @@ from rich.console import Console
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.client import CruxibleClient
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.entity_proposal.types import EntityChangeMember, EntityChangeProposal
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
@@ -248,14 +247,6 @@ def _groups_from_payload(items: list[dict[str, Any]]) -> list[CandidateGroup]:
 
 def _members_from_payload(items: list[dict[str, Any]]) -> list[CandidateMember]:
     return [CandidateMember.model_validate(item) for item in items]
-
-
-def _entity_change_members_from_payload(items: list[dict[str, Any]]) -> list[EntityChangeMember]:
-    return [EntityChangeMember.model_validate(item) for item in items]
-
-
-def _entity_proposals_from_payload(items: list[dict[str, Any]]) -> list[EntityChangeProposal]:
-    return [EntityChangeProposal.model_validate(item) for item in items]
 
 
 def _parse_params(params: tuple[str, ...]) -> dict[str, str]:

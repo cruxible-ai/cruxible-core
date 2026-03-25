@@ -135,25 +135,6 @@ class ReloadConfigRequest(BaseModel):
     config_path: str | None = None
 
 
-class ProposeEntityChangesRequest(BaseModel):
-    members: list[contracts.EntityChangeInput]
-    thesis_text: str = ""
-    thesis_facts: dict[str, Any] | None = None
-    analysis_state: dict[str, Any] | None = None
-    proposed_by: contracts.GroupProposedBy = "ai_review"
-    suggested_priority: str | None = None
-    source_workflow_name: str | None = None
-    source_workflow_receipt_id: str | None = None
-    source_trace_ids: list[str] | None = None
-    source_step_ids: list[str] | None = None
-
-
-class ResolveEntityProposalRequest(BaseModel):
-    action: contracts.GroupAction
-    rationale: str = ""
-    resolved_by: contracts.GroupResolvedBy = "human"
-
-
 class SnapshotCreateRequest(BaseModel):
     label: str | None = None
 

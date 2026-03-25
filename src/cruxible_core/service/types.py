@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.entity_proposal.types import EntityChangeMember, EntityChangeProposal
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -240,35 +239,6 @@ class SnapshotListResult:
 class ForkSnapshotResult:
     instance: InstanceProtocol
     snapshot: WorldSnapshot
-
-
-@dataclass
-class ProposeEntityChangesResult:
-    proposal_id: str
-    status: str
-    member_count: int
-
-
-@dataclass
-class GetEntityProposalResult:
-    proposal: EntityChangeProposal
-    members: list[EntityChangeMember]
-
-
-@dataclass
-class ListEntityProposalsResult:
-    proposals: list[EntityChangeProposal]
-    total: int
-
-
-@dataclass
-class ResolveEntityProposalResult:
-    proposal_id: str
-    action: str
-    entities_created: int
-    entities_patched: int
-    resolution_id: str | None = None
-    receipt_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

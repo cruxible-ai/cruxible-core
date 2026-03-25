@@ -8,7 +8,6 @@ from typing import Any, TypeVar
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import ConstraintSchema
 from cruxible_core.config.validator import validate_config
-from cruxible_core.entity_proposal.types import EntityChangeMember
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -36,7 +35,6 @@ from cruxible_core.service import (
     service_find_candidates,
     service_fork_snapshot,
     service_get_entity,
-    service_get_entity_proposal,
     service_get_group,
     service_get_receipt,
     service_get_relationship,
@@ -44,19 +42,16 @@ from cruxible_core.service import (
     service_init,
     service_inspect_entity,
     service_list,
-    service_list_entity_proposals,
     service_list_groups,
     service_list_resolutions,
     service_list_snapshots,
     service_lock,
     service_outcome,
     service_plan,
-    service_propose_entity_changes,
     service_propose_group,
     service_propose_workflow,
     service_query,
     service_reload_config,
-    service_resolve_entity_proposal,
     service_resolve_group,
     service_run,
     service_sample,
@@ -1102,107 +1097,4 @@ def _handle_list_resolutions_local(
     return contracts.ListResolutionsToolResult(
         resolutions=result.resolutions,
         total=result.total,
-    )
-
-
-def _handle_propose_entity_changes_local(
-    instance_id: str,
-    members: list[contracts.EntityChangeInput],
-    *,
-    thesis_text: str = "",
-    thesis_facts: dict[str, Any] | None = None,
-    analysis_state: dict[str, Any] | None = None,
-    proposed_by: contracts.GroupProposedBy = "ai_review",
-    suggested_priority: str | None = None,
-    source_workflow_name: str | None = None,
-    source_workflow_receipt_id: str | None = None,
-    source_trace_ids: list[str] | None = None,
-    source_step_ids: list[str] | None = None,
-) -> contracts.ProposeEntityChangesToolResult:
-    """Propose a governed batch of entity creates or patches."""
-    check_permission("cruxible_propose_entity_changes", instance_id=instance_id)
-    instance = get_manager().get(instance_id)
-    result = service_propose_entity_changes(
-        instance,
-        [
-            EntityChangeMember(
-                entity_type=member.entity_type,
-                entity_id=member.entity_id,
-                operation=member.operation,
-                properties=member.properties,
-            )
-            for member in members
-        ],
-        thesis_text=thesis_text,
-        thesis_facts=thesis_facts,
-        analysis_state=analysis_state,
-        proposed_by=proposed_by,
-        suggested_priority=suggested_priority,
-        source_workflow_name=source_workflow_name,
-        source_workflow_receipt_id=source_workflow_receipt_id,
-        source_trace_ids=source_trace_ids,
-        source_step_ids=source_step_ids,
-    )
-    return contracts.ProposeEntityChangesToolResult(
-        proposal_id=result.proposal_id,
-        status=result.status,
-        member_count=result.member_count,
-    )
-
-
-def _handle_get_entity_proposal_local(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.GetEntityProposalToolResult:
-    """Get an entity proposal with its members."""
-    check_permission("cruxible_get_entity_proposal")
-    instance = get_manager().get(instance_id)
-    result = service_get_entity_proposal(instance, proposal_id)
-    return contracts.GetEntityProposalToolResult(
-        proposal=result.proposal.model_dump(mode="json"),
-        members=[member.model_dump(mode="json") for member in result.members],
-    )
-
-
-def _handle_list_entity_proposals_local(
-    instance_id: str,
-    *,
-    status: contracts.EntityProposalStatus | None = None,
-    limit: int = 50,
-) -> contracts.ListEntityProposalsToolResult:
-    """List entity proposals with optional status filter."""
-    check_permission("cruxible_list_entity_proposals")
-    instance = get_manager().get(instance_id)
-    result = service_list_entity_proposals(instance, status=status, limit=limit)
-    return contracts.ListEntityProposalsToolResult(
-        proposals=[proposal.model_dump(mode="json") for proposal in result.proposals],
-        total=result.total,
-    )
-
-
-def _handle_resolve_entity_proposal_local(
-    instance_id: str,
-    proposal_id: str,
-    action: contracts.EntityProposalAction,
-    *,
-    rationale: str = "",
-    resolved_by: contracts.EntityProposalResolvedBy = "human",
-) -> contracts.ResolveEntityProposalToolResult:
-    """Resolve an entity proposal."""
-    check_permission("cruxible_resolve_entity_proposal", instance_id=instance_id)
-    instance = get_manager().get(instance_id)
-    result = service_resolve_entity_proposal(
-        instance,
-        proposal_id,
-        action,
-        rationale=rationale,
-        resolved_by=resolved_by,
-    )
-    return contracts.ResolveEntityProposalToolResult(
-        proposal_id=result.proposal_id,
-        action=result.action,
-        entities_created=result.entities_created,
-        entities_patched=result.entities_patched,
-        resolution_id=result.resolution_id,
-        receipt_id=result.receipt_id,
     )

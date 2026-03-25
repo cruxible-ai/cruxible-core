@@ -13,7 +13,6 @@ from cruxible_core.errors import (
     DataValidationError,
     EdgeAmbiguityError,
     EntityNotFoundError,
-    EntityProposalNotFoundError,
     EntityTypeNotFoundError,
     GroupNotFoundError,
     IngestionError,
@@ -56,7 +55,6 @@ def _status_for_error(exc: CoreError) -> int:
             RelationshipNotFoundError,
             QueryNotFoundError,
             EntityNotFoundError,
-            EntityProposalNotFoundError,
             ReceiptNotFoundError,
             OutcomeNotFoundError,
             InstanceNotFoundError,
@@ -95,8 +93,6 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     if isinstance(exc, EntityNotFoundError):
         context["entity_type"] = exc.entity_type
         context["entity_id"] = exc.entity_id
-    if isinstance(exc, EntityProposalNotFoundError):
-        context["proposal_id"] = exc.proposal_id
     if isinstance(exc, EdgeAmbiguityError):
         context["from_type"] = exc.from_type
         context["from_id"] = exc.from_id
@@ -147,8 +143,6 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("entity_type", "unknown"),
             context.get("entity_id", "unknown"),
         )
-    elif body.error_type == "EntityProposalNotFoundError":
-        exc = EntityProposalNotFoundError(context.get("proposal_id", "unknown"))
     elif body.error_type == "EdgeAmbiguityError":
         exc = EdgeAmbiguityError(
             from_type=context.get("from_type", "unknown"),

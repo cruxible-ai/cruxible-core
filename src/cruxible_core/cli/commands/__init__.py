@@ -1,8 +1,5 @@
 """CLI command registration — re-exports all commands from domain submodules."""
 
-from cruxible_core.cli.commands.entity_proposals import (
-    entity_proposal_group,
-)
 from cruxible_core.cli.commands.feedback import (
     feedback_batch_cmd,
     feedback_cmd,
@@ -52,7 +49,6 @@ __all__ = [
     "add_entity_cmd",
     "add_relationship_cmd",
     "apply_cmd",
-    "entity_proposal_group",
     "evaluate",
     "explain",
     "export_group",
