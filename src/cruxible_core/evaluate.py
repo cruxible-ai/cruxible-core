@@ -43,6 +43,7 @@ class EvaluationReport(BaseModel):
     edge_count: int
     findings: list[EvaluationFinding]
     summary: dict[str, int]  # category -> count
+    constraint_summary: dict[str, int] = Field(default_factory=dict)
     quality_summary: dict[str, int] = Field(default_factory=dict)
 
 
@@ -66,13 +67,16 @@ def evaluate_graph(
        entity but lacking a cross-reference edge themselves
     """
     findings: list[EvaluationFinding] = []
+    constraint_summary: dict[str, int] = {
+        constraint.name: 0 for constraint in config.constraints
+    }
     quality_summary: dict[str, int] = {
         check.name: 0 for check in config.quality_checks
     }
 
     _check_orphans(graph, findings, exclude_types=exclude_orphan_types)
     _check_coverage_gaps(config, graph, findings)
-    _check_constraint_violations(config, graph, findings)
+    _check_constraint_violations(config, graph, findings, constraint_summary)
     _check_candidate_opportunities(config, graph, findings)
     _check_low_confidence_edges(graph, findings, confidence_threshold)
     _check_unreviewed_co_members(config, graph, findings)
@@ -91,6 +95,7 @@ def evaluate_graph(
         edge_count=graph.edge_count(),
         findings=truncated,
         summary=summary,
+        constraint_summary=constraint_summary,
         quality_summary=quality_summary,
     )
 
@@ -149,7 +154,10 @@ def _check_coverage_gaps(
 
 
 def _check_constraint_violations(
-    config: CoreConfig, graph: EntityGraph, findings: list[EvaluationFinding]
+    config: CoreConfig,
+    graph: EntityGraph,
+    findings: list[EvaluationFinding],
+    constraint_summary: dict[str, int],
 ) -> None:
     """Check constraint rules against graph edges."""
     for constraint in config.constraints:
@@ -171,6 +179,9 @@ def _check_constraint_violations(
             to_val = to_props.get(to_prop)
 
             if from_val is not None and to_val is not None and from_val != to_val:
+                constraint_summary[constraint.name] = (
+                    constraint_summary.get(constraint.name, 0) + 1
+                )
                 findings.append(
                     EvaluationFinding(
                         category="constraint_violation",

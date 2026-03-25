@@ -16,13 +16,34 @@ CREATE TABLE IF NOT EXISTS feedback (
     receipt_id TEXT NOT NULL,
     action TEXT NOT NULL,
     target_json TEXT NOT NULL,
+    target_relationship TEXT NOT NULL DEFAULT '',
+    target_from_type TEXT NOT NULL DEFAULT '',
+    target_from_id TEXT NOT NULL DEFAULT '',
+    target_to_type TEXT NOT NULL DEFAULT '',
+    target_to_id TEXT NOT NULL DEFAULT '',
+    target_edge_key INTEGER,
     reason TEXT NOT NULL DEFAULT '',
+    reason_code TEXT,
+    reason_remediation_hint TEXT,
+    scope_hints TEXT NOT NULL DEFAULT '{}',
+    feedback_profile_key TEXT,
+    feedback_profile_version INTEGER,
+    decision_context TEXT NOT NULL DEFAULT '{}',
+    context_snapshot TEXT NOT NULL DEFAULT '{}',
+    decision_surface_type TEXT,
+    decision_surface_name TEXT,
     source TEXT NOT NULL DEFAULT 'human',
     model_id TEXT,
     corrections TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_target_relationship ON feedback(target_relationship);
+CREATE INDEX IF NOT EXISTS idx_feedback_reason_code ON feedback(reason_code);
+CREATE INDEX IF NOT EXISTS idx_feedback_decision_surface_type ON feedback(decision_surface_type);
+CREATE INDEX IF NOT EXISTS idx_feedback_decision_surface_name ON feedback(decision_surface_name);
+CREATE INDEX IF NOT EXISTS idx_feedback_relationship_action_created
+ON feedback(target_relationship, action, created_at);
 
 CREATE TABLE IF NOT EXISTS feedback_entities (
     feedback_id TEXT NOT NULL,
@@ -50,6 +71,7 @@ class FeedbackStore:
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate_feedback_schema()
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -80,17 +102,38 @@ class FeedbackStore:
 
     def _save_feedback(self, record: FeedbackRecord) -> None:
         """Persist a feedback record without committing."""
+        decision_surface_type = record.decision_context.get("surface_type")
+        decision_surface_name = record.decision_context.get("surface_name")
         self._conn.execute(
             "INSERT OR REPLACE INTO feedback "
-            "(feedback_id, receipt_id, action, target_json, reason, source, "
-            "model_id, corrections, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(feedback_id, receipt_id, action, target_json, target_relationship, "
+            "target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key, "
+            "reason, reason_code, reason_remediation_hint, scope_hints, "
+            "feedback_profile_key, feedback_profile_version, "
+            "decision_context, context_snapshot, decision_surface_type, "
+            "decision_surface_name, source, model_id, corrections, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.feedback_id,
                 record.receipt_id,
                 record.action,
                 record.target.model_dump_json(),
+                record.target.relationship,
+                record.target.from_type,
+                record.target.from_id,
+                record.target.to_type,
+                record.target.to_id,
+                record.target.edge_key,
                 record.reason,
+                record.reason_code,
+                record.reason_remediation_hint,
+                json.dumps(record.scope_hints),
+                record.feedback_profile_key,
+                record.feedback_profile_version,
+                json.dumps(record.decision_context),
+                json.dumps(record.context_snapshot),
+                decision_surface_type,
+                decision_surface_name,
                 record.source,
                 record.model_id,
                 json.dumps(record.corrections),
@@ -112,19 +155,39 @@ class FeedbackStore:
     def list_feedback(
         self,
         receipt_id: str | None = None,
+        relationship_type: str | None = None,
+        action: str | None = None,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
         limit: int = 100,
     ) -> list[FeedbackRecord]:
         """List feedback records with optional filter."""
+        clauses: list[str] = []
+        params: list[object] = []
+
         if receipt_id is not None:
-            rows = self._conn.execute(
-                "SELECT * FROM feedback WHERE receipt_id = ? ORDER BY created_at DESC LIMIT ?",
-                (receipt_id, limit),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT * FROM feedback ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            clauses.append("receipt_id = ?")
+            params.append(receipt_id)
+        if relationship_type is not None:
+            clauses.append("target_relationship = ?")
+            params.append(relationship_type)
+        if action is not None:
+            clauses.append("action = ?")
+            params.append(action)
+        if decision_surface_type is not None:
+            clauses.append("decision_surface_type = ?")
+            params.append(decision_surface_type)
+        if decision_surface_name is not None:
+            clauses.append("decision_surface_name = ?")
+            params.append(decision_surface_name)
+
+        sql = "SELECT * FROM feedback"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self._conn.execute(sql, tuple(params)).fetchall()
 
         return [self._row_to_feedback(r) for r in rows]
 
@@ -166,11 +229,107 @@ class FeedbackStore:
             action=row["action"],
             target=EdgeTarget.model_validate_json(row["target_json"]),
             reason=row["reason"],
+            reason_code=row["reason_code"],
+            reason_remediation_hint=row["reason_remediation_hint"],
+            scope_hints=json.loads(row["scope_hints"] or "{}"),
+            feedback_profile_key=row["feedback_profile_key"],
+            feedback_profile_version=row["feedback_profile_version"],
+            decision_context=json.loads(row["decision_context"] or "{}"),
+            context_snapshot=json.loads(row["context_snapshot"] or "{}"),
             source=row["source"],
             model_id=row["model_id"],
             corrections=json.loads(row["corrections"]),
             created_at=row["created_at"],
         )
+
+    def _migrate_feedback_schema(self) -> None:
+        """Add newly required feedback columns to older SQLite databases."""
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(feedback)").fetchall()
+        }
+        feedback_columns: dict[str, str] = {
+            "target_relationship": "TEXT NOT NULL DEFAULT ''",
+            "target_from_type": "TEXT NOT NULL DEFAULT ''",
+            "target_from_id": "TEXT NOT NULL DEFAULT ''",
+            "target_to_type": "TEXT NOT NULL DEFAULT ''",
+            "target_to_id": "TEXT NOT NULL DEFAULT ''",
+            "target_edge_key": "INTEGER",
+            "reason_code": "TEXT",
+            "reason_remediation_hint": "TEXT",
+            "scope_hints": "TEXT NOT NULL DEFAULT '{}'",
+            "feedback_profile_key": "TEXT",
+            "feedback_profile_version": "INTEGER",
+            "decision_context": "TEXT NOT NULL DEFAULT '{}'",
+            "context_snapshot": "TEXT NOT NULL DEFAULT '{}'",
+            "decision_surface_type": "TEXT",
+            "decision_surface_name": "TEXT",
+        }
+        for name, definition in feedback_columns.items():
+            if name in columns:
+                continue
+            self._conn.execute(f"ALTER TABLE feedback ADD COLUMN {name} {definition}")
+
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET target_relationship = json_extract(target_json, '$.relationship') "
+            "WHERE target_relationship = ''"
+        )
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET target_from_type = json_extract(target_json, '$.from_type') "
+            "WHERE target_from_type = ''"
+        )
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET target_from_id = json_extract(target_json, '$.from_id') "
+            "WHERE target_from_id = ''"
+        )
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET target_to_type = json_extract(target_json, '$.to_type') "
+            "WHERE target_to_type = ''"
+        )
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET target_to_id = json_extract(target_json, '$.to_id') "
+            "WHERE target_to_id = ''"
+        )
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET target_edge_key = json_extract(target_json, '$.edge_key') "
+            "WHERE target_edge_key IS NULL"
+        )
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET decision_surface_type = json_extract(decision_context, '$.surface_type') "
+            "WHERE decision_surface_type IS NULL"
+        )
+        self._conn.execute(
+            "UPDATE feedback "
+            "SET decision_surface_name = json_extract(decision_context, '$.surface_name') "
+            "WHERE decision_surface_name IS NULL"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_target_relationship "
+            "ON feedback(target_relationship)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_reason_code ON feedback(reason_code)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_decision_surface_type "
+            "ON feedback(decision_surface_type)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_decision_surface_name "
+            "ON feedback(decision_surface_name)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_relationship_action_created "
+            "ON feedback(target_relationship, action, created_at)"
+        )
+        self._conn.commit()
 
     # -----------------------------------------------------------------
     # Outcomes

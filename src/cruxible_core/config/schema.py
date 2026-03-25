@@ -13,7 +13,9 @@ Hierarchy:
     ├── named_queries: dict[str, NamedQuerySchema]
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
+    ├── feedback_profiles: dict[str, FeedbackProfileSchema]
     ├── quality_checks: list[QualityCheckSchema]
+    ├── decision_policies: list[DecisionPolicySchema]
     ├── ingestion: dict[str, IngestionMapping]
     ├── contracts: dict[str, ContractSchema]
     ├── artifacts: dict[str, ProviderArtifactSchema]
@@ -28,6 +30,9 @@ import json as _json
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+_PATH_TOKEN = r"[\w-]+"
+_FEEDBACK_PATH_PATTERN = rf"^(FROM|TO|EDGE)\.({_PATH_TOKEN})$"
 
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
@@ -218,6 +223,96 @@ class ConstraintSchema(BaseModel):
     rule: str
     severity: Literal["warning", "error"] = "warning"
     description: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Feedback Profile Schema
+# ---------------------------------------------------------------------------
+
+
+FeedbackPathRef = Annotated[str, Field(pattern=_FEEDBACK_PATH_PATTERN)]
+
+
+class FeedbackReasonCodeSchema(BaseModel):
+    """Structured feedback code used by agents and analysis."""
+
+    description: str
+    remediation_hint: Literal[
+        "constraint",
+        "decision_policy",
+        "quality_check",
+        "provider_fix",
+        "unknown",
+    ] = "unknown"
+    required_scope_keys: list[str] = Field(default_factory=list)
+
+
+class FeedbackProfileSchema(BaseModel):
+    """Relationship-scoped feedback vocabulary and grouping metadata."""
+
+    version: int = 1
+    reason_codes: dict[str, FeedbackReasonCodeSchema] = Field(default_factory=dict)
+    scope_keys: dict[str, FeedbackPathRef] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_required_scope_keys(self) -> FeedbackProfileSchema:
+        declared = set(self.scope_keys.keys())
+        for code, schema in self.reason_codes.items():
+            missing = [key for key in schema.required_scope_keys if key not in declared]
+            if missing:
+                missing_str = ", ".join(sorted(missing))
+                msg = (
+                    f"Feedback reason code '{code}' references undeclared "
+                    f"required_scope_keys: {missing_str}"
+                )
+                raise ValueError(msg)
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Decision Policy Schema
+# ---------------------------------------------------------------------------
+
+
+class DecisionPolicyMatch(BaseModel):
+    """Structured exact-match selectors for action-side decision policies."""
+
+    from_match: dict[str, Any] = Field(default_factory=dict, alias="from")
+    to: dict[str, Any] = Field(default_factory=dict)
+    edge: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"populate_by_name": True}
+
+
+class DecisionPolicySchema(BaseModel):
+    """Consumer-specific action rule applied during query or proposal execution."""
+
+    name: str
+    description: str | None = None
+    rationale: str = ""
+    applies_to: Literal["query", "workflow"]
+    query_name: str | None = None
+    workflow_name: str | None = None
+    relationship_type: str
+    effect: Literal["suppress", "require_review"]
+    match: DecisionPolicyMatch = Field(default_factory=DecisionPolicyMatch)
+    expires_at: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> DecisionPolicySchema:
+        if self.applies_to == "query":
+            if self.query_name is None or self.workflow_name is not None:
+                msg = "Query decision policies require query_name only"
+                raise ValueError(msg)
+            if self.effect != "suppress":
+                msg = "Query decision policies only support effect 'suppress'"
+                raise ValueError(msg)
+        else:
+            if self.workflow_name is None or self.query_name is not None:
+                msg = "Workflow decision policies require workflow_name only"
+                raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -837,7 +932,9 @@ class CoreConfig(BaseModel):
     relationships: list[RelationshipSchema]
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
+    feedback_profiles: dict[str, FeedbackProfileSchema] = Field(default_factory=dict)
     quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
+    decision_policies: list[DecisionPolicySchema] = Field(default_factory=list)
     ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
     integrations: dict[str, IntegrationSpec] = Field(default_factory=dict)
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
@@ -856,6 +953,10 @@ class CoreConfig(BaseModel):
     def get_entity_type(self, name: str) -> EntityTypeSchema | None:
         """Find an entity type schema by name."""
         return self.entity_types.get(name)
+
+    def get_feedback_profile(self, relationship_type: str) -> FeedbackProfileSchema | None:
+        """Find a feedback profile by relationship type."""
+        return self.feedback_profiles.get(relationship_type)
 
     def get_hierarchy_relationships(self) -> list[RelationshipSchema]:
         """Return relationship schemas marked as hierarchy."""

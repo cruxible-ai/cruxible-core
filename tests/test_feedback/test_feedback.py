@@ -547,6 +547,41 @@ class TestFeedbackStore:
         loaded = store.get_feedback(fb.feedback_id)
         assert loaded.corrections == {"confidence": 0.99}
 
+    def test_structured_feedback_fields_persisted(self, store: FeedbackStore, target: EdgeTarget):
+        fb = FeedbackRecord(
+            receipt_id="RCP-1",
+            action="reject",
+            source="system",
+            target=target,
+            reason="Legacy unsupported",
+            reason_code="legacy_unsupported",
+            reason_remediation_hint="decision_policy",
+            scope_hints={"category": "brakes"},
+            feedback_profile_key="fits",
+            feedback_profile_version=2,
+            decision_context={
+                "surface_type": "query",
+                "surface_name": "parts_for_vehicle",
+                "operation_type": "query",
+            },
+            context_snapshot={
+                "from": {"entity_id": "P-1", "properties": {"category": "brakes"}},
+                "to": {"entity_id": "V-1", "properties": {}},
+                "edge": {"relationship": "fits", "properties": {}},
+                "context": {"surface_type": "query"},
+            },
+        )
+        store.save_feedback(fb)
+        loaded = store.get_feedback(fb.feedback_id)
+        assert loaded is not None
+        assert loaded.reason_code == "legacy_unsupported"
+        assert loaded.reason_remediation_hint == "decision_policy"
+        assert loaded.scope_hints == {"category": "brakes"}
+        assert loaded.feedback_profile_key == "fits"
+        assert loaded.feedback_profile_version == 2
+        assert loaded.decision_context["surface_name"] == "parts_for_vehicle"
+        assert loaded.context_snapshot["from"]["properties"] == {"category": "brakes"}
+
     def test_list_feedback_by_entity_ids(self, store: FeedbackStore, target: EdgeTarget):
         fb1 = FeedbackRecord(receipt_id="RCP-1", action="approve", target=target)
         fb2 = FeedbackRecord(

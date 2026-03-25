@@ -7,9 +7,14 @@ from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import (
+    ConstraintSchema,
     ContractSchema,
     CoreConfig,
+    DecisionPolicyMatch,
+    DecisionPolicySchema,
     EntityTypeSchema,
+    FeedbackProfileSchema,
+    FeedbackReasonCodeSchema,
     IngestionMapping,
     IntegrationSpec,
     NamedQuerySchema,
@@ -122,6 +127,120 @@ class TestValidateNamedQueries:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any("nonexistent" in e for e in exc_info.value.errors)
+
+
+class TestValidateLoopOneControls:
+    def test_supported_constraint_invalid_reference_errors(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(
+                    name="bad_constraint",
+                    rule="links.FROM.missing == links.TO.id",
+                )
+            ]
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("bad_constraint" in e and "missing" in e for e in exc_info.value.errors)
+
+    def test_feedback_profile_rejects_unknown_scope_property(self):
+        config = _minimal_config(
+            feedback_profiles={
+                "links": FeedbackProfileSchema(
+                    reason_codes={
+                        "mismatch": FeedbackReasonCodeSchema(
+                            description="Mismatch",
+                            remediation_hint="constraint",
+                        )
+                    },
+                    scope_keys={"bad_key": "FROM.missing"},
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("bad_key" in e and "missing" in e for e in exc_info.value.errors)
+
+    def test_decision_policies_require_unique_names(self):
+        config = _minimal_config(
+            named_queries={
+                "find_b": NamedQuerySchema(
+                    entry_point="A",
+                    traversal=[TraversalStep(relationship="links")],
+                    returns="list[B]",
+                )
+            },
+            decision_policies=[
+                DecisionPolicySchema(
+                    name="dup_policy",
+                    applies_to="query",
+                    query_name="find_b",
+                    relationship_type="links",
+                    effect="suppress",
+                    match=DecisionPolicyMatch(),
+                ),
+                DecisionPolicySchema(
+                    name="dup_policy",
+                    applies_to="query",
+                    query_name="find_b",
+                    relationship_type="links",
+                    effect="suppress",
+                    match=DecisionPolicyMatch(),
+                ),
+            ],
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("Duplicate decision policy name" in e for e in exc_info.value.errors)
+
+    def test_workflow_policy_requires_proposal_bearing_workflow(self):
+        config = _minimal_config(
+            contracts={
+                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
+            },
+            artifacts={
+                "artifact": ProviderArtifactSchema(
+                    kind="model", uri="file:///tmp/model", sha256="abc"
+                )
+            },
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                    artifact="artifact",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+            decision_policies=[
+                DecisionPolicySchema(
+                    name="bad_workflow_policy",
+                    applies_to="workflow",
+                    workflow_name="wf",
+                    relationship_type="links",
+                    effect="suppress",
+                    match=DecisionPolicyMatch(),
+                )
+            ],
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("proposal-bearing alias" in e for e in exc_info.value.errors)
 
 
 class TestValidateMultiRelationshipStep:

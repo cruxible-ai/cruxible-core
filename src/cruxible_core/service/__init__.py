@@ -5,7 +5,11 @@ handlers, REST endpoints) are thin wrappers that handle I/O formatting,
 permission checks, and protocol-specific concerns.
 """
 
-from cruxible_core.service.analysis import service_evaluate, service_find_candidates
+from cruxible_core.service.analysis import (
+    service_analyze_feedback,
+    service_evaluate,
+    service_find_candidates,
+)
 from cruxible_core.service.entity_proposals import (
     service_get_entity_proposal,
     service_list_entity_proposals,
@@ -60,8 +64,12 @@ from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
     ApplyWorkflowResult,
+    AnalyzeFeedbackResult,
     EntityUpsertInput,
+    ConstraintSuggestion,
+    DecisionPolicySuggestion,
     FeedbackBatchServiceResult,
+    FeedbackGroupSummary,
     FeedbackServiceResult,
     ForkSnapshotResult,
     GetEntityProposalResult,
@@ -80,6 +88,8 @@ from cruxible_core.service.types import (
     ProposeEntityChangesResult,
     ProposeGroupResult,
     ProposeWorkflowResult,
+    ProviderFixCandidate,
+    QualityCheckCandidate,
     QueryParamHints,
     QueryServiceResult,
     RelationshipUpsertInput,
@@ -91,6 +101,7 @@ from cruxible_core.service.types import (
     SnapshotListResult,
     StatsServiceResult,
     TestServiceResult,
+    UncodedFeedbackExample,
     ValidateServiceResult,
 )
 
@@ -99,8 +110,12 @@ __all__ = [
     "AddEntityResult",
     "AddRelationshipResult",
     "ApplyWorkflowResult",
+    "AnalyzeFeedbackResult",
     "EntityUpsertInput",
+    "ConstraintSuggestion",
+    "DecisionPolicySuggestion",
     "FeedbackBatchServiceResult",
+    "FeedbackGroupSummary",
     "FeedbackServiceResult",
     "ForkSnapshotResult",
     "GetEntityProposalResult",
@@ -118,6 +133,8 @@ __all__ = [
     "PlanServiceResult",
     "ProposeEntityChangesResult",
     "ProposeWorkflowResult",
+    "ProviderFixCandidate",
+    "QualityCheckCandidate",
     "ProposeGroupResult",
     "QueryParamHints",
     "QueryServiceResult",
@@ -130,6 +147,7 @@ __all__ = [
     "SnapshotListResult",
     "StatsServiceResult",
     "TestServiceResult",
+    "UncodedFeedbackExample",
     "ValidateServiceResult",
     # Execution
     "service_lock",
@@ -144,6 +162,7 @@ __all__ = [
     # Analysis
     "service_evaluate",
     "service_find_candidates",
+    "service_analyze_feedback",
     # Feedback
     "service_feedback",
     "service_feedback_batch",

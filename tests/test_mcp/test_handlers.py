@@ -2383,10 +2383,10 @@ class TestAddConstraint:
         )
         assert "syntax" in error_msg.lower()
 
-    def test_add_constraint_bad_relationship_warns(self, server, tmp_project):
-        """Valid syntax but nonexistent relationship succeeds with warning."""
+    def test_add_constraint_bad_relationship_errors(self, server, tmp_project):
+        """Valid syntax with nonexistent relationship should fail strict validation."""
         self._init(server, tmp_project)
-        result = call_tool(
+        error_msg = call_tool_expect_error(
             server,
             "cruxible_add_constraint",
             {
@@ -2395,13 +2395,12 @@ class TestAddConstraint:
                 "rule": "ghost_rel.FROM.prop == ghost_rel.TO.prop",
             },
         )
-        assert result["added"] is True
-        assert any("ghost_rel" in w for w in result["warnings"])
+        assert "ghost_rel" in error_msg
 
-    def test_add_constraint_bad_property_warns(self, server, tmp_project):
-        """Valid syntax, nonexistent property name succeeds with warning."""
+    def test_add_constraint_bad_property_errors(self, server, tmp_project):
+        """Valid syntax with nonexistent properties should fail strict validation."""
         self._init(server, tmp_project)
-        result = call_tool(
+        error_msg = call_tool_expect_error(
             server,
             "cruxible_add_constraint",
             {
@@ -2410,8 +2409,7 @@ class TestAddConstraint:
                 "rule": "replaces.FROM.nonexistent == replaces.TO.nonexistent",
             },
         )
-        assert result["added"] is True
-        assert any("nonexistent" in w for w in result["warnings"])
+        assert "nonexistent" in error_msg
 
 
 # ── cruxible_get_entity ───────────────────────────────────────────────

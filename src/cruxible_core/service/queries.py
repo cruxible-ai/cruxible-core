@@ -52,6 +52,7 @@ def service_query(
         total_results=total,
         steps_executed=result.steps_executed,
         param_hints=_query_param_hints(config, graph, query_name),
+        policy_summary=result.policy_summary,
     )
 
 

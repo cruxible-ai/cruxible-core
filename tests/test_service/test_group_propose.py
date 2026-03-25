@@ -8,8 +8,14 @@ from typing import Any
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.config.schema import IntegrationConfig, MatchingConfig
+from cruxible_core.config.schema import (
+    DecisionPolicyMatch,
+    DecisionPolicySchema,
+    IntegrationConfig,
+    MatchingConfig,
+)
 from cruxible_core.errors import ConfigError
+from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.service import (
@@ -224,6 +230,35 @@ def _all_support_with_advisory() -> list[CandidateSignal]:
     ]
 
 
+def _seed_policy_graph(instance: CruxibleInstance) -> None:
+    """Seed entity state so workflow policy matching can inspect FROM/TO selectors."""
+    graph = instance.load_graph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Part",
+            entity_id="BP-1001",
+            properties={
+                "part_number": "BP-1001",
+                "name": "Ceramic Brake Pads",
+                "category": "brakes",
+            },
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-2024-CIVIC",
+            properties={
+                "vehicle_id": "V-2024-CIVIC",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Civic",
+            },
+        )
+    )
+    instance.save_graph(graph)
+
+
 # ---------------------------------------------------------------------------
 # Basic proposal tests
 # ---------------------------------------------------------------------------
@@ -351,6 +386,64 @@ class TestValidationErrors:
         members = [_member(f"BP-{i}", f"V-{i}", signals=_all_support_signals()) for i in range(201)]
         with pytest.raises(ConfigError, match="exceeds max_group_size"):
             service_propose_group(matching_instance, "fits", members)
+
+    def test_workflow_suppress_applies_before_max_group_size(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        graph = matching_instance.load_graph()
+        for idx in range(201):
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Part",
+                    entity_id=f"BP-{idx}",
+                    properties={
+                        "part_number": f"BP-{idx}",
+                        "name": f"Brake Part {idx}",
+                        "category": "brakes" if idx < 200 else "engine",
+                    },
+                )
+            )
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Vehicle",
+                    entity_id=f"V-{idx}",
+                    properties={
+                        "vehicle_id": f"V-{idx}",
+                        "year": 2024,
+                        "make": "Honda",
+                        "model": "Civic",
+                    },
+                )
+            )
+        matching_instance.save_graph(graph)
+
+        config = matching_instance.load_config()
+        config.decision_policies.append(
+            DecisionPolicySchema(
+                name="suppress_brake_members",
+                applies_to="workflow",
+                workflow_name="triage_fits",
+                relationship_type="fits",
+                effect="suppress",
+                match=DecisionPolicyMatch(**{"from": {"category": "brakes"}}),
+            )
+        )
+        matching_instance.save_config(config)
+
+        members = [
+            _member(f"BP-{idx}", f"V-{idx}", signals=_all_support_signals()) for idx in range(201)
+        ]
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts={"style": "casual"},
+            source_workflow_name="triage_fits",
+        )
+
+        assert result.group_id is not None
+        assert result.member_count == 1
+        assert result.policy_summary == {"suppress_brake_members": 200}
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +606,97 @@ class TestAutoResolve:
         assert result.status == "auto_resolved"
         assert result.prior_resolution is not None
         assert result.prior_resolution["trust_status"] == "trusted"
+
+    def test_workflow_policy_require_review_blocks_auto_resolve(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        facts = {"style": "casual"}
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+        _seed_policy_graph(matching_instance)
+        config = matching_instance.load_config()
+        config.decision_policies.append(
+            DecisionPolicySchema(
+                name="review_brake_parts",
+                applies_to="workflow",
+                workflow_name="triage_fits",
+                relationship_type="fits",
+                effect="require_review",
+                match=DecisionPolicyMatch(**{"from": {"category": "brakes"}}),
+            )
+        )
+        matching_instance.save_config(config)
+
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts=facts,
+            source_workflow_name="triage_fits",
+        )
+        assert result.status == "pending_review"
+        assert result.review_priority == "review"
+        assert result.suppressed is False
+        assert result.policy_summary == {"review_brake_parts": 1}
+
+    def test_workflow_policy_suppress_returns_suppressed_result(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_policy_graph(matching_instance)
+        config = matching_instance.load_config()
+        config.decision_policies.append(
+            DecisionPolicySchema(
+                name="suppress_brake_parts",
+                applies_to="workflow",
+                workflow_name="triage_fits",
+                relationship_type="fits",
+                effect="suppress",
+                match=DecisionPolicyMatch(**{"from": {"category": "brakes"}}),
+            )
+        )
+        matching_instance.save_config(config)
+
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts={"style": "casual"},
+            source_workflow_name="triage_fits",
+        )
+        assert result.group_id is None
+        assert result.status == "suppressed"
+        assert result.suppressed is True
+        assert result.member_count == 0
+        assert result.policy_summary == {"suppress_brake_parts": 1}
+
+    def test_expired_workflow_policy_is_ignored(self, matching_instance: CruxibleInstance) -> None:
+        _seed_policy_graph(matching_instance)
+        config = matching_instance.load_config()
+        config.decision_policies.append(
+            DecisionPolicySchema(
+                name="expired_suppress_brake_parts",
+                applies_to="workflow",
+                workflow_name="triage_fits",
+                relationship_type="fits",
+                effect="suppress",
+                match=DecisionPolicyMatch(**{"from": {"category": "brakes"}}),
+                expires_at="2020-01-01T00:00:00Z",
+            )
+        )
+        matching_instance.save_config(config)
+
+        members = [_member(signals=_all_support_signals())]
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts={"style": "casual"},
+            source_workflow_name="triage_fits",
+        )
+        assert result.group_id is not None
+        assert result.suppressed is False
+        assert result.policy_summary == {}
 
     def test_prior_trusted_blocking_contradict_pending(
         self, matching_instance: CruxibleInstance

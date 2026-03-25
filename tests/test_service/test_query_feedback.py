@@ -5,6 +5,12 @@ from __future__ import annotations
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.schema import (
+    DecisionPolicyMatch,
+    DecisionPolicySchema,
+    FeedbackProfileSchema,
+    FeedbackReasonCodeSchema,
+)
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
@@ -51,6 +57,56 @@ class TestQuery:
     def test_bad_name(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(QueryNotFoundError):
             service_query(populated_instance, "nonexistent_query", {})
+
+    def test_query_policy_suppresses_results(self, populated_instance: CruxibleInstance) -> None:
+        config = populated_instance.load_config()
+        config.decision_policies.append(
+            DecisionPolicySchema(
+                name="suppress_brake_parts",
+                applies_to="query",
+                query_name="parts_for_vehicle",
+                relationship_type="fits",
+                effect="suppress",
+                match=DecisionPolicyMatch(
+                    **{
+                        "from": {"category": "brakes"},
+                        "to": {"make": "Honda"},
+                    }
+                ),
+            )
+        )
+        populated_instance.save_config(config)
+
+        result = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert result.total_results == 0
+        assert result.policy_summary == {"suppress_brake_parts": 2}
+
+    def test_expired_query_policy_is_ignored(self, populated_instance: CruxibleInstance) -> None:
+        config = populated_instance.load_config()
+        config.decision_policies.append(
+            DecisionPolicySchema(
+                name="expired_suppress_brake_parts",
+                applies_to="query",
+                query_name="parts_for_vehicle",
+                relationship_type="fits",
+                effect="suppress",
+                match=DecisionPolicyMatch(**{"from": {"category": "brakes"}}),
+                expires_at="2020-01-01T00:00:00Z",
+            )
+        )
+        populated_instance.save_config(config)
+
+        result = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert result.total_results >= 1
+        assert result.policy_summary == {}
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +236,32 @@ class TestFeedback:
                 source="human",
                 target=_edge_target(),
                 corrections="not a dict",  # type: ignore[arg-type]
+            )
+
+    def test_profile_requires_reason_code_for_system(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "vendor_mismatch": FeedbackReasonCodeSchema(
+                    description="Vendor mismatch",
+                    remediation_hint="constraint",
+                )
+            },
+            scope_keys={},
+        )
+        populated_instance.save_config(config)
+        receipt_id = self._run_query(populated_instance)
+
+        with pytest.raises(ConfigError, match="requires reason_code"):
+            service_feedback(
+                populated_instance,
+                receipt_id=receipt_id,
+                action="reject",
+                source="system",
+                target=_edge_target(),
             )
 
 

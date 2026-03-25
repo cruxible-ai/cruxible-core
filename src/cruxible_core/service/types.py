@@ -92,6 +92,7 @@ class QueryServiceResult:
     total_results: int
     steps_executed: int
     param_hints: QueryParamHints | None = None
+    policy_summary: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -142,6 +143,90 @@ class FeedbackBatchServiceResult:
     applied_count: int = 0
     total: int = 0
     receipt_id: str | None = None
+
+
+@dataclass
+class FeedbackGroupSummary:
+    relationship_type: str
+    reason_code: str
+    remediation_hint: str
+    decision_context: dict[str, Any] = field(default_factory=dict)
+    scope_hints: dict[str, Any] = field(default_factory=dict)
+    feedback_count: int = 0
+    feedback_ids: list[str] = field(default_factory=list)
+    sample_reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class UncodedFeedbackExample:
+    feedback_id: str
+    relationship_type: str
+    reason: str
+    decision_context: dict[str, Any] = field(default_factory=dict)
+    scope_hints: dict[str, Any] = field(default_factory=dict)
+    target: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ConstraintSuggestion:
+    name: str
+    description: str
+    relationship_type: str
+    rule: str
+    severity: str
+    support_count: int
+    feedback_ids: list[str] = field(default_factory=list)
+    sample_value_pairs: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class DecisionPolicySuggestion:
+    name: str
+    description: str
+    relationship_type: str
+    applies_to: str
+    effect: str
+    rationale: str
+    match: dict[str, Any] = field(default_factory=dict)
+    query_name: str | None = None
+    workflow_name: str | None = None
+    support_count: int = 0
+    feedback_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class QualityCheckCandidate:
+    relationship_type: str
+    reason_code: str
+    support_count: int
+    description: str
+    feedback_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ProviderFixCandidate:
+    relationship_type: str
+    reason_code: str
+    support_count: int
+    description: str
+    feedback_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AnalyzeFeedbackResult:
+    relationship_type: str
+    feedback_count: int
+    action_counts: dict[str, int] = field(default_factory=dict)
+    source_counts: dict[str, int] = field(default_factory=dict)
+    reason_code_counts: dict[str, int] = field(default_factory=dict)
+    coded_groups: list[FeedbackGroupSummary] = field(default_factory=list)
+    uncoded_feedback_count: int = 0
+    uncoded_examples: list[UncodedFeedbackExample] = field(default_factory=list)
+    constraint_suggestions: list[ConstraintSuggestion] = field(default_factory=list)
+    decision_policy_suggestions: list[DecisionPolicySuggestion] = field(default_factory=list)
+    quality_check_candidates: list[QualityCheckCandidate] = field(default_factory=list)
+    provider_fix_candidates: list[ProviderFixCandidate] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -216,12 +301,14 @@ class ProposeWorkflowResult:
     workflow: str
     output: Any
     receipt_id: str
-    group_id: str
+    group_id: str | None
     group_status: str
     review_priority: str
+    suppressed: bool = False
     query_receipt_ids: list[str] = field(default_factory=list)
     trace_ids: list[str] = field(default_factory=list)
     prior_resolution: dict[str, Any] | None = None
+    policy_summary: dict[str, int] = field(default_factory=dict)
     receipt: Receipt | None = None
     traces: list[ExecutionTrace] = field(default_factory=list)
 
@@ -278,12 +365,14 @@ class ResolveEntityProposalResult:
 
 @dataclass
 class ProposeGroupResult:
-    group_id: str
+    group_id: str | None
     signature: str
     status: str
     review_priority: str
     member_count: int
     prior_resolution: dict[str, Any] | None
+    suppressed: bool = False
+    policy_summary: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

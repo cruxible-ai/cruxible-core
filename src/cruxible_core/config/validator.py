@@ -26,13 +26,15 @@ def validate_config(config: CoreConfig) -> list[str]:
 
     _validate_relationships(config, errors)
     _validate_named_queries(config, errors)
-    _validate_constraints(config, warnings)
+    _validate_constraints(config, errors, warnings)
+    _validate_feedback_profiles(config, errors)
     _validate_ingestion(config, errors)
     _validate_primary_keys(config, errors)
     _validate_matching_integrations(config, errors)
     _validate_kind(config, errors)
     _validate_provider_artifacts(config, errors)
     _validate_quality_checks(config, errors)
+    _validate_decision_policies(config, errors)
     _validate_workflows(config, errors)
     _validate_tests(config, errors)
 
@@ -90,19 +92,160 @@ def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
                     )
 
 
-def _validate_constraints(config: CoreConfig, warnings: list[str]) -> None:
-    """Check that constraints reference valid relationship names."""
-    rel_names = {rel.name for rel in config.relationships}
+def _validate_constraints(
+    config: CoreConfig,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Check parseable constraints against relationship and property references."""
+    relationships = {rel.name: rel for rel in config.relationships}
 
     for constraint in config.constraints:
         parsed = parse_constraint_rule(constraint.rule)
-        if parsed and parsed[0] in rel_names:
+        if not parsed:
+            warnings.append(
+                f"Constraint '{constraint.name}': could not verify rule references against schema"
+            )
             continue
-        # If we can't parse it or relationship not found, just warn —
-        # the constraint evaluator will handle actual validation at runtime
-        warnings.append(
-            f"Constraint '{constraint.name}': could not verify rule references against schema"
-        )
+
+        rel_name, from_prop, to_prop = parsed
+        rel = relationships.get(rel_name)
+        if rel is None:
+            errors.append(
+                f"Constraint '{constraint.name}': relationship '{rel_name}' not defined"
+            )
+            continue
+
+        from_entity = config.get_entity_type(rel.from_entity)
+        to_entity = config.get_entity_type(rel.to_entity)
+        if from_entity is None or to_entity is None:
+            continue
+
+        if from_prop not in from_entity.properties:
+            errors.append(
+                f"Constraint '{constraint.name}': property '{from_prop}' not found on "
+                f"FROM entity type '{rel.from_entity}' for relationship '{rel_name}'"
+            )
+        if to_prop not in to_entity.properties:
+            errors.append(
+                f"Constraint '{constraint.name}': property '{to_prop}' not found on "
+                f"TO entity type '{rel.to_entity}' for relationship '{rel_name}'"
+            )
+
+
+def _validate_feedback_profiles(config: CoreConfig, errors: list[str]) -> None:
+    """Validate relationship-scoped feedback profile references."""
+    for relationship_type, profile in config.feedback_profiles.items():
+        rel = config.get_relationship(relationship_type)
+        if rel is None:
+            errors.append(
+                f"Feedback profile '{relationship_type}': relationship not defined in relationships"
+            )
+            continue
+
+        from_entity = config.get_entity_type(rel.from_entity)
+        to_entity = config.get_entity_type(rel.to_entity)
+        if from_entity is None or to_entity is None:
+            continue
+
+        for scope_key, path in profile.scope_keys.items():
+            scope, _, prop_name = path.partition(".")
+            if scope == "FROM":
+                if prop_name not in from_entity.properties:
+                    errors.append(
+                        f"Feedback profile '{relationship_type}': scope key '{scope_key}' "
+                        f"references unknown FROM property '{prop_name}'"
+                    )
+            elif scope == "TO":
+                if prop_name not in to_entity.properties:
+                    errors.append(
+                        f"Feedback profile '{relationship_type}': scope key '{scope_key}' "
+                        f"references unknown TO property '{prop_name}'"
+                    )
+            elif prop_name not in rel.properties:
+                errors.append(
+                    f"Feedback profile '{relationship_type}': scope key '{scope_key}' "
+                    f"references unknown EDGE property '{prop_name}'"
+                )
+
+
+def _validate_decision_policies(config: CoreConfig, errors: list[str]) -> None:
+    """Validate decision policy references and match selectors."""
+    query_names = set(config.named_queries.keys())
+    seen_names: set[str] = set()
+
+    for policy in config.decision_policies:
+        if policy.name in seen_names:
+            errors.append(f"Duplicate decision policy name: '{policy.name}'")
+            continue
+        seen_names.add(policy.name)
+
+        rel = config.get_relationship(policy.relationship_type)
+        if rel is None:
+            errors.append(
+                f"Decision policy '{policy.name}': relationship_type "
+                f"'{policy.relationship_type}' not defined in relationships"
+            )
+            continue
+
+        if policy.applies_to == "query":
+            if policy.query_name is None:
+                errors.append(
+                    f"Decision policy '{policy.name}': query policies require query_name"
+                )
+                continue
+            if policy.query_name not in query_names:
+                errors.append(
+                    f"Decision policy '{policy.name}': query_name "
+                    f"'{policy.query_name}' not found in named_queries"
+                )
+        else:
+            if policy.workflow_name is None:
+                errors.append(
+                    f"Decision policy '{policy.name}': workflow policies require workflow_name"
+                )
+                continue
+            workflow = config.workflows.get(policy.workflow_name)
+            if workflow is None:
+                errors.append(
+                    f"Decision policy '{policy.name}': workflow_name "
+                    f"'{policy.workflow_name}' not found in workflows"
+                )
+            elif workflow.canonical:
+                errors.append(
+                    f"Decision policy '{policy.name}': workflow_name "
+                    f"'{policy.workflow_name}' must be a non-canonical proposal workflow"
+                )
+            elif not _workflow_returns_relationship_proposal(workflow):
+                errors.append(
+                    f"Decision policy '{policy.name}': workflow_name "
+                    f"'{policy.workflow_name}' must return a proposal-bearing alias "
+                    "produced by propose_relationship_group"
+                )
+
+        from_entity = config.get_entity_type(rel.from_entity)
+        to_entity = config.get_entity_type(rel.to_entity)
+        if from_entity is None or to_entity is None:
+            continue
+
+        for prop_name in policy.match.from_match:
+            if prop_name not in from_entity.properties:
+                errors.append(
+                    f"Decision policy '{policy.name}': match.from references unknown "
+                    f"property '{prop_name}' on '{rel.from_entity}'"
+                )
+        for prop_name in policy.match.to:
+            if prop_name not in to_entity.properties:
+                errors.append(
+                    f"Decision policy '{policy.name}': match.to references unknown "
+                    f"property '{prop_name}' on '{rel.to_entity}'"
+                )
+        for prop_name in policy.match.edge:
+            if prop_name not in rel.properties:
+                errors.append(
+                    f"Decision policy '{policy.name}': match.edge references unknown "
+                    f"property '{prop_name}' on relationship '{rel.name}'"
+                )
 
 
 def _validate_ingestion(config: CoreConfig, errors: list[str]) -> None:
@@ -628,6 +771,14 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         f"Workflow '{workflow_name}': canonical provider '{provider_name}' "
                         "must declare an artifact bundle"
                     )
+
+
+def _workflow_returns_relationship_proposal(workflow: Any) -> bool:
+    """Return True when a workflow returns a built-in relationship proposal artifact."""
+    for step in workflow.steps:
+        if step.as_ == workflow.returns and step.propose_relationship_group is not None:
+            return True
+    return False
 
 
 def _validate_tests(config: CoreConfig, errors: list[str]) -> None:

@@ -19,6 +19,7 @@ from cruxible_core.graph.operations import validate_relationship
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service._helpers import _persist_receipt
 from cruxible_core.service.mutations import service_add_relationships
@@ -101,11 +102,13 @@ def service_propose_group(
 ) -> ProposeGroupResult:
     """Propose a group of candidate edges for batch review/approval."""
     config = instance.load_config()
+    graph = instance.load_graph()
     thesis_facts = thesis_facts or {}
     analysis_state = analysis_state or {}
     integrations_used = integrations_used or []
     source_trace_ids = source_trace_ids or []
     source_step_ids = source_step_ids or []
+    policy_summary: dict[str, int] = {}
 
     # 1. Validate relationship_type
     rel_schema = config.get_relationship(relationship_type)
@@ -150,6 +153,15 @@ def service_propose_group(
                 f"{m.to_type}:{m.to_id} via {m.relationship_type}"
             )
         seen_members.add(key)
+
+    members, force_review = _apply_workflow_policies(
+        config=config,
+        graph=graph,
+        relationship_type=relationship_type,
+        members=members,
+        workflow_name=source_workflow_name,
+        policy_summary=policy_summary,
+    )
 
     matching = rel_schema.matching
 
@@ -198,6 +210,17 @@ def service_propose_group(
 
     # 8. Compute signature
     signature = compute_group_signature(relationship_type, thesis_facts)
+    if not members:
+        return ProposeGroupResult(
+            group_id=None,
+            signature=signature,
+            status="suppressed",
+            review_priority="review",
+            member_count=0,
+            prior_resolution=None,
+            suppressed=True,
+            policy_summary=policy_summary,
+        )
 
     # 9. Check for prior confirmed approved resolution
     group_store = instance.get_group_store()
@@ -231,6 +254,10 @@ def service_propose_group(
 
         # 10. Derive review_priority
         review_priority = derive_review_priority(members, matching, prior)
+        if force_review and review_priority == "normal":
+            review_priority = "review"
+        if force_review:
+            status = "pending_review"
 
         # 11. Create and save group
         group_id = f"GRP-{uuid.uuid4().hex[:12]}"
@@ -265,9 +292,82 @@ def service_propose_group(
             review_priority=review_priority,
             member_count=len(members),
             prior_resolution=prior,
+            policy_summary=policy_summary,
         )
     finally:
         group_store.close()
+
+
+def _apply_workflow_policies(
+    *,
+    config,
+    graph,
+    relationship_type: str,
+    members: list[CandidateMember],
+    workflow_name: str | None,
+    policy_summary: dict[str, int],
+) -> tuple[list[CandidateMember], bool]:
+    """Apply workflow-side decision policies to candidate members."""
+    if workflow_name is None:
+        return members, False
+
+    policies = [
+        policy
+        for policy in config.decision_policies
+        if policy.applies_to == "workflow"
+        and policy.workflow_name == workflow_name
+        and policy.relationship_type == relationship_type
+        and not _policy_expired(policy.expires_at)
+    ]
+    if not policies:
+        return members, False
+
+    kept: list[CandidateMember] = []
+    force_review = False
+    for member in members:
+        from_entity = graph.get_entity(member.from_type, member.from_id)
+        to_entity = graph.get_entity(member.to_type, member.to_id)
+        matched_effects: list[str] = []
+        for policy in policies:
+            if from_entity is None or to_entity is None:
+                continue
+            if not matches_exact_filter(from_entity.properties, policy.match.from_match):
+                continue
+            if not matches_exact_filter(to_entity.properties, policy.match.to):
+                continue
+            if not matches_exact_filter(member.properties, policy.match.edge):
+                continue
+            if not matches_exact_filter(
+                {
+                    "workflow_name": workflow_name,
+                    "relationship_type": relationship_type,
+                },
+                policy.match.context,
+            ):
+                continue
+            policy_summary[policy.name] = policy_summary.get(policy.name, 0) + 1
+            matched_effects.append(policy.effect)
+
+        if "suppress" in matched_effects:
+            continue
+        if "require_review" in matched_effects:
+            force_review = True
+        kept.append(member)
+    return kept, force_review
+
+
+def _policy_expired(expires_at: str | None) -> bool:
+    """Return True when a workflow policy should no longer apply."""
+    if not expires_at:
+        return False
+    try:
+        normalized = expires_at.replace("Z", "+00:00")
+        expiry = datetime.fromisoformat(normalized)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return expiry < datetime.now(timezone.utc)
+    except ValueError:
+        return False
 
 
 def _check_auto_resolve_signals(

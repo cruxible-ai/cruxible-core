@@ -28,6 +28,13 @@ class FeedbackRecord(BaseModel):
     action: Literal["approve", "reject", "correct", "flag"]
     target: EdgeTarget
     reason: str = ""
+    reason_code: str | None = None
+    reason_remediation_hint: str | None = None
+    scope_hints: dict[str, Any] = Field(default_factory=dict)
+    feedback_profile_key: str | None = None
+    feedback_profile_version: int | None = None
+    decision_context: dict[str, Any] = Field(default_factory=dict)
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
     source: Literal["human", "ai_review", "system"] = "human"
     model_id: str | None = None
     corrections: dict[str, Any] = Field(default_factory=dict)
@@ -41,6 +48,8 @@ class FeedbackBatchItem(BaseModel):
     action: Literal["approve", "reject", "correct", "flag"]
     target: EdgeTarget
     reason: str = ""
+    reason_code: str | None = None
+    scope_hints: dict[str, Any] = Field(default_factory=dict)
     corrections: dict[str, Any] = Field(default_factory=dict)
     group_override: bool = False
 
