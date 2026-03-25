@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from cruxible_core.config.loader import load_config_from_string, save_config
 from cruxible_core.config.schema import (
     AssertSpec,
+    BoundsQualityCheck,
+    CardinalityQualityCheck,
     ConstraintSchema,
     ContractSchema,
     CoreConfig,
@@ -13,13 +15,16 @@ from cruxible_core.config.schema import (
     IngestionMapping,
     IntegrationConfig,
     IntegrationSpec,
+    JsonContentQualityCheck,
     MatchingConfig,
     NamedQuerySchema,
+    PropertyQualityCheck,
     PropertySchema,
     ProviderArtifactSchema,
     ProviderSchema,
     RelationshipSchema,
     TraversalStep,
+    UniquenessQualityCheck,
     WorkflowSchema,
     WorkflowStepSchema,
     WorkflowTestExpectSchema,
@@ -152,6 +157,45 @@ class TestConstraintSchema:
     def test_error_severity(self):
         c = ConstraintSchema(name="test", rule="a == b", severity="error")
         assert c.severity == "error"
+
+
+class TestQualityCheckSchema:
+    def test_property_check_parses(self):
+        check = PropertyQualityCheck(
+            name="non_empty_name",
+            target="entity",
+            entity_type="Vendor",
+            property="name",
+            rule="non_empty",
+        )
+        assert check.kind == "property"
+
+    def test_json_content_check_parses(self):
+        check = JsonContentQualityCheck(
+            name="no_empty_json",
+            target="relationship",
+            relationship_type="vulnerability_affects_product",
+            property="affected_versions",
+            rule="no_empty_objects_in_array",
+        )
+        assert check.kind == "json_content"
+
+    def test_uniqueness_requires_properties(self):
+        with pytest.raises(ValidationError, match="at least one property"):
+            UniquenessQualityCheck(name="unique", entity_type="Product", properties=[])
+
+    def test_bounds_requires_a_limit(self):
+        with pytest.raises(ValidationError, match="min_count, max_count, or both"):
+            BoundsQualityCheck(name="bounds", target="entity_count", entity_type="Product")
+
+    def test_cardinality_requires_a_limit(self):
+        with pytest.raises(ValidationError, match="min_count, max_count, or both"):
+            CardinalityQualityCheck(
+                name="cardinality",
+                entity_type="Product",
+                relationship_type="product_from_vendor",
+                direction="outgoing",
+            )
 
 
 class TestWorkflowSchema:
@@ -683,3 +727,87 @@ relationships:
         assert rel2.matching.integrations["cosine_v1"].role == "blocking"
         assert rel2.matching.integrations["cosine_v1"].always_review_on_unsure is True
         assert config2.integrations["cosine_v1"].contract["model_ref"] == "text-embed-3-large"
+
+
+class TestQualityCheckValidation:
+    def _config(self, *, quality_checks):
+        return CoreConfig(
+            name="quality_validation",
+            entity_types={
+                "Vendor": EntityTypeSchema(
+                    properties={
+                        "vendor_id": PropertySchema(type="string", primary_key=True),
+                        "name": PropertySchema(type="string"),
+                    }
+                ),
+                "Product": EntityTypeSchema(
+                    properties={
+                        "product_id": PropertySchema(type="string", primary_key=True),
+                        "vendor_name": PropertySchema(type="string"),
+                    }
+                ),
+            },
+            relationships=[
+                RelationshipSchema(
+                    name="product_from_vendor",
+                    from_entity="Product",
+                    to_entity="Vendor",
+                    properties={
+                        "affected_versions": PropertySchema(type="json", optional=True),
+                    },
+                )
+            ],
+            quality_checks=quality_checks,
+        )
+
+    def test_duplicate_quality_check_names_rejected(self):
+        config = self._config(
+            quality_checks=[
+                PropertyQualityCheck(
+                    name="dup",
+                    target="entity",
+                    entity_type="Vendor",
+                    property="name",
+                    rule="non_empty",
+                ),
+                PropertyQualityCheck(
+                    name="dup",
+                    target="entity",
+                    entity_type="Vendor",
+                    property="name",
+                    rule="required",
+                ),
+            ]
+        )
+        with pytest.raises(ConfigError, match="Duplicate quality check name"):
+            validate_config(config)
+
+    def test_json_content_requires_json_property(self):
+        config = self._config(
+            quality_checks=[
+                JsonContentQualityCheck(
+                    name="bad_json",
+                    target="entity",
+                    entity_type="Vendor",
+                    property="name",
+                    rule="no_empty_objects_in_array",
+                )
+            ]
+        )
+        with pytest.raises(ConfigError, match="requires property 'name' to have type 'json'"):
+            validate_config(config)
+
+    def test_cardinality_requires_compatible_direction(self):
+        config = self._config(
+            quality_checks=[
+                CardinalityQualityCheck(
+                    name="bad_cardinality",
+                    entity_type="Vendor",
+                    relationship_type="product_from_vendor",
+                    direction="outgoing",
+                    min_count=1,
+                )
+            ]
+        )
+        with pytest.raises(ConfigError, match="requires entity_type 'Product'"):
+            validate_config(config)

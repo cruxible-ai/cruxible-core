@@ -13,6 +13,7 @@ Hierarchy:
     ├── named_queries: dict[str, NamedQuerySchema]
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
+    ├── quality_checks: list[QualityCheckSchema]
     ├── ingestion: dict[str, IngestionMapping]
     ├── contracts: dict[str, ContractSchema]
     ├── artifacts: dict[str, ProviderArtifactSchema]
@@ -24,7 +25,7 @@ Hierarchy:
 from __future__ import annotations
 
 import json as _json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -217,6 +218,180 @@ class ConstraintSchema(BaseModel):
     rule: str
     severity: Literal["warning", "error"] = "warning"
     description: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Quality Check Schema
+# ---------------------------------------------------------------------------
+
+
+class QualityCheckBase(BaseModel):
+    """Base schema for evaluate-time graph quality checks."""
+
+    name: str
+    description: str | None = None
+    severity: Literal["warning", "error"] = "warning"
+
+    model_config = {"extra": "forbid"}
+
+
+class PropertyQualityCheck(QualityCheckBase):
+    """Check a top-level property on entities or relationships."""
+
+    kind: Literal["property"] = "property"
+    target: Literal["entity", "relationship"]
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    property: str
+    rule: Literal["required", "non_empty", "type", "pattern"]
+    expected_type: str | None = None
+    pattern: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> PropertyQualityCheck:
+        if self.target == "entity":
+            if self.entity_type is None or self.relationship_type is not None:
+                msg = "Property quality checks targeting entities require entity_type only"
+                raise ValueError(msg)
+        else:
+            if self.relationship_type is None or self.entity_type is not None:
+                msg = (
+                    "Property quality checks targeting relationships require "
+                    "relationship_type only"
+                )
+                raise ValueError(msg)
+
+        if self.rule == "type" and not self.expected_type:
+            msg = "Property quality checks with rule 'type' require expected_type"
+            raise ValueError(msg)
+        if self.rule != "type" and self.expected_type is not None:
+            msg = "expected_type is only allowed when rule is 'type'"
+            raise ValueError(msg)
+
+        if self.rule == "pattern" and not self.pattern:
+            msg = "Property quality checks with rule 'pattern' require pattern"
+            raise ValueError(msg)
+        if self.rule != "pattern" and self.pattern is not None:
+            msg = "pattern is only allowed when rule is 'pattern'"
+            raise ValueError(msg)
+
+        return self
+
+
+class JsonContentQualityCheck(QualityCheckBase):
+    """Check JSON array-of-object content on entities or relationships."""
+
+    kind: Literal["json_content"] = "json_content"
+    target: Literal["entity", "relationship"]
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    property: str
+    rule: Literal["no_empty_objects_in_array", "required_nested_keys"]
+    keys: list[str] = Field(default_factory=list)
+    match: Literal["any", "all"] | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> JsonContentQualityCheck:
+        if self.target == "entity":
+            if self.entity_type is None or self.relationship_type is not None:
+                msg = "JSON content checks targeting entities require entity_type only"
+                raise ValueError(msg)
+        else:
+            if self.relationship_type is None or self.entity_type is not None:
+                msg = (
+                    "JSON content checks targeting relationships require "
+                    "relationship_type only"
+                )
+                raise ValueError(msg)
+
+        if self.rule == "required_nested_keys":
+            if not self.keys:
+                msg = "JSON content checks with rule 'required_nested_keys' require keys"
+                raise ValueError(msg)
+            if self.match is None:
+                msg = "JSON content checks with rule 'required_nested_keys' require match"
+                raise ValueError(msg)
+        else:
+            if self.keys:
+                msg = "keys is only allowed when rule is 'required_nested_keys'"
+                raise ValueError(msg)
+            if self.match is not None:
+                msg = "match is only allowed when rule is 'required_nested_keys'"
+                raise ValueError(msg)
+
+        return self
+
+
+class UniquenessQualityCheck(QualityCheckBase):
+    """Check entity-property uniqueness, optionally across compound keys."""
+
+    kind: Literal["uniqueness"] = "uniqueness"
+    entity_type: str
+    properties: list[str]
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> UniquenessQualityCheck:
+        if not self.properties:
+            msg = "Uniqueness quality checks require at least one property"
+            raise ValueError(msg)
+        return self
+
+
+class BoundsQualityCheck(QualityCheckBase):
+    """Check entity or relationship counts against a numeric range."""
+
+    kind: Literal["bounds"] = "bounds"
+    target: Literal["entity_count", "relationship_count"]
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    min_count: int | None = None
+    max_count: int | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> BoundsQualityCheck:
+        if self.target == "entity_count":
+            if self.entity_type is None or self.relationship_type is not None:
+                msg = "Bounds checks on entity_count require entity_type only"
+                raise ValueError(msg)
+        else:
+            if self.relationship_type is None or self.entity_type is not None:
+                msg = "Bounds checks on relationship_count require relationship_type only"
+                raise ValueError(msg)
+
+        if self.min_count is None and self.max_count is None:
+            msg = "Bounds quality checks require min_count, max_count, or both"
+            raise ValueError(msg)
+        return self
+
+
+class CardinalityQualityCheck(QualityCheckBase):
+    """Check per-entity relationship counts in one direction."""
+
+    kind: Literal["cardinality"] = "cardinality"
+    entity_type: str
+    relationship_type: str
+    direction: Literal["incoming", "outgoing"]
+    min_count: int | None = None
+    max_count: int | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> CardinalityQualityCheck:
+        if self.min_count is None and self.max_count is None:
+            msg = "Cardinality quality checks require min_count, max_count, or both"
+            raise ValueError(msg)
+        return self
+
+
+QualityCheckSchema = Annotated[
+    (
+        PropertyQualityCheck
+        | JsonContentQualityCheck
+        | UniquenessQualityCheck
+        | BoundsQualityCheck
+        | CardinalityQualityCheck
+    ),
+    Field(discriminator="kind"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +837,7 @@ class CoreConfig(BaseModel):
     relationships: list[RelationshipSchema]
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
+    quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
     ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
     integrations: dict[str, IntegrationSpec] = Field(default_factory=dict)
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
