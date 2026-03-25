@@ -30,6 +30,11 @@ from cruxible_core.service.groups import (
     service_resolve_group,
     service_update_trust_status,
 )
+from cruxible_core.service.lifecycle import (
+    service_init,
+    service_reload_config,
+    service_validate,
+)
 from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_relationships,
@@ -39,15 +44,12 @@ from cruxible_core.service.queries import (
     service_get_entity,
     service_get_receipt,
     service_get_relationship,
-    service_init,
     service_inspect_entity,
     service_list,
     service_query,
-    service_reload_config,
     service_sample,
     service_schema,
     service_stats,
-    service_validate,
 )
 from cruxible_core.service.snapshots import (
     service_create_snapshot,
