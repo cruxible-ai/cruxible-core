@@ -6,9 +6,10 @@ candidate opportunities, and low-confidence edges.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import CoreConfig
@@ -22,6 +23,7 @@ FindingCategory = Literal[
     "candidate_opportunity",
     "low_confidence_edge",
     "unreviewed_co_member",
+    "quality_check_failed",
 ]
 
 
@@ -31,7 +33,7 @@ class EvaluationFinding(BaseModel):
     category: FindingCategory
     severity: Literal["info", "warning", "error"]
     message: str
-    detail: dict[str, Any] = {}
+    detail: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvaluationReport(BaseModel):
@@ -41,6 +43,7 @@ class EvaluationReport(BaseModel):
     edge_count: int
     findings: list[EvaluationFinding]
     summary: dict[str, int]  # category -> count
+    quality_summary: dict[str, int] = Field(default_factory=dict)
 
 
 def evaluate_graph(
@@ -63,6 +66,9 @@ def evaluate_graph(
        entity but lacking a cross-reference edge themselves
     """
     findings: list[EvaluationFinding] = []
+    quality_summary: dict[str, int] = {
+        check.name: 0 for check in config.quality_checks
+    }
 
     _check_orphans(graph, findings, exclude_types=exclude_orphan_types)
     _check_coverage_gaps(config, graph, findings)
@@ -70,6 +76,7 @@ def evaluate_graph(
     _check_candidate_opportunities(config, graph, findings)
     _check_low_confidence_edges(graph, findings, confidence_threshold)
     _check_unreviewed_co_members(config, graph, findings)
+    _check_quality_rules(config, graph, findings, quality_summary)
 
     # Truncate to max_findings
     truncated = findings[:max_findings]
@@ -84,6 +91,7 @@ def evaluate_graph(
         edge_count=graph.edge_count(),
         findings=truncated,
         summary=summary,
+        quality_summary=quality_summary,
     )
 
 
@@ -464,3 +472,369 @@ def _check_unreviewed_co_members(
                                 },
                             )
                         )
+
+
+def _check_quality_rules(
+    config: CoreConfig,
+    graph: EntityGraph,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    """Run config-defined quality checks against the current graph state."""
+    for check in config.quality_checks:
+        kind = getattr(check, "kind", "")
+        if kind == "property":
+            _run_property_quality_check(graph, check, findings, quality_summary)
+        elif kind == "json_content":
+            _run_json_content_quality_check(graph, check, findings, quality_summary)
+        elif kind == "uniqueness":
+            _run_uniqueness_quality_check(graph, check, findings, quality_summary)
+        elif kind == "bounds":
+            _run_bounds_quality_check(graph, check, findings, quality_summary)
+        elif kind == "cardinality":
+            _run_cardinality_quality_check(graph, check, findings, quality_summary)
+
+
+def _run_property_quality_check(
+    graph: EntityGraph,
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    for target in _iter_quality_targets(graph, check):
+        value = target["properties"].get(check.property)
+        has_property = check.property in target["properties"]
+        failed = False
+        reason = ""
+        if check.rule == "required":
+            failed = not has_property or value is None
+            reason = "missing_required_property"
+        elif check.rule == "non_empty":
+            failed = not has_property or _is_empty_value(value)
+            reason = "empty_property"
+        elif check.rule == "type":
+            failed = not has_property or not _matches_expected_type(value, check.expected_type)
+            reason = "type_mismatch"
+        else:
+            assert check.pattern is not None
+            failed = (
+                not has_property
+                or not isinstance(value, str)
+                or re.search(check.pattern, value) is None
+            )
+            reason = "pattern_mismatch"
+
+        if failed:
+            _append_quality_finding(
+                findings,
+                quality_summary,
+                check,
+                message=(
+                    f"Quality check '{check.name}' failed for "
+                    f"{target['label']}.{check.property}"
+                ),
+                detail={
+                    "reason": reason,
+                    **target["detail"],
+                    "property": check.property,
+                    "value": value,
+                    "expected_type": getattr(check, "expected_type", None),
+                    "pattern": getattr(check, "pattern", None),
+                },
+            )
+
+
+def _run_json_content_quality_check(
+    graph: EntityGraph,
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    for target in _iter_quality_targets(graph, check):
+        value = target["properties"].get(check.property)
+        if value is None:
+            continue  # absent optional property — not a content violation
+        if not isinstance(value, list):
+            _append_quality_finding(
+                findings,
+                quality_summary,
+                check,
+                message=(
+                    f"Quality check '{check.name}' failed for "
+                    f"{target['label']}.{check.property}"
+                ),
+                detail={
+                    "reason": "not_array",
+                    **target["detail"],
+                    "property": check.property,
+                    "value": value,
+                },
+            )
+            continue
+
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                _append_quality_finding(
+                    findings,
+                    quality_summary,
+                    check,
+                    message=(
+                        f"Quality check '{check.name}' failed for "
+                        f"{target['label']}.{check.property}[{index}]"
+                    ),
+                    detail={
+                        "reason": "item_not_object",
+                        **target["detail"],
+                        "property": check.property,
+                        "index": index,
+                        "item": item,
+                    },
+                )
+                continue
+
+            if check.rule == "no_empty_objects_in_array":
+                if not item:
+                    _append_quality_finding(
+                        findings,
+                        quality_summary,
+                        check,
+                        message=(
+                            f"Quality check '{check.name}' failed for "
+                            f"{target['label']}.{check.property}[{index}]"
+                        ),
+                        detail={
+                            "reason": "empty_object",
+                            **target["detail"],
+                            "property": check.property,
+                            "index": index,
+                            "item": item,
+                        },
+                    )
+                continue
+
+            populated_keys = [key for key in check.keys if not _is_empty_value(item.get(key))]
+            is_valid = bool(populated_keys) if check.match == "any" else len(populated_keys) == len(
+                check.keys
+            )
+            if not is_valid:
+                _append_quality_finding(
+                    findings,
+                    quality_summary,
+                    check,
+                    message=(
+                        f"Quality check '{check.name}' failed for "
+                        f"{target['label']}.{check.property}[{index}]"
+                    ),
+                    detail={
+                        "reason": "missing_nested_keys",
+                        **target["detail"],
+                        "property": check.property,
+                        "index": index,
+                        "item": item,
+                        "required_keys": check.keys,
+                        "match": check.match,
+                    },
+                )
+
+
+def _run_uniqueness_quality_check(
+    graph: EntityGraph,
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    grouped: dict[tuple[Any, ...], list[str]] = {}
+    for entity in graph.list_entities(check.entity_type):
+        values: list[Any] = []
+        skip = False
+        for prop_name in check.properties:
+            value = entity.properties.get(prop_name)
+            if value is None:
+                skip = True
+                break
+            values.append(value)
+        if skip:
+            continue
+        grouped.setdefault(tuple(values), []).append(entity.entity_id)
+
+    for values, entity_ids in grouped.items():
+        if len(entity_ids) < 2:
+            continue
+        sorted_ids = sorted(entity_ids)
+        _append_quality_finding(
+            findings,
+            quality_summary,
+            check,
+            message=(
+                f"Quality check '{check.name}' failed: {len(sorted_ids)} "
+                f"{check.entity_type} entities share {check.properties}"
+            ),
+            detail={
+                "entity_type": check.entity_type,
+                "properties": check.properties,
+                "values": list(values),
+                "entity_ids": sorted_ids,
+            },
+        )
+
+
+def _run_bounds_quality_check(
+    graph: EntityGraph,
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    if check.target == "entity_count":
+        count = graph.entity_count(check.entity_type)
+        target_detail = {"target": check.target, "entity_type": check.entity_type}
+        label = f"entity type '{check.entity_type}'"
+    else:
+        count = graph.edge_count(check.relationship_type)
+        target_detail = {
+            "target": check.target,
+            "relationship_type": check.relationship_type,
+        }
+        label = f"relationship '{check.relationship_type}'"
+
+    if _violates_bounds(count, check.min_count, check.max_count):
+        _append_quality_finding(
+            findings,
+            quality_summary,
+            check,
+            message=f"Quality check '{check.name}' failed for {label} count",
+            detail={
+                **target_detail,
+                "count": count,
+                "min_count": check.min_count,
+                "max_count": check.max_count,
+            },
+        )
+
+
+def _run_cardinality_quality_check(
+    graph: EntityGraph,
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    for entity in graph.list_entities(check.entity_type):
+        count = graph.count_edges(
+            entity.entity_type,
+            entity.entity_id,
+            relationship_type=check.relationship_type,
+            direction=check.direction,
+        )
+        if _violates_bounds(count, check.min_count, check.max_count):
+            _append_quality_finding(
+                findings,
+                quality_summary,
+                check,
+                message=(
+                    f"Quality check '{check.name}' failed for "
+                    f"{entity.entity_type}:{entity.entity_id}"
+                ),
+                detail={
+                    "entity_type": entity.entity_type,
+                    "entity_id": entity.entity_id,
+                    "relationship_type": check.relationship_type,
+                    "direction": check.direction,
+                    "count": count,
+                    "min_count": check.min_count,
+                    "max_count": check.max_count,
+                },
+            )
+
+
+def _iter_quality_targets(graph: EntityGraph, check: Any) -> list[dict[str, Any]]:
+    if check.target == "entity":
+        return [
+            {
+                "label": f"{entity.entity_type}:{entity.entity_id}",
+                "properties": entity.properties,
+                "detail": {
+                    "entity_type": entity.entity_type,
+                    "entity_id": entity.entity_id,
+                },
+            }
+            for entity in graph.list_entities(check.entity_type)
+        ]
+
+    return [
+        {
+            "label": f"{from_type}:{from_id}->{to_type}:{to_id}",
+            "properties": properties,
+            "detail": {
+                "relationship_type": check.relationship_type,
+                "from_entity": f"{from_type}:{from_id}",
+                "to_entity": f"{to_type}:{to_id}",
+            },
+        }
+        for from_type, from_id, to_type, to_id, properties in graph.iter_edge_data(
+            check.relationship_type
+        )
+    ]
+
+
+def _append_quality_finding(
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+    check: Any,
+    *,
+    message: str,
+    detail: dict[str, Any],
+) -> None:
+    findings.append(
+        EvaluationFinding(
+            category="quality_check_failed",
+            severity=check.severity,
+            message=message,
+            detail={
+                "check_name": check.name,
+                "check_kind": check.kind,
+                **detail,
+            },
+        )
+    )
+    quality_summary[check.name] = quality_summary.get(check.name, 0) + 1
+
+
+def _violates_bounds(count: int, min_count: int | None, max_count: int | None) -> bool:
+    if min_count is not None and count < min_count:
+        return True
+    if max_count is not None and count > max_count:
+        return True
+    return False
+
+
+def _is_empty_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) == 0
+    return False
+
+
+def _matches_expected_type(value: Any, expected_type: str | None) -> bool:
+    if expected_type is None:
+        return False
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "int":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "float":
+        return isinstance(value, float)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "bool":
+        return isinstance(value, bool)
+    if expected_type == "date":
+        return isinstance(value, str)
+    if expected_type == "json":
+        return isinstance(value, (dict, list))
+    if expected_type == "array":
+        return isinstance(value, list)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    return False
