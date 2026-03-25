@@ -2593,9 +2593,9 @@ class TestGetRelationship:
 
         # Add second edge (different properties, creates a new edge)
         # Use graph directly since add_relationship does upsert
-        from cruxible_core.mcp.handlers import _manager
+        from cruxible_core.runtime.instance_manager import get_manager
 
-        instance = _manager.get(str(tmp_project))
+        instance = get_manager().get(str(tmp_project))
         graph = instance.load_graph()
         from cruxible_core.graph.types import RelationshipInstance
 
@@ -2657,9 +2657,9 @@ class TestGetRelationship:
             },
         )
         # Add two edges directly
-        from cruxible_core.mcp.handlers import _manager
+        from cruxible_core.runtime.instance_manager import get_manager
 
-        instance = _manager.get(str(tmp_project))
+        instance = get_manager().get(str(tmp_project))
         graph = instance.load_graph()
         from cruxible_core.graph.types import RelationshipInstance
 

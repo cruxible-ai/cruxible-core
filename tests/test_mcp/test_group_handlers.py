@@ -310,9 +310,9 @@ class TestUpdateTrustStatus:
             },
         )
         # Get resolution_id from the group
-        from cruxible_core.mcp.handlers import _manager
+        from cruxible_core.runtime.instance_manager import get_manager
 
-        inst = _manager.get(instance_id)
+        inst = get_manager().get(instance_id)
         store = inst.get_group_store()
         try:
             group = store.get_group(pr["group_id"])

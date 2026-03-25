@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.mcp.handlers import _manager, reset_client_cache
+from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
+from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import reset_registry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
@@ -15,11 +16,11 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 @pytest.fixture(autouse=True)
 def clear_instances():
     """Clear the instance manager between tests."""
-    _manager.clear()
+    get_manager().clear()
     reset_client_cache()
     reset_registry()
     yield
-    _manager.clear()
+    get_manager().clear()
     reset_client_cache()
     reset_registry()
 

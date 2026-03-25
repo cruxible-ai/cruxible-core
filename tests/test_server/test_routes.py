@@ -8,8 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_core.errors import ConstraintViolationError, InstanceNotFoundError
-from cruxible_core.mcp.handlers import get_manager, reset_client_cache
+from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
+from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -306,7 +307,7 @@ def test_constraint_violation_returns_422_with_context(
         raise ConstraintViolationError("constraint failed", violations=["mismatch"])
 
     monkeypatch.setattr(
-        "cruxible_core.server.routes.queries._handle_evaluate_local",
+        "cruxible_core.runtime.local_api._handle_evaluate_local",
         raise_constraint,
     )
     response = app_client.post(f"/api/v1/{instance_id}/evaluate", json={})
