@@ -8,8 +8,9 @@ recursing back through the HTTP client.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.client import CruxibleClient
@@ -112,6 +113,12 @@ class InstanceManager:
 _manager = InstanceManager()
 _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None
+ResultT = TypeVar("ResultT")
+WorkflowExecutionContractT = TypeVar(
+    "WorkflowExecutionContractT",
+    contracts.WorkflowRunResult,
+    contracts.WorkflowApplyResult,
+)
 
 
 def get_manager() -> InstanceManager:
@@ -148,6 +155,39 @@ def _get_client() -> CruxibleClient | None:
         )
         _client_cache_key = cache_key
     return _client_cache
+
+
+def _dispatch_remote_or_local(
+    remote_call: Callable[[CruxibleClient], ResultT],
+    local_call: Callable[[], ResultT],
+) -> ResultT:
+    """Route a handler to the configured HTTP client when server mode is enabled."""
+    client = _get_client()
+    if client is not None:
+        return remote_call(client)
+    return local_call()
+
+
+def _build_workflow_execution_contract(
+    result: Any,
+    result_type: type[WorkflowExecutionContractT],
+) -> WorkflowExecutionContractT:
+    """Normalize workflow run/apply service results into MCP contracts."""
+    return result_type(
+        workflow=result.workflow,
+        output=result.output,
+        receipt_id=result.receipt_id,
+        mode=result.mode,
+        canonical=result.canonical,
+        apply_digest=result.apply_digest,
+        head_snapshot_id=result.head_snapshot_id,
+        committed_snapshot_id=result.committed_snapshot_id,
+        apply_previews=result.apply_previews,
+        query_receipt_ids=result.query_receipt_ids,
+        trace_ids=result.trace_ids,
+        receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
+        traces=[trace.model_dump(mode="json") for trace in result.traces],
+    )
 
 
 def _check_config_compatibility(instance: InstanceProtocol) -> list[str]:
@@ -228,15 +268,15 @@ def handle_init(
     data_dir: str | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
-    client = _get_client()
-    if client is not None:
-        return client.init(
+    return _dispatch_remote_or_local(
+        lambda client: client.init(
             root_dir=root_dir,
             config_path=config_path,
             config_yaml=config_yaml,
             data_dir=data_dir,
-        )
-    return _handle_init_local(root_dir, config_path, config_yaml, data_dir)
+        ),
+        lambda: _handle_init_local(root_dir, config_path, config_yaml, data_dir),
+    )
 
 
 def _handle_validate_local(
@@ -263,10 +303,10 @@ def handle_validate(
     config_yaml: str | None = None,
 ) -> contracts.ValidateResult:
     """Validate a config file or inline YAML string."""
-    client = _get_client()
-    if client is not None:
-        return client.validate(config_path=config_path, config_yaml=config_yaml)
-    return _handle_validate_local(config_path, config_yaml)
+    return _dispatch_remote_or_local(
+        lambda client: client.validate(config_path=config_path, config_yaml=config_yaml),
+        lambda: _handle_validate_local(config_path, config_yaml),
+    )
 
 
 def _handle_workflow_lock_local(instance_id: str) -> contracts.WorkflowLockResult:
@@ -315,21 +355,7 @@ def _handle_workflow_run_local(
     )
     instance = _manager.get(instance_id)
     result = service_run(instance, workflow_name, input_payload or {})
-    return contracts.WorkflowRunResult(
-        workflow=result.workflow,
-        output=result.output,
-        receipt_id=result.receipt_id,
-        mode=result.mode,
-        canonical=result.canonical,
-        apply_digest=result.apply_digest,
-        head_snapshot_id=result.head_snapshot_id,
-        committed_snapshot_id=result.committed_snapshot_id,
-        apply_previews=result.apply_previews,
-        query_receipt_ids=result.query_receipt_ids,
-        trace_ids=result.trace_ids,
-        receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
-        traces=[trace.model_dump(mode="json") for trace in result.traces],
-    )
+    return _build_workflow_execution_contract(result, contracts.WorkflowRunResult)
 
 
 def _handle_workflow_apply_local(
@@ -353,21 +379,7 @@ def _handle_workflow_apply_local(
         expected_apply_digest=expected_apply_digest,
         expected_head_snapshot_id=expected_head_snapshot_id,
     )
-    return contracts.WorkflowApplyResult(
-        workflow=result.workflow,
-        output=result.output,
-        receipt_id=result.receipt_id,
-        mode=result.mode,
-        canonical=result.canonical,
-        apply_digest=result.apply_digest,
-        head_snapshot_id=result.head_snapshot_id,
-        committed_snapshot_id=result.committed_snapshot_id,
-        apply_previews=result.apply_previews,
-        query_receipt_ids=result.query_receipt_ids,
-        trace_ids=result.trace_ids,
-        receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
-        traces=[trace.model_dump(mode="json") for trace in result.traces],
-    )
+    return _build_workflow_execution_contract(result, contracts.WorkflowApplyResult)
 
 
 def _handle_workflow_test_local(
@@ -433,14 +445,14 @@ def handle_propose_workflow(
     input_payload: dict[str, Any] | None = None,
 ) -> contracts.WorkflowProposeResult:
     """Execute a workflow and create a governed relationship proposal."""
-    client = _get_client()
-    if client is not None:
-        return client.propose_workflow(
+    return _dispatch_remote_or_local(
+        lambda client: client.propose_workflow(
             instance_id,
             workflow_name=workflow_name,
             input_payload=input_payload or {},
-        )
-    return _handle_propose_workflow_local(instance_id, workflow_name, input_payload)
+        ),
+        lambda: _handle_propose_workflow_local(instance_id, workflow_name, input_payload),
+    )
 
 
 def _handle_create_snapshot_local(
@@ -541,9 +553,8 @@ def handle_ingest(
     upload_id: str | None = None,
 ) -> contracts.IngestResult:
     """Ingest a data file or inline data into the graph."""
-    client = _get_client()
-    if client is not None:
-        return client.ingest(
+    return _dispatch_remote_or_local(
+        lambda client: client.ingest(
             instance_id,
             mapping_name,
             file_path=file_path,
@@ -551,15 +562,16 @@ def handle_ingest(
             data_json=data_json,
             data_ndjson=data_ndjson,
             upload_id=upload_id,
-        )
-    return _handle_ingest_local(
-        instance_id,
-        mapping_name,
-        file_path=file_path,
-        data_csv=data_csv,
-        data_json=data_json,
-        data_ndjson=data_ndjson,
-        upload_id=upload_id,
+        ),
+        lambda: _handle_ingest_local(
+            instance_id,
+            mapping_name,
+            file_path=file_path,
+            data_csv=data_csv,
+            data_json=data_json,
+            data_ndjson=data_ndjson,
+            upload_id=upload_id,
+        ),
     )
 
 
@@ -611,10 +623,10 @@ def handle_query(
     limit: int | None = None,
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
-    client = _get_client()
-    if client is not None:
-        return client.query(instance_id, query_name, params, limit=limit)
-    return _handle_query_local(instance_id, query_name, params, limit=limit)
+    return _dispatch_remote_or_local(
+        lambda client: client.query(instance_id, query_name, params, limit=limit),
+        lambda: _handle_query_local(instance_id, query_name, params, limit=limit),
+    )
 
 
 def _handle_receipt_local(instance_id: str, receipt_id: str) -> dict[str, Any]:
@@ -627,10 +639,10 @@ def _handle_receipt_local(instance_id: str, receipt_id: str) -> dict[str, Any]:
 
 def handle_receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     """Retrieve a stored receipt by ID."""
-    client = _get_client()
-    if client is not None:
-        return client.receipt(instance_id, receipt_id)
-    return _handle_receipt_local(instance_id, receipt_id)
+    return _dispatch_remote_or_local(
+        lambda client: client.receipt(instance_id, receipt_id),
+        lambda: _handle_receipt_local(instance_id, receipt_id),
+    )
 
 
 def _handle_feedback_local(
@@ -691,9 +703,8 @@ def handle_feedback(
     group_override: bool = False,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
-    client = _get_client()
-    if client is not None:
-        return client.feedback(
+    return _dispatch_remote_or_local(
+        lambda client: client.feedback(
             instance_id,
             receipt_id=receipt_id,
             action=action,
@@ -707,21 +718,22 @@ def handle_feedback(
             reason=reason,
             corrections=corrections,
             group_override=group_override,
-        )
-    return _handle_feedback_local(
-        instance_id,
-        receipt_id,
-        action,
-        source,
-        from_type,
-        from_id,
-        relationship,
-        to_type,
-        to_id,
-        edge_key=edge_key,
-        reason=reason,
-        corrections=corrections,
-        group_override=group_override,
+        ),
+        lambda: _handle_feedback_local(
+            instance_id,
+            receipt_id,
+            action,
+            source,
+            from_type,
+            from_id,
+            relationship,
+            to_type,
+            to_id,
+            edge_key=edge_key,
+            reason=reason,
+            corrections=corrections,
+            group_override=group_override,
+        ),
     )
 
 
@@ -771,10 +783,10 @@ def handle_feedback_batch(
     source: contracts.FeedbackSource,
 ) -> contracts.FeedbackBatchResult:
     """Record batch edge feedback tied to prior receipts."""
-    client = _get_client()
-    if client is not None:
-        return client.feedback_batch(instance_id, items=items, source=source)
-    return _handle_feedback_batch_local(instance_id, items, source=source)
+    return _dispatch_remote_or_local(
+        lambda client: client.feedback_batch(instance_id, items=items, source=source),
+        lambda: _handle_feedback_batch_local(instance_id, items, source=source),
+    )
 
 
 def _handle_outcome_local(
@@ -797,10 +809,15 @@ def handle_outcome(
     detail: dict[str, Any] | None = None,
 ) -> contracts.OutcomeResult:
     """Record an outcome for a query."""
-    client = _get_client()
-    if client is not None:
-        return client.outcome(instance_id, receipt_id=receipt_id, outcome=outcome, detail=detail)
-    return _handle_outcome_local(instance_id, receipt_id, outcome, detail)
+    return _dispatch_remote_or_local(
+        lambda client: client.outcome(
+            instance_id,
+            receipt_id=receipt_id,
+            outcome=outcome,
+            detail=detail,
+        ),
+        lambda: _handle_outcome_local(instance_id, receipt_id, outcome, detail),
+    )
 
 
 def _handle_list_local(
@@ -853,9 +870,8 @@ def handle_list(
     operation_type: str | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
-    client = _get_client()
-    if client is not None:
-        return client.list(
+    return _dispatch_remote_or_local(
+        lambda client: client.list(
             instance_id,
             resource_type=resource_type,
             entity_type=entity_type,
@@ -865,17 +881,18 @@ def handle_list(
             limit=limit,
             property_filter=property_filter,
             operation_type=operation_type,
-        )
-    return _handle_list_local(
-        instance_id,
-        resource_type,
-        entity_type=entity_type,
-        relationship_type=relationship_type,
-        query_name=query_name,
-        receipt_id=receipt_id,
-        limit=limit,
-        property_filter=property_filter,
-        operation_type=operation_type,
+        ),
+        lambda: _handle_list_local(
+            instance_id,
+            resource_type,
+            entity_type=entity_type,
+            relationship_type=relationship_type,
+            query_name=query_name,
+            receipt_id=receipt_id,
+            limit=limit,
+            property_filter=property_filter,
+            operation_type=operation_type,
+        ),
     )
 
 
@@ -925,9 +942,8 @@ def handle_find_candidates(
     min_distinct_neighbors: int = 2,
 ) -> contracts.CandidatesResult:
     """Find candidate relationships."""
-    client = _get_client()
-    if client is not None:
-        return client.find_candidates(
+    return _dispatch_remote_or_local(
+        lambda client: client.find_candidates(
             instance_id,
             relationship_type=relationship_type,
             strategy=strategy,
@@ -937,17 +953,18 @@ def handle_find_candidates(
             min_confidence=min_confidence,
             limit=limit,
             min_distinct_neighbors=min_distinct_neighbors,
-        )
-    return _handle_find_candidates_local(
-        instance_id,
-        relationship_type,
-        strategy,
-        match_rules=match_rules,
-        via_relationship=via_relationship,
-        min_overlap=min_overlap,
-        min_confidence=min_confidence,
-        limit=limit,
-        min_distinct_neighbors=min_distinct_neighbors,
+        ),
+        lambda: _handle_find_candidates_local(
+            instance_id,
+            relationship_type,
+            strategy,
+            match_rules=match_rules,
+            via_relationship=via_relationship,
+            min_overlap=min_overlap,
+            min_confidence=min_confidence,
+            limit=limit,
+            min_distinct_neighbors=min_distinct_neighbors,
+        ),
     )
 
 
@@ -982,19 +999,19 @@ def handle_evaluate(
     exclude_orphan_types: list[str] | None = None,
 ) -> contracts.EvaluateResult:
     """Evaluate graph quality."""
-    client = _get_client()
-    if client is not None:
-        return client.evaluate(
+    return _dispatch_remote_or_local(
+        lambda client: client.evaluate(
             instance_id,
             confidence_threshold=confidence_threshold,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
-        )
-    return _handle_evaluate_local(
-        instance_id,
-        confidence_threshold=confidence_threshold,
-        max_findings=max_findings,
-        exclude_orphan_types=exclude_orphan_types,
+        ),
+        lambda: _handle_evaluate_local(
+            instance_id,
+            confidence_threshold=confidence_threshold,
+            max_findings=max_findings,
+            exclude_orphan_types=exclude_orphan_types,
+        ),
     )
 
 
@@ -1088,10 +1105,10 @@ def _handle_reload_config_local(
 
 def handle_schema(instance_id: str) -> dict[str, Any]:
     """Get config schema details."""
-    client = _get_client()
-    if client is not None:
-        return client.schema(instance_id)
-    return _handle_schema_local(instance_id)
+    return _dispatch_remote_or_local(
+        lambda client: client.schema(instance_id),
+        lambda: _handle_schema_local(instance_id),
+    )
 
 
 def _handle_sample_local(
@@ -1116,10 +1133,10 @@ def handle_sample(
     limit: int = 5,
 ) -> contracts.SampleResult:
     """Sample entities of a given type."""
-    client = _get_client()
-    if client is not None:
-        return client.sample(instance_id, entity_type, limit=limit)
-    return _handle_sample_local(instance_id, entity_type, limit=limit)
+    return _dispatch_remote_or_local(
+        lambda client: client.sample(instance_id, entity_type, limit=limit),
+        lambda: _handle_sample_local(instance_id, entity_type, limit=limit),
+    )
 
 
 def _handle_add_relationship_impl(
@@ -1175,10 +1192,10 @@ def handle_add_relationship(
     relationships: list[contracts.RelationshipInput],
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
-    client = _get_client()
-    if client is not None:
-        return client.add_relationships(instance_id, relationships)
-    return _handle_add_relationship_local(instance_id, relationships)
+    return _dispatch_remote_or_local(
+        lambda client: client.add_relationships(instance_id, relationships),
+        lambda: _handle_add_relationship_local(instance_id, relationships),
+    )
 
 
 def _handle_add_entity_local(
@@ -1210,10 +1227,10 @@ def handle_add_entity(
     entities: list[contracts.EntityInput],
 ) -> contracts.AddEntityResult:
     """Add or update one or more entities in the graph (upsert)."""
-    client = _get_client()
-    if client is not None:
-        return client.add_entities(instance_id, entities)
-    return _handle_add_entity_local(instance_id, entities)
+    return _dispatch_remote_or_local(
+        lambda client: client.add_entities(instance_id, entities),
+        lambda: _handle_add_entity_local(instance_id, entities),
+    )
 
 
 def _handle_add_constraint_local(
@@ -1283,16 +1300,16 @@ def handle_add_constraint(
     description: str | None = None,
 ) -> contracts.AddConstraintResult:
     """Add a constraint rule to the config and write back to YAML."""
-    client = _get_client()
-    if client is not None:
-        return client.add_constraint(
+    return _dispatch_remote_or_local(
+        lambda client: client.add_constraint(
             instance_id,
             name=name,
             rule=rule,
             severity=severity,
             description=description,
-        )
-    return _handle_add_constraint_local(instance_id, name, rule, severity, description)
+        ),
+        lambda: _handle_add_constraint_local(instance_id, name, rule, severity, description),
+    )
 
 
 def _handle_get_entity_local(
@@ -1320,10 +1337,10 @@ def handle_get_entity(
     entity_id: str,
 ) -> contracts.GetEntityResult:
     """Look up a specific entity by type and ID."""
-    client = _get_client()
-    if client is not None:
-        return client.get_entity(instance_id, entity_type, entity_id)
-    return _handle_get_entity_local(instance_id, entity_type, entity_id)
+    return _dispatch_remote_or_local(
+        lambda client: client.get_entity(instance_id, entity_type, entity_id),
+        lambda: _handle_get_entity_local(instance_id, entity_type, entity_id),
+    )
 
 
 def _handle_get_relationship_local(
@@ -1372,9 +1389,8 @@ def handle_get_relationship(
     edge_key: int | None = None,
 ) -> contracts.GetRelationshipResult:
     """Look up a specific relationship by its endpoints and type."""
-    client = _get_client()
-    if client is not None:
-        return client.get_relationship(
+    return _dispatch_remote_or_local(
+        lambda client: client.get_relationship(
             instance_id,
             from_type=from_type,
             from_id=from_id,
@@ -1382,15 +1398,16 @@ def handle_get_relationship(
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
-        )
-    return _handle_get_relationship_local(
-        instance_id,
-        from_type,
-        from_id,
-        relationship_type,
-        to_type,
-        to_id,
-        edge_key=edge_key,
+        ),
+        lambda: _handle_get_relationship_local(
+            instance_id,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+            edge_key=edge_key,
+        ),
     )
 
 
@@ -1462,9 +1479,8 @@ def handle_propose_group(
     suggested_priority: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
-    client = _get_client()
-    if client is not None:
-        return client.propose_group(
+    return _dispatch_remote_or_local(
+        lambda client: client.propose_group(
             instance_id,
             relationship_type=relationship_type,
             members=members,
@@ -1474,17 +1490,18 @@ def handle_propose_group(
             integrations_used=integrations_used,
             proposed_by=proposed_by,
             suggested_priority=suggested_priority,
-        )
-    return _handle_propose_group_local(
-        instance_id,
-        relationship_type,
-        members,
-        thesis_text=thesis_text,
-        thesis_facts=thesis_facts,
-        analysis_state=analysis_state,
-        integrations_used=integrations_used,
-        proposed_by=proposed_by,
-        suggested_priority=suggested_priority,
+        ),
+        lambda: _handle_propose_group_local(
+            instance_id,
+            relationship_type,
+            members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            integrations_used=integrations_used,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+        ),
     )
 
 
@@ -1524,21 +1541,21 @@ def handle_resolve_group(
     resolved_by: contracts.GroupResolvedBy = "human",
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
-    client = _get_client()
-    if client is not None:
-        return client.resolve_group(
+    return _dispatch_remote_or_local(
+        lambda client: client.resolve_group(
             instance_id,
             group_id,
             action=action,
             rationale=rationale,
             resolved_by=resolved_by,
-        )
-    return _handle_resolve_group_local(
-        instance_id,
-        group_id,
-        action,
-        rationale=rationale,
-        resolved_by=resolved_by,
+        ),
+        lambda: _handle_resolve_group_local(
+            instance_id,
+            group_id,
+            action,
+            rationale=rationale,
+            resolved_by=resolved_by,
+        ),
     )
 
 
@@ -1566,15 +1583,20 @@ def handle_update_trust_status(
     reason: str = "",
 ) -> contracts.UpdateTrustStatusToolResult:
     """Update trust status on a resolution."""
-    client = _get_client()
-    if client is not None:
-        return client.update_trust_status(
+    return _dispatch_remote_or_local(
+        lambda client: client.update_trust_status(
             instance_id,
             resolution_id,
             trust_status=trust_status,
             reason=reason,
-        )
-    return _handle_update_trust_status_local(instance_id, resolution_id, trust_status, reason)
+        ),
+        lambda: _handle_update_trust_status_local(
+            instance_id,
+            resolution_id,
+            trust_status,
+            reason,
+        ),
+    )
 
 
 def _handle_get_group_local(
@@ -1597,10 +1619,10 @@ def handle_get_group(
     group_id: str,
 ) -> contracts.GetGroupToolResult:
     """Get a candidate group with its members."""
-    client = _get_client()
-    if client is not None:
-        return client.get_group(instance_id, group_id)
-    return _handle_get_group_local(instance_id, group_id)
+    return _dispatch_remote_or_local(
+        lambda client: client.get_group(instance_id, group_id),
+        lambda: _handle_get_group_local(instance_id, group_id),
+    )
 
 
 def _handle_list_groups_local(
@@ -1632,15 +1654,15 @@ def handle_list_groups(
     limit: int = 50,
 ) -> contracts.ListGroupsToolResult:
     """List candidate groups with optional filters."""
-    client = _get_client()
-    if client is not None:
-        return client.list_groups(
+    return _dispatch_remote_or_local(
+        lambda client: client.list_groups(
             instance_id,
             relationship_type=relationship_type,
             status=status,
             limit=limit,
-        )
-    return _handle_list_groups_local(instance_id, relationship_type, status, limit)
+        ),
+        lambda: _handle_list_groups_local(instance_id, relationship_type, status, limit),
+    )
 
 
 def _handle_list_resolutions_local(
@@ -1672,15 +1694,15 @@ def handle_list_resolutions(
     limit: int = 50,
 ) -> contracts.ListResolutionsToolResult:
     """List group resolutions with optional filters."""
-    client = _get_client()
-    if client is not None:
-        return client.list_resolutions(
+    return _dispatch_remote_or_local(
+        lambda client: client.list_resolutions(
             instance_id,
             relationship_type=relationship_type,
             action=action,
             limit=limit,
-        )
-    return _handle_list_resolutions_local(instance_id, relationship_type, action, limit)
+        ),
+        lambda: _handle_list_resolutions_local(instance_id, relationship_type, action, limit),
+    )
 
 
 def _handle_propose_entity_changes_local(
@@ -1743,9 +1765,8 @@ def handle_propose_entity_changes(
     source_step_ids: list[str] | None = None,
 ) -> contracts.ProposeEntityChangesToolResult:
     """Propose a governed batch of entity creates or patches."""
-    client = _get_client()
-    if client is not None:
-        return client.propose_entity_changes(
+    return _dispatch_remote_or_local(
+        lambda client: client.propose_entity_changes(
             instance_id,
             members=members,
             thesis_text=thesis_text,
@@ -1757,19 +1778,20 @@ def handle_propose_entity_changes(
             source_workflow_receipt_id=source_workflow_receipt_id,
             source_trace_ids=source_trace_ids,
             source_step_ids=source_step_ids,
-        )
-    return _handle_propose_entity_changes_local(
-        instance_id,
-        members,
-        thesis_text=thesis_text,
-        thesis_facts=thesis_facts,
-        analysis_state=analysis_state,
-        proposed_by=proposed_by,
-        suggested_priority=suggested_priority,
-        source_workflow_name=source_workflow_name,
-        source_workflow_receipt_id=source_workflow_receipt_id,
-        source_trace_ids=source_trace_ids,
-        source_step_ids=source_step_ids,
+        ),
+        lambda: _handle_propose_entity_changes_local(
+            instance_id,
+            members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+            source_workflow_name=source_workflow_name,
+            source_workflow_receipt_id=source_workflow_receipt_id,
+            source_trace_ids=source_trace_ids,
+            source_step_ids=source_step_ids,
+        ),
     )
 
 
@@ -1792,10 +1814,10 @@ def handle_get_entity_proposal(
     proposal_id: str,
 ) -> contracts.GetEntityProposalToolResult:
     """Get an entity proposal with its members."""
-    client = _get_client()
-    if client is not None:
-        return client.get_entity_proposal(instance_id, proposal_id)
-    return _handle_get_entity_proposal_local(instance_id, proposal_id)
+    return _dispatch_remote_or_local(
+        lambda client: client.get_entity_proposal(instance_id, proposal_id),
+        lambda: _handle_get_entity_proposal_local(instance_id, proposal_id),
+    )
 
 
 def _handle_list_entity_proposals_local(
@@ -1821,10 +1843,10 @@ def handle_list_entity_proposals(
     limit: int = 50,
 ) -> contracts.ListEntityProposalsToolResult:
     """List entity proposals with optional status filter."""
-    client = _get_client()
-    if client is not None:
-        return client.list_entity_proposals(instance_id, status=status, limit=limit)
-    return _handle_list_entity_proposals_local(instance_id, status=status, limit=limit)
+    return _dispatch_remote_or_local(
+        lambda client: client.list_entity_proposals(instance_id, status=status, limit=limit),
+        lambda: _handle_list_entity_proposals_local(instance_id, status=status, limit=limit),
+    )
 
 
 def _handle_resolve_entity_proposal_local(
@@ -1864,19 +1886,19 @@ def handle_resolve_entity_proposal(
     resolved_by: contracts.EntityProposalResolvedBy = "human",
 ) -> contracts.ResolveEntityProposalToolResult:
     """Resolve an entity proposal."""
-    client = _get_client()
-    if client is not None:
-        return client.resolve_entity_proposal(
+    return _dispatch_remote_or_local(
+        lambda client: client.resolve_entity_proposal(
             instance_id,
             proposal_id,
             action=action,
             rationale=rationale,
             resolved_by=resolved_by,
-        )
-    return _handle_resolve_entity_proposal_local(
-        instance_id,
-        proposal_id,
-        action,
-        rationale=rationale,
-        resolved_by=resolved_by,
+        ),
+        lambda: _handle_resolve_entity_proposal_local(
+            instance_id,
+            proposal_id,
+            action,
+            rationale=rationale,
+            resolved_by=resolved_by,
+        ),
     )

@@ -253,36 +253,30 @@ class WorkflowPlanResult(BaseModel):
     plan: dict[str, Any]
 
 
-class WorkflowRunResult(BaseModel):
+class WorkflowExecutionResult(BaseModel):
     workflow: str
     output: Any
     receipt_id: str
+    mode: str
+    canonical: bool
+    apply_digest: str | None = None
+    head_snapshot_id: str | None = None
+    committed_snapshot_id: str | None = None
+    apply_previews: dict[str, Any] = Field(default_factory=dict)
+    query_receipt_ids: list[str] = Field(default_factory=list)
+    trace_ids: list[str] = Field(default_factory=list)
+    receipt: dict[str, Any] | None = None
+    traces: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkflowRunResult(WorkflowExecutionResult):
     mode: str = "run"
     canonical: bool = False
-    apply_digest: str | None = None
-    head_snapshot_id: str | None = None
-    committed_snapshot_id: str | None = None
-    apply_previews: dict[str, Any] = Field(default_factory=dict)
-    query_receipt_ids: list[str] = Field(default_factory=list)
-    trace_ids: list[str] = Field(default_factory=list)
-    receipt: dict[str, Any] | None = None
-    traces: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class WorkflowApplyResult(BaseModel):
-    workflow: str
-    output: Any
-    receipt_id: str
+class WorkflowApplyResult(WorkflowExecutionResult):
     mode: str = "apply"
     canonical: bool = True
-    apply_digest: str | None = None
-    head_snapshot_id: str | None = None
-    committed_snapshot_id: str | None = None
-    apply_previews: dict[str, Any] = Field(default_factory=dict)
-    query_receipt_ids: list[str] = Field(default_factory=list)
-    trace_ids: list[str] = Field(default_factory=list)
-    receipt: dict[str, Any] | None = None
-    traces: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkflowTestCaseResult(BaseModel):

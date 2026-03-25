@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import ValidationError
 
@@ -32,6 +32,34 @@ from cruxible_core.workflow.types import (
     RelationshipGroupProposalArtifact,
     WorkflowTestCaseResult,
 )
+
+WorkflowExecutionResultT = TypeVar(
+    "WorkflowExecutionResultT",
+    RunServiceResult,
+    ApplyWorkflowResult,
+)
+
+
+def _build_workflow_execution_result(
+    result: Any,
+    result_type: type[WorkflowExecutionResultT],
+) -> WorkflowExecutionResultT:
+    """Normalize workflow execution output into the service result shape."""
+    return result_type(
+        workflow=result.workflow,
+        output=result.output,
+        receipt_id=result.receipt.receipt_id,
+        mode=result.mode,
+        canonical=result.canonical,
+        apply_digest=result.apply_digest,
+        head_snapshot_id=result.head_snapshot_id,
+        committed_snapshot_id=result.committed_snapshot_id,
+        apply_previews=result.apply_previews,
+        query_receipt_ids=result.query_receipt_ids,
+        trace_ids=[trace.trace_id for trace in result.traces],
+        receipt=result.receipt,
+        traces=result.traces,
+    )
 
 
 def service_lock(instance: InstanceProtocol) -> LockServiceResult:
@@ -74,21 +102,7 @@ def service_run(
     """Execute a workflow and return output plus receipt/trace identifiers."""
     config = instance.load_config()
     result = execute_workflow(instance, config, workflow_name, input_payload)
-    return RunServiceResult(
-        workflow=result.workflow,
-        output=result.output,
-        receipt_id=result.receipt.receipt_id,
-        mode=result.mode,
-        canonical=result.canonical,
-        apply_digest=result.apply_digest,
-        head_snapshot_id=result.head_snapshot_id,
-        committed_snapshot_id=result.committed_snapshot_id,
-        apply_previews=result.apply_previews,
-        query_receipt_ids=result.query_receipt_ids,
-        trace_ids=[trace.trace_id for trace in result.traces],
-        receipt=result.receipt,
-        traces=result.traces,
-    )
+    return _build_workflow_execution_result(result, RunServiceResult)
 
 
 def service_apply_workflow(
@@ -135,21 +149,7 @@ def service_apply_workflow(
         persist_receipt=True,
         persist_traces=True,
     )
-    return ApplyWorkflowResult(
-        workflow=result.workflow,
-        output=result.output,
-        receipt_id=result.receipt.receipt_id,
-        mode=result.mode,
-        canonical=result.canonical,
-        apply_digest=result.apply_digest,
-        head_snapshot_id=result.head_snapshot_id,
-        committed_snapshot_id=result.committed_snapshot_id,
-        apply_previews=result.apply_previews,
-        query_receipt_ids=result.query_receipt_ids,
-        trace_ids=[trace.trace_id for trace in result.traces],
-        receipt=result.receipt,
-        traces=result.traces,
-    )
+    return _build_workflow_execution_result(result, ApplyWorkflowResult)
 
 
 def service_propose_workflow(
