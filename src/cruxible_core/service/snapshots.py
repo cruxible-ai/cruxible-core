@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.types import ForkSnapshotResult, SnapshotCreateResult, SnapshotListResult
 
 
