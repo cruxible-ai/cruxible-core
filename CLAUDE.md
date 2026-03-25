@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Project Overview
 
 **GitHub:** https://github.com/cruxible-ai/cruxible-core
@@ -56,60 +58,111 @@ The MCP server name includes the version (`cruxible-core v0.2.0`) so agents and 
 
 ## Architecture
 
-### Package Layout
+### Three Surface Layers, One Service Core
+
+All interfaces delegate to the **service layer** (`service/`). Never duplicate orchestration logic in handlers.
 
 ```
-src/cruxible_core/
-  config/       # Pydantic models for YAML config, loader, validator
-  graph/        # EntityGraph (networkx), ontology, runtime types
-  query/        # QueryEngine, traversal, constraints, candidate detection
-  receipt/      # Receipt DAG (ReceiptNode, EvidenceEdge), serializers
-  feedback/     # FeedbackRecord, OutcomeRecord, graph updates
-  ingest/       # CSV/JSON -> EntityGraph via config mappings
-  mcp/          # MCP server (primary interface for AI agents)
-  cli/          # Click CLI (secondary interface)
-  storage/      # SQLite backend for receipts + feedback
-  errors.py     # CoreError hierarchy
+MCP (mcp/)  ──┐
+CLI (cli/)  ──┼──▶  Service Layer (service/)  ──▶  Core Modules
+HTTP (server/) ┘
 ```
+
+- **MCP** (`mcp/`) — Primary interface for AI agents via FastMCP. Handlers in `handlers.py` support dual-mode: library-mode (direct calls) or server-mode (delegates to `CruxibleClient`).
+- **CLI** (`cli/`) — Click CLI. Commands in `commands.py` delegate to service functions.
+- **HTTP** (`server/`) — FastAPI REST server with bearer-token auth. Routes in `server/routes/`. Supports HTTP and Unix Domain Socket transports.
+- **Client** (`client/`) — `CruxibleClient` SDK for talking to HTTP servers. Mirrors all service operations.
+
+### Service Layer (`service/`)
+
+The source of truth for all business logic. Organized by concern:
+
+- `queries.py` — Read operations (query, schema, inspect, list, stats, sample)
+- `mutations.py` — Graph mutations (add_entities, add_relationships, ingest)
+- `feedback.py` — Feedback collection and outcome recording
+- `execution.py` — Workflow execution (plan, run, test, apply, propose, lock)
+- `groups.py` — Candidate group proposal management with resolution/trust
+- `entity_proposals.py` — Governed entity change proposals
+- `analysis.py` — Constraint evaluation and candidate finding
+- `snapshots.py` — World state snapshots for branching/recovery
+- `types.py` — All input/output types (typed dataclasses)
+
+Service functions have consistent signatures: accept `instance: InstanceProtocol`, return typed result dataclasses.
+
+### Instance Protocol (`instance_protocol.py`)
+
+Structural protocols defining abstract instance/store interfaces:
+- `InstanceProtocol` — Graph/config loading, snapshot creation, store access
+- `ReceiptStoreProtocol`, `FeedbackStoreProtocol`, `GroupStoreProtocol`, `EntityProposalStoreProtocol`
+
+This abstraction enables future non-SQLite backends (e.g., cloud storage) without coupling.
+
+The concrete implementation is `CruxibleInstance` in `cli/instance.py`, which manages the `.cruxible/` directory:
+
+```
+.cruxible/
+  instance.json     # Metadata (config path, version)
+  graph.json        # NetworkX node_link_data JSON
+  receipts.db       # SQLite (receipts + execution traces)
+  feedback.db       # SQLite (feedback, outcomes, groups, entity proposals)
+```
+
+### Workflow System (`workflow/`)
+
+Deterministic workflow engine with lock-file reproducibility:
+
+- `compiler.py` — Compiles workflows to `CompiledPlan`, generates SHA256 locks (`cruxible.lock.yaml`), resolves providers and artifacts
+- `executor.py` — Runtime execution supporting 10 step types: query, provider, assert, make_candidates, map_signals, propose_relationship_group, make_entities, make_relationships, apply_entities, apply_relationships
+- `contracts.py` — Payload validation against declared contracts
+- `refs.py` — Step reference resolution (`$input`, `$steps.*`, `$item`)
+
+Three execution modes: `run` (non-canonical), `preview` (canonical dry-run), `apply` (canonical with mutations). Canonical workflows create `WorldSnapshot` objects with lineage tracking.
+
+### Provider System (`provider/`)
+
+External provider execution with tracing. Providers are callables resolved by the registry (`provider/registry.py`). Each execution produces an `ExecutionTrace` (input/output, duration, status, artifact hash) persisted to receipts.db.
+
+### Groups and Entity Proposals
+
+Two parallel governed-mutation systems:
+
+- **Groups** (`group/`) — Relationship proposals using tri-state signals (support/contradict/unsure) from integrations. `CandidateGroup` tracks status: pending_review → auto_resolved/applying → resolved.
+- **Entity Proposals** (`entity_proposal/`) — Entity create/patch proposals with similar lifecycle.
+
+Both stored in feedback.db via their respective stores.
 
 ### Key Design Decisions
 
-- **Zero LLM dependencies.** Core is purely deterministic. Claude Code provides all intelligence via MCP tools.
+- **Zero LLM dependencies.** Purely deterministic runtime. Claude Code provides all intelligence via MCP tools.
 - **Pydantic for all models.** Config schema, runtime types, receipts — all validated.
 - **Polars for data operations.** Ingestion and candidate detection use Polars DataFrames.
 - **NetworkX for graph.** EntityGraph wraps networkx DiGraph for entity/relationship storage.
-- **SQLite for persistence.** Receipts, feedback, outcomes stored in SQLite.
-- **YAML for config.** Defines entity types, relationships, named queries, constraints, ingestion mappings.
+- **SQLite for persistence.** Receipts, feedback, outcomes, groups, proposals stored in SQLite.
+- **YAML for config.** Defines entity types, relationships, named queries, constraints, ingestion mappings, workflows, quality checks, integrations, and provider artifacts.
 
-### Config Schema
+### Config Schema (`config/schema.py`)
 
-Configs define a decision domain:
-- `entity_types`: Entity definitions with typed properties
-- `relationships`: Edges between entities with properties and cardinality
-- `named_queries`: Declarative traversal patterns (entry_point + traversal steps)
-- `constraints`: Rule expressions with severity levels
-- `ingestion`: Column mappings from CSV/JSON to entities and relationships
+Configs define a decision domain. Beyond the basics (entity_types, relationships, named_queries, constraints, ingestion), the schema includes:
 
-### MCP Tools
+- `workflows` — Declarative step-based execution plans
+- `quality_checks` — 5 types: property, json_content, uniqueness, bounds, cardinality
+- `integrations` — External integration specs with contracts and guardrails
+- `matching` — Per-relationship proposal rules (auto-resolve conditions, trust requirements)
+- `artifacts` — External resources (models, data) referenced by workflows
 
-Core tools: `cruxible_init`, `cruxible_validate`, `cruxible_ingest`, `cruxible_query`, `cruxible_receipt`, `cruxible_feedback`, `cruxible_outcome`, `cruxible_list`, `cruxible_evaluate`, `cruxible_schema`, `cruxible_sample`, `cruxible_find_candidates`, `cruxible_add_relationship`, `cruxible_add_entity`
+### Evaluation (`evaluate.py`)
 
-Lookup tools: `cruxible_get_entity`, `cruxible_get_relationship`
-
-Config mutation: `cruxible_add_constraint` — writes constraints to YAML via `save_config()`
-
-### Feedback-to-Constraint Workflow
-
-When rejection patterns emerge from feedback, encode them as constraints:
-1. Use `analyze_feedback` MCP prompt or manually review feedback
-2. Call `cruxible_add_constraint` to encode the pattern as a rule
-3. Run `cruxible_evaluate` to verify constraints flag expected violations
-
-Config write-back uses atomic temp-file + rename via `config/loader.py:save_config()`.
+Deterministic graph quality assessment with 6 checks:
+1. Orphan entities (no edges)
+2. Coverage gaps (declared types missing from graph)
+3. Constraint violations (rule-based)
+4. Candidate opportunities (shared neighbors, missing edges)
+5. Low-confidence edges
+6. Unreviewed co-members
 
 ### Permission Modes
 
-MCP tools are gated by server-side permission modes via `CRUXIBLE_MODE` env var. Three cumulative tiers:
+MCP tools are gated by `CRUXIBLE_MODE` env var. Three cumulative tiers:
 
 | Mode | Env value | Tools |
 |------|-----------|-------|
@@ -117,18 +170,19 @@ MCP tools are gated by server-side permission modes via `CRUXIBLE_MODE` env var.
 | `GRAPH_WRITE` | `graph_write` | READ_ONLY + `add_entity`, `add_relationship`, `feedback`, `outcome` |
 | `ADMIN` | `admin` (default) | All tools including `init` (new instance), `ingest`, `add_constraint` |
 
-- Default is `ADMIN` (backward compatible). Invalid values raise `ConfigError` at startup.
-- `cruxible_init` reload path (no `config_path`) is `READ_ONLY`; create path requires `ADMIN`.
-- `cruxible_query` is `READ_ONLY` even though it writes receipts to SQLite (audit trail, not agent-controlled mutation).
 - `CRUXIBLE_ALLOWED_ROOTS` env var (comma-separated absolute paths) restricts which directories `cruxible_init` can access.
-- Audit logging uses structlog to stderr. The safe stderr default is set in `mcp/permissions.py`; `main()` reconfigures with JSON formatting for production.
+- Audit logging uses structlog to stderr.
 
 ### Error Handling
 
-All errors inherit from `CoreError`. Key types:
-- `ConfigError`: Invalid config YAML
-- `DataValidationError`: Data doesn't match config schema
-- `EntityNotFoundError`: Entity ID not in graph
-- `RelationshipNotFoundError`: Relationship type not in schema
-- `QueryNotFoundError`: Named query not in config
-- `PermissionDeniedError`: MCP tool call denied due to insufficient permission mode
+All errors inherit from `CoreError` in `errors.py`. Key types: `ConfigError`, `DataValidationError`, `EntityNotFoundError`, `RelationshipNotFoundError`, `QueryNotFoundError`, `PermissionDeniedError`.
+
+### Test Organization
+
+Tests mirror the src layout under `tests/`:
+- `test_service/` — Service layer tests (primary coverage target)
+- `test_mcp/` — MCP handler tests
+- `test_cli/` — CLI command tests (includes server-mode testing)
+- `test_config/`, `test_graph/`, `test_query/`, `test_receipt/`, `test_feedback/`, `test_workflow/` — Module-level tests
+- `conftest.py` — Shared fixtures including workflow config templates and `canonical_workflow_instance`
+- `support/` — Test helpers (e.g., `workflow_test_providers.py`)
