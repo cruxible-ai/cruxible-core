@@ -971,6 +971,7 @@ def _handle_evaluate_local(
         edge_count=report.edge_count,
         findings=[f.model_dump(mode="json") for f in report.findings],
         summary=report.summary,
+        quality_summary=report.quality_summary,
     )
 
 

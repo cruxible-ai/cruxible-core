@@ -176,6 +176,31 @@ def test_workflow_apply_uses_expected_route():
     assert captured["payload"]["expected_apply_digest"] == "sha256:abc"
 
 
+def test_evaluate_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "entity_count": 4,
+                "edge_count": 3,
+                "findings": [],
+                "summary": {},
+                "quality_summary": {"check_ok": 0},
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.evaluate("inst_123", confidence_threshold=0.7, max_findings=5)
+    assert result.quality_summary == {"check_ok": 0}
+    assert captured["path"].endswith("/api/v1/inst_123/evaluate")
+    assert captured["payload"]["confidence_threshold"] == 0.7
+    assert captured["payload"]["max_findings"] == 5
+
+
 def test_snapshot_create_uses_expected_route():
     captured: dict[str, Any] = {}
 

@@ -158,6 +158,7 @@ class TestEvaluate:
         assert report.edge_count >= 3
         assert isinstance(report.findings, list)
         assert isinstance(report.summary, dict)
+        assert isinstance(report.quality_summary, dict)
 
     def test_with_threshold(self, populated_instance: CruxibleInstance) -> None:
         report = service_evaluate(populated_instance, confidence_threshold=0.99)

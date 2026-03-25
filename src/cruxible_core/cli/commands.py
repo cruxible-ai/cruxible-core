@@ -190,12 +190,20 @@ def _print_apply_previews(apply_previews: dict[str, Any]) -> None:
     click.echo("Apply previews:")
     for step_id, preview in apply_previews.items():
         target = preview.get("entity_type") or preview.get("relationship_type") or step_id
-        click.echo(
+        summary = (
             f"  {step_id}: {target} "
             f"creates={preview.get('create_count', 0)} "
             f"updates={preview.get('update_count', 0)} "
             f"noops={preview.get('noop_count', 0)}"
         )
+        duplicate_count = preview.get("duplicate_input_count", 0)
+        conflicting_count = preview.get("conflicting_duplicate_count", 0)
+        if duplicate_count or conflicting_count:
+            summary += (
+                f" duplicates={duplicate_count} "
+                f"conflicting={conflicting_count}"
+            )
+        click.echo(summary)
 
 
 def _print_query_param_hints(hints: contracts.QueryParamHints | None) -> None:
@@ -1382,6 +1390,7 @@ def evaluate(threshold: float, limit: int) -> None:
         entity_count = report.entity_count
         edge_count = report.edge_count
         summary = report.summary
+        quality_summary = report.quality_summary
     else:
         instance = CruxibleInstance.load()
         report = service_evaluate(instance, confidence_threshold=threshold, max_findings=limit)
@@ -1389,6 +1398,7 @@ def evaluate(threshold: float, limit: int) -> None:
         entity_count = report.entity_count
         edge_count = report.edge_count
         summary = report.summary
+        quality_summary = report.quality_summary
 
     # Summary
     click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
@@ -1396,6 +1406,10 @@ def evaluate(threshold: float, limit: int) -> None:
     if summary:
         for category, count in sorted(summary.items()):
             click.echo(f"  {category}: {count}")
+    if quality_summary:
+        click.echo("Quality checks:")
+        for check_name, count in quality_summary.items():
+            click.echo(f"  {check_name}: {count}")
 
     # Findings
     for finding in findings:

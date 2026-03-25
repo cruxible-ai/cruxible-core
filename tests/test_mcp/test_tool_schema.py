@@ -183,7 +183,10 @@ class TestOutputSchema:
             ("cruxible_outcome", {"outcome_id"}),
             ("cruxible_list", {"items", "total"}),
             ("cruxible_find_candidates", {"candidates", "total"}),
-            ("cruxible_evaluate", {"entity_count", "edge_count", "findings", "summary"}),
+            (
+                "cruxible_evaluate",
+                {"entity_count", "edge_count", "findings", "summary", "quality_summary"},
+            ),
             ("cruxible_sample", {"entities", "entity_type", "count"}),
             ("cruxible_add_relationship", {"added", "updated", "receipt_id"}),
             ("cruxible_add_entity", {"entities_added", "entities_updated", "receipt_id"}),

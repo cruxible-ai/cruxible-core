@@ -158,6 +158,7 @@ class EvaluateResult(BaseModel):
     edge_count: int
     findings: list[dict[str, Any]]
     summary: dict[str, int]
+    quality_summary: dict[str, int] = Field(default_factory=dict)
 
 
 class SampleResult(BaseModel):

@@ -1563,6 +1563,7 @@ class TestEvaluate:
         assert result["edge_count"] > 0
         assert isinstance(result["findings"], list)
         assert isinstance(result["summary"], dict)
+        assert isinstance(result["quality_summary"], dict)
 
     def test_evaluate_empty_graph(self, server, tmp_project):
         call_tool(
@@ -1583,6 +1584,7 @@ class TestEvaluate:
         assert result["entity_count"] == 0
         # Should have coverage gaps at minimum
         assert len(result["findings"]) > 0
+        assert result["quality_summary"] == {}
 
 
 # ── cruxible_schema ────────────────────────────────────────────────────

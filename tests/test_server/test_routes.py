@@ -129,6 +129,10 @@ def test_init_then_ingest_then_query_round_trip(
     assert payload["receipt_id"]
     assert payload["param_hints"]["primary_key"] == "vehicle_id"
 
+    evaluate = app_client.post(f"/api/v1/{instance_id}/evaluate", json={})
+    assert evaluate.status_code == 200
+    assert "quality_summary" in evaluate.json()
+
 
 def test_stats_and_inspect_routes_return_expected_shapes(
     app_client: TestClient,

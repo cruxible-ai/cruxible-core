@@ -11,6 +11,7 @@ from click.testing import CliRunner
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
+from cruxible_core.graph.types import EntityInstance
 
 
 @pytest.fixture
@@ -209,6 +210,54 @@ class TestQuery:
         assert "Param hints:" in result.output
         assert "primary_key=vehicle_id" in result.output
         assert "examples=V-2024-ACCORD-SPORT, V-2024-CIVIC-EX" in result.output
+
+
+class TestEvaluate:
+    def test_evaluate_prints_quality_summary(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        project = tmp_path / "quality-project"
+        project.mkdir()
+        (project / "config.yaml").write_text(
+            """\
+version: "1.0"
+name: quality_project
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+relationships: []
+quality_checks:
+  - name: product_name_non_empty
+    kind: property
+    severity: error
+    target: entity
+    entity_type: Product
+    property: name
+    rule: non_empty
+"""
+        )
+        instance = CruxibleInstance.init(project, "config.yaml")
+        graph = instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="P-1",
+                properties={"product_id": "P-1", "name": ""},
+            )
+        )
+        instance.save_graph(graph)
+
+        result = _chdir_run(runner, project, ["evaluate"])
+        assert result.exit_code == 0
+        assert "Quality checks:" in result.output
+        assert "product_name_non_empty: 1" in result.output
 
 
 # ---------------------------------------------------------------------------
