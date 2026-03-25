@@ -98,7 +98,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     stats_cmd,
     test_cmd,
     validate,
-)
+)  # re-exported from cli.commands submodules
 
 cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]

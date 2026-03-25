@@ -41,7 +41,7 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
             captured["data_dir"] = data_dir
             return contracts.InitResult(instance_id="inst_abc123", status="initialized")
 
-    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = runner.invoke(
         cli,
         [
@@ -63,7 +63,7 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
 
 
 def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
-    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: object())
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
     result = runner.invoke(
         cli,
         [
@@ -130,7 +130,7 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
                 ],
             )
 
-    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
 
     lock = runner.invoke(
         cli, ["--server-url", "http://server", "--instance-id", "inst_123", "lock"]
@@ -261,7 +261,7 @@ def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
                 ),
             )
 
-    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
 
     propose = runner.invoke(
         cli,
@@ -466,7 +466,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
                 receipt_id="RCP-2",
             )
 
-    monkeypatch.setattr("cruxible_core.cli.commands._get_client", lambda: StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
 
     feedback = runner.invoke(
         cli,
