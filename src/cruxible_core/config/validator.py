@@ -8,6 +8,7 @@ workflow/provider declarations resolve correctly.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
@@ -31,6 +32,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_matching_integrations(config, errors)
     _validate_kind(config, errors)
     _validate_provider_artifacts(config, errors)
+    _validate_quality_checks(config, errors)
     _validate_workflows(config, errors)
     _validate_tests(config, errors)
 
@@ -178,6 +180,143 @@ def _validate_provider_artifacts(config: CoreConfig, errors: list[str]) -> None:
             errors.append(
                 f"Provider '{provider_name}': artifact '{provider.artifact}' not found in artifacts"
             )
+
+
+def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
+    """Validate config-defined graph quality checks."""
+    entity_names = set(config.entity_types.keys())
+    relationship_names = {rel.name for rel in config.relationships}
+    seen_names: set[str] = set()
+
+    for check in config.quality_checks:
+        if check.name in seen_names:
+            errors.append(f"Duplicate quality check name: '{check.name}'")
+            continue
+        seen_names.add(check.name)
+
+        kind = getattr(check, "kind", "")
+
+        if kind == "property":
+            if check.target == "entity":
+                if check.entity_type not in entity_names:
+                    errors.append(
+                        f"Quality check '{check.name}': entity_type "
+                        f"'{check.entity_type}' not defined in entity_types"
+                    )
+                    continue
+                if check.property not in config.entity_types[check.entity_type].properties:
+                    errors.append(
+                        f"Quality check '{check.name}': property '{check.property}' "
+                        f"not found on entity type '{check.entity_type}'"
+                    )
+            else:
+                if check.relationship_type not in relationship_names:
+                    errors.append(
+                        f"Quality check '{check.name}': relationship_type "
+                        f"'{check.relationship_type}' not defined in relationships"
+                    )
+                    continue
+                rel = config.get_relationship(check.relationship_type)
+                assert rel is not None
+                if check.property not in rel.properties:
+                    errors.append(
+                        f"Quality check '{check.name}': property '{check.property}' "
+                        f"not found on relationship '{check.relationship_type}'"
+                    )
+            if check.rule == "pattern":
+                try:
+                    assert check.pattern is not None
+                    re.compile(check.pattern)
+                except re.error as exc:
+                    errors.append(
+                        f"Quality check '{check.name}': invalid regex pattern "
+                        f"'{check.pattern}': {exc}"
+                    )
+
+        elif kind == "json_content":
+            if check.target == "entity":
+                if check.entity_type not in entity_names:
+                    errors.append(
+                        f"Quality check '{check.name}': entity_type "
+                        f"'{check.entity_type}' not defined in entity_types"
+                    )
+                    continue
+                prop = config.entity_types[check.entity_type].properties.get(check.property)
+            else:
+                if check.relationship_type not in relationship_names:
+                    errors.append(
+                        f"Quality check '{check.name}': relationship_type "
+                        f"'{check.relationship_type}' not defined in relationships"
+                    )
+                    continue
+                rel = config.get_relationship(check.relationship_type)
+                assert rel is not None
+                prop = rel.properties.get(check.property)
+            if prop is None:
+                errors.append(
+                    f"Quality check '{check.name}': property '{check.property}' not found"
+                )
+                continue
+            if prop.type != "json":
+                errors.append(
+                    f"Quality check '{check.name}': json_content requires property "
+                    f"'{check.property}' to have type 'json'"
+                )
+
+        elif kind == "uniqueness":
+            if check.entity_type not in entity_names:
+                errors.append(
+                    f"Quality check '{check.name}': entity_type "
+                    f"'{check.entity_type}' not defined in entity_types"
+                )
+                continue
+            entity_props = config.entity_types[check.entity_type].properties
+            for prop_name in check.properties:
+                if prop_name not in entity_props:
+                    errors.append(
+                        f"Quality check '{check.name}': property '{prop_name}' "
+                        f"not found on entity type '{check.entity_type}'"
+                    )
+
+        elif kind == "bounds":
+            if check.target == "entity_count":
+                if check.entity_type not in entity_names:
+                    errors.append(
+                        f"Quality check '{check.name}': entity_type "
+                        f"'{check.entity_type}' not defined in entity_types"
+                    )
+            elif check.relationship_type not in relationship_names:
+                errors.append(
+                    f"Quality check '{check.name}': relationship_type "
+                    f"'{check.relationship_type}' not defined in relationships"
+                )
+
+        elif kind == "cardinality":
+            if check.entity_type not in entity_names:
+                errors.append(
+                    f"Quality check '{check.name}': entity_type "
+                    f"'{check.entity_type}' not defined in entity_types"
+                )
+                continue
+            rel = config.get_relationship(check.relationship_type)
+            if rel is None:
+                errors.append(
+                    f"Quality check '{check.name}': relationship_type "
+                    f"'{check.relationship_type}' not defined in relationships"
+                )
+                continue
+            if check.direction == "outgoing" and rel.from_entity != check.entity_type:
+                errors.append(
+                    f"Quality check '{check.name}': outgoing cardinality on "
+                    f"'{check.relationship_type}' requires entity_type '{rel.from_entity}', "
+                    f"not '{check.entity_type}'"
+                )
+            if check.direction == "incoming" and rel.to_entity != check.entity_type:
+                errors.append(
+                    f"Quality check '{check.name}': incoming cardinality on "
+                    f"'{check.relationship_type}' requires entity_type '{rel.to_entity}', "
+                    f"not '{check.entity_type}'"
+                )
 
 
 def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
