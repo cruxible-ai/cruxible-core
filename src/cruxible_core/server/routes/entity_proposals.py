@@ -5,12 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from cruxible_core.mcp import contracts
-from cruxible_core.mcp.handlers import (
-    _handle_get_entity_proposal_local,
-    _handle_list_entity_proposals_local,
-    _handle_propose_entity_changes_local,
-    _handle_resolve_entity_proposal_local,
-)
+from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     ProposeEntityChangesRequest,
     ResolveEntityProposalRequest,
@@ -29,7 +24,7 @@ async def propose_entity_changes(
     req: ProposeEntityChangesRequest,
 ) -> contracts.ProposeEntityChangesToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_propose_entity_changes_local(
+    return local_api._handle_propose_entity_changes_local(
         instance_id=resolved_instance_id,
         members=req.members,
         thesis_text=req.thesis_text,
@@ -53,7 +48,7 @@ async def get_entity_proposal(
     proposal_id: str,
 ) -> contracts.GetEntityProposalToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_get_entity_proposal_local(
+    return local_api._handle_get_entity_proposal_local(
         instance_id=resolved_instance_id,
         proposal_id=proposal_id,
     )
@@ -69,7 +64,7 @@ async def list_entity_proposals(
     limit: int = Query(default=50),
 ) -> contracts.ListEntityProposalsToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_list_entity_proposals_local(
+    return local_api._handle_list_entity_proposals_local(
         instance_id=resolved_instance_id,
         status=status,
         limit=limit,
@@ -86,7 +81,7 @@ async def resolve_entity_proposal(
     req: ResolveEntityProposalRequest,
 ) -> contracts.ResolveEntityProposalToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_resolve_entity_proposal_local(
+    return local_api._handle_resolve_entity_proposal_local(
         instance_id=resolved_instance_id,
         proposal_id=proposal_id,
         action=req.action,

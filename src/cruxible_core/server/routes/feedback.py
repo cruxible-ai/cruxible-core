@@ -5,11 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_core.mcp import contracts
-from cruxible_core.mcp.handlers import (
-    _handle_feedback_batch_local,
-    _handle_feedback_local,
-    _handle_outcome_local,
-)
+from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     FeedbackBatchRequest,
     FeedbackRequest,
@@ -23,7 +19,7 @@ router = APIRouter(prefix="/api/v1", tags=["feedback"])
 @router.post("/{instance_id}/feedback", response_model=contracts.FeedbackResult)
 async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.FeedbackResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_feedback_local(
+    return local_api._handle_feedback_local(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
         action=req.action,
@@ -46,7 +42,7 @@ async def feedback_batch(
     req: FeedbackBatchRequest,
 ) -> contracts.FeedbackBatchResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_feedback_batch_local(
+    return local_api._handle_feedback_batch_local(
         instance_id=resolved_instance_id,
         items=req.items,
         source=req.source,
@@ -56,7 +52,7 @@ async def feedback_batch(
 @router.post("/{instance_id}/outcome", response_model=contracts.OutcomeResult)
 async def outcome(instance_id: str, req: OutcomeRequest) -> contracts.OutcomeResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_outcome_local(
+    return local_api._handle_outcome_local(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
         outcome=req.outcome,

@@ -5,14 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_core.mcp import contracts
-from cruxible_core.mcp.handlers import (
-    _handle_propose_workflow_local,
-    _handle_workflow_apply_local,
-    _handle_workflow_lock_local,
-    _handle_workflow_plan_local,
-    _handle_workflow_run_local,
-    _handle_workflow_test_local,
-)
+from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     WorkflowApplyRequest,
     WorkflowInputRequest,
@@ -26,7 +19,7 @@ router = APIRouter(prefix="/api/v1", tags=["workflows"])
 @router.post("/{instance_id}/workflows/lock", response_model=contracts.WorkflowLockResult)
 async def workflow_lock(instance_id: str) -> contracts.WorkflowLockResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_workflow_lock_local(resolved_instance_id)
+    return local_api._handle_workflow_lock_local(resolved_instance_id)
 
 
 @router.post("/{instance_id}/workflows/plan", response_model=contracts.WorkflowPlanResult)
@@ -35,7 +28,7 @@ async def workflow_plan(
     req: WorkflowInputRequest,
 ) -> contracts.WorkflowPlanResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_workflow_plan_local(
+    return local_api._handle_workflow_plan_local(
         resolved_instance_id,
         req.workflow_name,
         req.input,
@@ -48,7 +41,7 @@ async def workflow_run(
     req: WorkflowInputRequest,
 ) -> contracts.WorkflowRunResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_workflow_run_local(
+    return local_api._handle_workflow_run_local(
         resolved_instance_id,
         req.workflow_name,
         req.input,
@@ -61,7 +54,7 @@ async def workflow_apply(
     req: WorkflowApplyRequest,
 ) -> contracts.WorkflowApplyResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_workflow_apply_local(
+    return local_api._handle_workflow_apply_local(
         resolved_instance_id,
         req.workflow_name,
         req.expected_apply_digest,
@@ -76,7 +69,7 @@ async def workflow_test(
     req: WorkflowTestRequest,
 ) -> contracts.WorkflowTestResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_workflow_test_local(resolved_instance_id, req.name)
+    return local_api._handle_workflow_test_local(resolved_instance_id, req.name)
 
 
 @router.post("/{instance_id}/workflows/propose", response_model=contracts.WorkflowProposeResult)
@@ -85,7 +78,7 @@ async def workflow_propose(
     req: WorkflowInputRequest,
 ) -> contracts.WorkflowProposeResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_propose_workflow_local(
+    return local_api._handle_propose_workflow_local(
         resolved_instance_id,
         req.workflow_name,
         req.input,

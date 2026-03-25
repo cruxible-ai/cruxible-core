@@ -7,7 +7,8 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from cruxible_core.mcp import contracts
-from cruxible_core.mcp.handlers import _handle_init_local, _handle_validate_local, get_manager
+from cruxible_core.runtime import local_api
+from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import get_registry
 from cruxible_core.server.request_models import InitRequest, ValidateRequest
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/v1", tags=["instances"])
 @router.post("/instances", response_model=contracts.InitResult)
 async def init_instance(req: InitRequest) -> contracts.InitResult:
     """Create or reload an instance, returning an opaque server ID."""
-    result = _handle_init_local(
+    result = local_api._handle_init_local(
         root_dir=req.root_dir,
         config_path=req.config_path,
         config_yaml=req.config_yaml,
@@ -36,4 +37,7 @@ async def init_instance(req: InitRequest) -> contracts.InitResult:
 @router.post("/validate", response_model=contracts.ValidateResult)
 async def validate_instance(req: ValidateRequest) -> contracts.ValidateResult:
     """Validate a config file or inline YAML."""
-    return _handle_validate_local(config_path=req.config_path, config_yaml=req.config_yaml)
+    return local_api._handle_validate_local(
+        config_path=req.config_path,
+        config_yaml=req.config_yaml,
+    )

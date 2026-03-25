@@ -11,13 +11,7 @@ from fastapi import APIRouter, Request
 
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp import contracts
-from cruxible_core.mcp.handlers import (
-    _handle_add_constraint_local,
-    _handle_add_entity_local,
-    _handle_add_relationship_impl,
-    _handle_ingest_local,
-    _handle_reload_config_local,
-)
+from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     AddConstraintRequest,
     AddEntitiesRequest,
@@ -74,7 +68,7 @@ async def ingest(instance_id: str, request: Request) -> contracts.IngestResult:
                 handle.write(await upload.read())
                 temp_path = handle.name
         try:
-            return _handle_ingest_local(
+            return local_api._handle_ingest_local(
                 instance_id=resolved_instance_id,
                 mapping_name=mapping_name,
                 file_path=temp_path,
@@ -88,7 +82,7 @@ async def ingest(instance_id: str, request: Request) -> contracts.IngestResult:
                 Path(temp_path).unlink(missing_ok=True)
 
     payload = IngestRequest.model_validate(await request.json())
-    return _handle_ingest_local(
+    return local_api._handle_ingest_local(
         instance_id=resolved_instance_id,
         mapping_name=payload.mapping_name,
         data_csv=payload.data_csv,
@@ -103,7 +97,7 @@ async def add_entities(
     instance_id: str,
     req: AddEntitiesRequest,
 ) -> contracts.AddEntityResult:
-    return _handle_add_entity_local(
+    return local_api._handle_add_entity_local(
         instance_id=resolve_server_instance_id(instance_id),
         entities=req.entities,
     )
@@ -115,7 +109,7 @@ async def add_relationships(
     req: AddRelationshipsRequest,
 ) -> contracts.AddRelationshipResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_add_relationship_impl(
+    return local_api._handle_add_relationship_impl(
         instance_id=resolved_instance_id,
         relationships=req.relationships,
         provenance_source="http_api",
@@ -129,7 +123,7 @@ async def add_constraint(
     req: AddConstraintRequest,
 ) -> contracts.AddConstraintResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return _handle_add_constraint_local(
+    return local_api._handle_add_constraint_local(
         instance_id=resolved_instance_id,
         name=req.name,
         rule=req.rule,
@@ -143,7 +137,7 @@ async def reload_config(
     instance_id: str,
     req: ReloadConfigRequest,
 ) -> contracts.ReloadConfigResult:
-    return _handle_reload_config_local(
+    return local_api._handle_reload_config_local(
         instance_id=resolve_server_instance_id(instance_id),
         config_path=req.config_path,
     )
