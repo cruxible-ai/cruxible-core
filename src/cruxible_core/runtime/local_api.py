@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
-from cruxible_core.config.schema import ConstraintSchema
+from cruxible_core.config.schema import ConstraintSchema, DecisionPolicySchema
 from cruxible_core.config.validator import validate_config
 from cruxible_core.entity_proposal.types import EntityChangeMember
 from cruxible_core.errors import ConfigError
@@ -28,6 +28,7 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_analyze_feedback,
     service_apply_workflow,
     service_create_snapshot,
     service_evaluate,
@@ -311,9 +312,11 @@ def _handle_propose_workflow_local(
         group_id=result.group_id,
         group_status=result.group_status,
         review_priority=result.review_priority,
+        suppressed=result.suppressed,
         query_receipt_ids=result.query_receipt_ids,
         trace_ids=result.trace_ids,
         prior_resolution=result.prior_resolution,
+        policy_summary=result.policy_summary,
         receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
         traces=[trace.model_dump(mode="json") for trace in result.traces],
     )
@@ -435,6 +438,7 @@ def _handle_query_local(
         total_results=total,
         truncated=truncated,
         steps_executed=result.steps_executed,
+        policy_summary=result.policy_summary,
         param_hints=(
             contracts.QueryParamHints(
                 entry_point=result.param_hints.entry_point,
@@ -468,6 +472,8 @@ def _handle_feedback_local(
     to_id: str,
     edge_key: int | None = None,
     reason: str = "",
+    reason_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
 ) -> contracts.FeedbackResult:
@@ -490,6 +496,8 @@ def _handle_feedback_local(
         source=source,
         target=target,
         reason=reason,
+        reason_code=reason_code,
+        scope_hints=scope_hints,
         corrections=corrections,
         group_override=group_override,
     )
@@ -524,6 +532,8 @@ def _handle_feedback_batch_local(
                     edge_key=item.target.edge_key,
                 ),
                 reason=item.reason,
+                reason_code=item.reason_code,
+                scope_hints=item.scope_hints,
                 corrections=item.corrections or {},
                 group_override=item.group_override,
             )
@@ -644,6 +654,7 @@ def _handle_evaluate_local(
         edge_count=report.edge_count,
         findings=[finding.model_dump(mode="json") for finding in report.findings],
         summary=report.summary,
+        constraint_summary=report.constraint_summary,
         quality_summary=report.quality_summary,
     )
 
@@ -654,6 +665,144 @@ def _handle_schema_local(instance_id: str) -> dict[str, Any]:
     instance = get_manager().get(instance_id)
     config = service_schema(instance)
     return config.model_dump(mode="json")
+
+
+def _handle_get_feedback_profile_local(
+    instance_id: str,
+    relationship_type: str,
+) -> contracts.FeedbackProfileResult:
+    """Return one configured feedback profile, if present."""
+    check_permission(
+        "cruxible_get_feedback_profile",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    profile = instance.load_config().get_feedback_profile(relationship_type)
+    if profile is None:
+        return contracts.FeedbackProfileResult(
+            found=False,
+            relationship_type=relationship_type,
+        )
+    return contracts.FeedbackProfileResult(
+        found=True,
+        relationship_type=relationship_type,
+        profile=profile.model_dump(mode="json"),
+    )
+
+
+def _handle_analyze_feedback_local(
+    instance_id: str,
+    relationship_type: str,
+    *,
+    limit: int = 200,
+    min_support: int = 5,
+    decision_surface_type: str | None = None,
+    decision_surface_name: str | None = None,
+    property_pairs: list[contracts.PropertyPairInput] | None = None,
+) -> contracts.AnalyzeFeedbackResult:
+    """Analyze structured feedback into deterministic remediation suggestions."""
+    check_permission(
+        "cruxible_analyze_feedback",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    result = service_analyze_feedback(
+        instance,
+        relationship_type,
+        limit=limit,
+        min_support=min_support,
+        decision_surface_type=decision_surface_type,
+        decision_surface_name=decision_surface_name,
+        property_pairs=(
+            [(pair.from_property, pair.to_property) for pair in property_pairs]
+            if property_pairs
+            else None
+        ),
+    )
+    return contracts.AnalyzeFeedbackResult(
+        relationship_type=result.relationship_type,
+        feedback_count=result.feedback_count,
+        action_counts=result.action_counts,
+        source_counts=result.source_counts,
+        reason_code_counts=result.reason_code_counts,
+        coded_groups=[
+            contracts.FeedbackGroupSummary(
+                relationship_type=group.relationship_type,
+                reason_code=group.reason_code,
+                remediation_hint=group.remediation_hint,
+                decision_context=group.decision_context,
+                scope_hints=group.scope_hints,
+                feedback_count=group.feedback_count,
+                feedback_ids=group.feedback_ids,
+                sample_reasons=group.sample_reasons,
+            )
+            for group in result.coded_groups
+        ],
+        uncoded_feedback_count=result.uncoded_feedback_count,
+        uncoded_examples=[
+            contracts.UncodedFeedbackExample(
+                feedback_id=example.feedback_id,
+                relationship_type=example.relationship_type,
+                reason=example.reason,
+                decision_context=example.decision_context,
+                scope_hints=example.scope_hints,
+                target=example.target,
+            )
+            for example in result.uncoded_examples
+        ],
+        constraint_suggestions=[
+            contracts.ConstraintSuggestion(
+                name=suggestion.name,
+                description=suggestion.description,
+                relationship_type=suggestion.relationship_type,
+                rule=suggestion.rule,
+                severity=suggestion.severity,  # type: ignore[arg-type]
+                support_count=suggestion.support_count,
+                feedback_ids=suggestion.feedback_ids,
+                sample_value_pairs=suggestion.sample_value_pairs,
+            )
+            for suggestion in result.constraint_suggestions
+        ],
+        decision_policy_suggestions=[
+            contracts.DecisionPolicySuggestion(
+                name=suggestion.name,
+                description=suggestion.description,
+                relationship_type=suggestion.relationship_type,
+                applies_to=suggestion.applies_to,  # type: ignore[arg-type]
+                effect=suggestion.effect,  # type: ignore[arg-type]
+                rationale=suggestion.rationale,
+                match=suggestion.match,
+                query_name=suggestion.query_name,
+                workflow_name=suggestion.workflow_name,
+                support_count=suggestion.support_count,
+                feedback_ids=suggestion.feedback_ids,
+            )
+            for suggestion in result.decision_policy_suggestions
+        ],
+        quality_check_candidates=[
+            contracts.QualityCheckCandidate(
+                relationship_type=candidate.relationship_type,
+                reason_code=candidate.reason_code,
+                support_count=candidate.support_count,
+                description=candidate.description,
+                feedback_ids=candidate.feedback_ids,
+            )
+            for candidate in result.quality_check_candidates
+        ],
+        provider_fix_candidates=[
+            contracts.ProviderFixCandidate(
+                relationship_type=candidate.relationship_type,
+                reason_code=candidate.reason_code,
+                support_count=candidate.support_count,
+                description=candidate.description,
+                feedback_ids=candidate.feedback_ids,
+            )
+            for candidate in result.provider_fix_candidates
+        ],
+        warnings=result.warnings,
+    )
 
 
 def _handle_stats_local(instance_id: str) -> contracts.StatsResult:
@@ -847,24 +996,6 @@ def _handle_add_constraint_local(
             "Expected: RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property"
         )
 
-    warnings: list[str] = []
-    relationship_name, from_prop, to_prop = parsed
-    relationship_schema = config.get_relationship(relationship_name)
-    if relationship_schema is None:
-        warnings.append(f"Relationship '{relationship_name}' not found in config schema")
-    else:
-        from_entity_schema = config.get_entity_type(relationship_schema.from_entity)
-        to_entity_schema = config.get_entity_type(relationship_schema.to_entity)
-        if from_entity_schema and from_prop not in from_entity_schema.properties:
-            warnings.append(
-                f"Property '{from_prop}' not found on entity type "
-                f"'{relationship_schema.from_entity}'"
-            )
-        if to_entity_schema and to_prop not in to_entity_schema.properties:
-            warnings.append(
-                f"Property '{to_prop}' not found on entity type '{relationship_schema.to_entity}'"
-            )
-
     constraint = ConstraintSchema(
         name=name,
         rule=rule,
@@ -873,10 +1004,56 @@ def _handle_add_constraint_local(
     )
     config.constraints.append(constraint)
 
-    warnings.extend(validate_config(config))
+    warnings = validate_config(config)
     instance.save_config(config)
 
     return contracts.AddConstraintResult(
+        name=name,
+        added=True,
+        config_updated=True,
+        warnings=warnings,
+    )
+
+
+def _handle_add_decision_policy_local(
+    instance_id: str,
+    *,
+    name: str,
+    applies_to: contracts.DecisionPolicyAppliesTo,
+    relationship_type: str,
+    effect: contracts.DecisionPolicyEffect,
+    match: contracts.DecisionPolicyMatchInput | None = None,
+    description: str | None = None,
+    rationale: str = "",
+    query_name: str | None = None,
+    workflow_name: str | None = None,
+    expires_at: str | None = None,
+) -> contracts.AddDecisionPolicyResult:
+    """Add a decision policy to the config and write back to YAML."""
+    check_permission("cruxible_add_decision_policy", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    config = instance.load_config()
+
+    for existing in config.decision_policies:
+        if existing.name == name:
+            raise ConfigError(f"Decision policy '{name}' already exists in config")
+
+    policy = DecisionPolicySchema(
+        name=name,
+        description=description,
+        rationale=rationale,
+        applies_to=applies_to,
+        query_name=query_name,
+        workflow_name=workflow_name,
+        relationship_type=relationship_type,
+        effect=effect,
+        match=match.model_dump(mode="json", by_alias=True) if match is not None else {},
+        expires_at=expires_at,
+    )
+    config.decision_policies.append(policy)
+    warnings = validate_config(config)
+    instance.save_config(config)
+    return contracts.AddDecisionPolicyResult(
         name=name,
         added=True,
         config_updated=True,
@@ -998,6 +1175,8 @@ def _handle_propose_group_local(
         review_priority=result.review_priority,
         member_count=result.member_count,
         prior_resolution=result.prior_resolution,
+        suppressed=result.suppressed,
+        policy_summary=result.policy_summary,
     )
 
 

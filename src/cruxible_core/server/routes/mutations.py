@@ -14,6 +14,7 @@ from cruxible_core.mcp import contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     AddConstraintRequest,
+    AddDecisionPolicyRequest,
     AddEntitiesRequest,
     AddRelationshipsRequest,
     IngestRequest,
@@ -129,6 +130,30 @@ async def add_constraint(
         rule=req.rule,
         severity=req.severity,
         description=req.description,
+    )
+
+
+@router.post(
+    "/{instance_id}/decision-policies",
+    response_model=contracts.AddDecisionPolicyResult,
+)
+async def add_decision_policy(
+    instance_id: str,
+    req: AddDecisionPolicyRequest,
+) -> contracts.AddDecisionPolicyResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return local_api._handle_add_decision_policy_local(
+        instance_id=resolved_instance_id,
+        name=req.name,
+        applies_to=req.applies_to,
+        relationship_type=req.relationship_type,
+        effect=req.effect,
+        match=req.match,
+        description=req.description,
+        rationale=req.rationale,
+        query_name=req.query_name,
+        workflow_name=req.workflow_name,
+        expires_at=req.expires_at,
     )
 
 

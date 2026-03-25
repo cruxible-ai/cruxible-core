@@ -282,3 +282,74 @@ def test_stats_inspect_and_reload_use_expected_routes():
     assert reload_result.updated is True
     assert captured["path"].endswith("/api/v1/inst_123/config/reload")
     assert captured["payload"]["config_path"] == "/srv/project/config.yaml"
+
+
+def test_feedback_analysis_and_policy_routes():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "found": True,
+                    "relationship_type": "fits",
+                    "profile": {"version": 2},
+                },
+            )
+        captured["payload"] = json.loads(request.content.decode())
+        if request.url.path.endswith("/feedback/analyze"):
+            return httpx.Response(
+                200,
+                json={
+                    "relationship_type": "fits",
+                    "feedback_count": 2,
+                    "action_counts": {"reject": 2},
+                    "source_counts": {"system": 2},
+                    "reason_code_counts": {"legacy_unsupported": 2},
+                    "coded_groups": [],
+                    "uncoded_feedback_count": 0,
+                    "uncoded_examples": [],
+                    "constraint_suggestions": [],
+                    "decision_policy_suggestions": [],
+                    "quality_check_candidates": [],
+                    "provider_fix_candidates": [],
+                    "warnings": [],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "name": "suppress_brakes",
+                "added": True,
+                "config_updated": True,
+                "warnings": [],
+            },
+        )
+
+    client = _build_client(handler)
+
+    profile = client.get_feedback_profile("inst_123", "fits")
+    assert profile.found is True
+    assert captured["path"].endswith("/api/v1/inst_123/feedback/profiles/fits")
+
+    analysis = client.analyze_feedback(
+        "inst_123",
+        relationship_type="fits",
+        min_support=2,
+    )
+    assert analysis.feedback_count == 2
+    assert captured["path"].endswith("/api/v1/inst_123/feedback/analyze")
+    assert captured["payload"]["relationship_type"] == "fits"
+
+    add_result = client.add_decision_policy(
+        "inst_123",
+        name="suppress_brakes",
+        applies_to="query",
+        relationship_type="fits",
+        effect="suppress",
+    )
+    assert add_result.added is True
+    assert captured["path"].endswith("/api/v1/inst_123/decision-policies")
+    assert captured["payload"]["name"] == "suppress_brakes"

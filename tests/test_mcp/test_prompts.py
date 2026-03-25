@@ -219,8 +219,8 @@ class TestAnalyzeFeedback:
             )
         )
         text = result.messages[0].content.text
-        assert "cruxible_list" in text
-        assert "cruxible_get_relationship" in text
-        assert "cruxible_get_entity" in text
+        assert "cruxible_get_feedback_profile" in text
+        assert "cruxible_analyze_feedback" in text
         assert "cruxible_add_constraint" in text
+        assert "cruxible_add_decision_policy" in text
         assert "cruxible_evaluate" in text

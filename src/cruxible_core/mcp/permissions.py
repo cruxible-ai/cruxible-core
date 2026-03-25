@@ -93,6 +93,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_list_resolutions": PermissionMode.READ_ONLY,
     "cruxible_get_entity_proposal": PermissionMode.READ_ONLY,
     "cruxible_list_entity_proposals": PermissionMode.READ_ONLY,
+    "cruxible_get_feedback_profile": PermissionMode.READ_ONLY,
+    "cruxible_analyze_feedback": PermissionMode.READ_ONLY,
     # GOVERNED_WRITE tools
     "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
     "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,
@@ -109,6 +111,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # ADMIN tools
     "cruxible_ingest": PermissionMode.ADMIN,
     "cruxible_add_constraint": PermissionMode.ADMIN,
+    "cruxible_add_decision_policy": PermissionMode.ADMIN,
 }
 
 # ---------------------------------------------------------------------------

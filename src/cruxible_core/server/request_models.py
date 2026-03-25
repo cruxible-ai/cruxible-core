@@ -54,6 +54,8 @@ class FeedbackRequest(BaseModel):
     to_id: str
     edge_key: int | None = None
     reason: str = ""
+    reason_code: str | None = None
+    scope_hints: dict[str, Any] | None = None
     corrections: dict[str, Any] | None = None
     group_override: bool = False
 
@@ -108,11 +110,33 @@ class EvaluateRequest(BaseModel):
     exclude_orphan_types: list[str] | None = None
 
 
+class AnalyzeFeedbackRequest(BaseModel):
+    relationship_type: str
+    limit: int = 200
+    min_support: int = 5
+    decision_surface_type: str | None = None
+    decision_surface_name: str | None = None
+    property_pairs: list[contracts.PropertyPairInput] | None = None
+
+
 class AddConstraintRequest(BaseModel):
     name: str
     rule: str
     severity: contracts.ConstraintSeverity = "warning"
     description: str | None = None
+
+
+class AddDecisionPolicyRequest(BaseModel):
+    name: str
+    applies_to: contracts.DecisionPolicyAppliesTo
+    relationship_type: str
+    effect: contracts.DecisionPolicyEffect
+    match: contracts.DecisionPolicyMatchInput | None = None
+    description: str | None = None
+    rationale: str = ""
+    query_name: str | None = None
+    workflow_name: str | None = None
+    expires_at: str | None = None
 
 
 class WorkflowInputRequest(BaseModel):

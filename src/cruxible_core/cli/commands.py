@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,7 +31,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.client import CruxibleClient
 from cruxible_core.config.constraint_rules import parse_constraint_rule
-from cruxible_core.config.schema import ConstraintSchema, CoreConfig
+from cruxible_core.config.schema import ConstraintSchema, CoreConfig, DecisionPolicySchema
 from cruxible_core.config.validator import validate_config
 from cruxible_core.entity_proposal.types import EntityChangeMember, EntityChangeProposal
 from cruxible_core.errors import ConfigError, CoreError
@@ -52,6 +53,7 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
+    service_analyze_feedback,
     service_apply_workflow,
     service_create_snapshot,
     service_evaluate,
@@ -549,9 +551,17 @@ def propose_cmd(workflow_name: str, input_text: str | None, input_file: str | No
         instance = CruxibleInstance.load()
         result = service_propose_workflow(instance, workflow_name, payload)
 
-    click.echo(f"Workflow {result.workflow} proposed group {result.group_id}.")
+    if result.group_id is None:
+        click.echo(f"Workflow {result.workflow} produced no group (suppressed).")
+    else:
+        click.echo(f"Workflow {result.workflow} proposed group {result.group_id}.")
     click.echo(f"Receipt ID: {result.receipt_id}")
     click.echo(f"Group status: {result.group_status} ({result.review_priority})")
+    if result.policy_summary:
+        click.echo(
+            "Policies: "
+            + ", ".join(f"{name}={count}" for name, count in sorted(result.policy_summary.items()))
+        )
     if result.trace_ids:
         click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
     click.echo(json.dumps(result.output, indent=2, sort_keys=True))
@@ -685,6 +695,13 @@ def query(
         results = _entities_from_payload(result.results)
         total = result.total_results
         click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
+        if result.policy_summary:
+            click.echo(
+                "Policies: "
+                + ", ".join(
+                    f"{name}={count}" for name, count in sorted(result.policy_summary.items())
+                )
+            )
         if count_only:
             _print_query_param_hints(result.param_hints)
         elif limit is not None and result.truncated:
@@ -708,6 +725,11 @@ def query(
     results = result.results
     total = result.total_results
     click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
+    if result.policy_summary:
+        click.echo(
+            "Policies: "
+            + ", ".join(f"{name}={count}" for name, count in sorted(result.policy_summary.items()))
+        )
     if count_only:
         hints = None
         if result.param_hints is not None:
@@ -787,6 +809,13 @@ def explain(receipt_id: str, fmt: str) -> None:
 @click.option("--to-id", required=True, help="Target entity ID.")
 @click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
 @click.option("--reason", default="", help="Reason for feedback.")
+@click.option("--reason-code", default=None, help="Structured reason code from feedback profile.")
+@click.option(
+    "--scope-hint",
+    "scope_hint",
+    multiple=True,
+    help="Scoped feedback hint as KEY=VALUE.",
+)
 @click.option(
     "--corrections",
     default=None,
@@ -815,6 +844,8 @@ def feedback_cmd(
     to_id: str,
     edge_key: int | None,
     reason: str,
+    reason_code: str | None,
+    scope_hint: tuple[str, ...],
     corrections: str | None,
     source: str,
     group_override: bool,
@@ -826,6 +857,7 @@ def feedback_cmd(
         raise click.BadParameter("--corrections must be valid JSON") from exc
     if corrections_dict is not None and not isinstance(corrections_dict, dict):
         raise click.BadParameter("--corrections must be a JSON object")
+    scope_hints = _parse_params(scope_hint) if scope_hint else None
 
     target = EdgeTarget(
         from_type=from_type,
@@ -850,6 +882,8 @@ def feedback_cmd(
             to_id=to_id,
             edge_key=edge_key,
             reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
             corrections=corrections_dict,
             group_override=group_override,
         )
@@ -862,6 +896,8 @@ def feedback_cmd(
             source=cast(contracts.FeedbackSource, source),
             target=target,
             reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
             corrections=corrections_dict,
             group_override=group_override,
         )
@@ -917,6 +953,8 @@ def feedback_batch_cmd(
             action=item["action"],
             target=contracts.EdgeTargetInput.model_validate(item["target"]),
             reason=item.get("reason", ""),
+            reason_code=item.get("reason_code"),
+            scope_hints=item.get("scope_hints", {}),
             corrections=item.get("corrections"),
             group_override=item.get("group_override", False),
         )
@@ -947,6 +985,8 @@ def feedback_batch_cmd(
                         edge_key=item.target.edge_key,
                     ),
                     reason=item.reason,
+                    reason_code=item.reason_code,
+                    scope_hints=item.scope_hints,
                     corrections=item.corrections or {},
                     group_override=item.group_override,
                 )
@@ -1205,6 +1245,146 @@ def schema() -> None:
     console.print(schema_table(config))
 
 
+@click.command("feedback-profile")
+@click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
+@handle_errors
+def feedback_profile_cmd(relationship_type: str) -> None:
+    """Display the configured feedback profile for one relationship type."""
+    client = _get_client()
+    if client is not None:
+        result = client.get_feedback_profile(_require_instance_id(), relationship_type)
+        if not result.found:
+            click.echo("Not found.")
+            return
+        click.echo(yaml.safe_dump(result.profile, sort_keys=False))
+        return
+
+    instance = CruxibleInstance.load()
+    profile = instance.load_config().get_feedback_profile(relationship_type)
+    if profile is None:
+        click.echo("Not found.")
+        return
+    click.echo(yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False))
+
+
+@click.command("analyze-feedback")
+@click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
+@click.option("--limit", default=200, type=click.IntRange(min=1), help="Rows to inspect.")
+@click.option(
+    "--min-support",
+    default=5,
+    type=click.IntRange(min=1),
+    help="Minimum support for suggestions.",
+)
+@click.option(
+    "--decision-surface-type",
+    default=None,
+    type=click.Choice(["query", "workflow", "operation"]),
+    help="Optional decision surface type filter.",
+)
+@click.option(
+    "--decision-surface-name",
+    default=None,
+    help="Optional decision surface name filter.",
+)
+@click.option(
+    "--pair",
+    "pair_values",
+    multiple=True,
+    help="Explicit mismatch pair as FROM_PROP=TO_PROP.",
+)
+@handle_errors
+def analyze_feedback_cmd(
+    relationship_type: str,
+    limit: int,
+    min_support: int,
+    decision_surface_type: str | None,
+    decision_surface_name: str | None,
+    pair_values: tuple[str, ...],
+) -> None:
+    """Analyze structured feedback and print remediation suggestions."""
+    property_pairs = []
+    for raw_pair in pair_values:
+        parts = raw_pair.split("=", 1)
+        if len(parts) != 2:
+            raise click.BadParameter(f"--pair must be FROM_PROP=TO_PROP, got: {raw_pair}")
+        property_pairs.append(contracts.PropertyPairInput(from_property=parts[0], to_property=parts[1]))
+
+    client = _get_client()
+    if client is not None:
+        result = client.analyze_feedback(
+            _require_instance_id(),
+            relationship_type=relationship_type,
+            limit=limit,
+            min_support=min_support,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+            property_pairs=property_pairs or None,
+        )
+        payload = result.model_dump(mode="json")
+    else:
+        instance = CruxibleInstance.load()
+        result = service_analyze_feedback(
+            instance,
+            relationship_type,
+            limit=limit,
+            min_support=min_support,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+            property_pairs=[(pair.from_property, pair.to_property) for pair in property_pairs]
+            or None,
+        )
+        payload = asdict(result)
+
+    click.echo(f"Feedback analyzed: {payload['feedback_count']} row(s)")
+    if payload["action_counts"]:
+        click.echo(
+            "Actions: "
+            + ", ".join(
+                f"{name}={count}" for name, count in sorted(payload["action_counts"].items())
+            )
+        )
+    if payload["reason_code_counts"]:
+        click.echo(
+            "Reason codes: "
+            + ", ".join(
+                f"{name}={count}" for name, count in sorted(payload["reason_code_counts"].items())
+            )
+        )
+    if payload["constraint_suggestions"]:
+        click.echo("Constraint suggestions:")
+        for suggestion in payload["constraint_suggestions"]:
+            click.echo(
+                f"  {suggestion['name']}: {suggestion['rule']} "
+                f"(support={suggestion['support_count']})"
+            )
+    if payload["decision_policy_suggestions"]:
+        click.echo("Decision policy suggestions:")
+        for suggestion in payload["decision_policy_suggestions"]:
+            click.echo(
+                f"  {suggestion['name']}: {suggestion['applies_to']}/{suggestion['effect']} "
+                f"(support={suggestion['support_count']})"
+            )
+    if payload["quality_check_candidates"]:
+        click.echo("Quality check candidates:")
+        for candidate in payload["quality_check_candidates"]:
+            click.echo(
+                f"  {candidate['reason_code']}: support={candidate['support_count']}"
+            )
+    if payload["provider_fix_candidates"]:
+        click.echo("Provider fix candidates:")
+        for candidate in payload["provider_fix_candidates"]:
+            click.echo(
+                f"  {candidate['reason_code']}: support={candidate['support_count']}"
+            )
+    if payload["uncoded_feedback_count"]:
+        click.echo(f"Uncoded feedback: {payload['uncoded_feedback_count']}")
+        for example in payload["uncoded_examples"]:
+            click.echo(f"  {example['feedback_id']}: {example['reason']}")
+    for warning in payload["warnings"]:
+        click.secho(f"Warning: {warning}", fg="yellow")
+
+
 @click.command("stats")
 @handle_errors
 def stats_cmd() -> None:
@@ -1390,6 +1570,7 @@ def evaluate(threshold: float, limit: int) -> None:
         entity_count = report.entity_count
         edge_count = report.edge_count
         summary = report.summary
+        constraint_summary = report.constraint_summary
         quality_summary = report.quality_summary
     else:
         instance = CruxibleInstance.load()
@@ -1398,6 +1579,7 @@ def evaluate(threshold: float, limit: int) -> None:
         entity_count = report.entity_count
         edge_count = report.edge_count
         summary = report.summary
+        constraint_summary = report.constraint_summary
         quality_summary = report.quality_summary
 
     # Summary
@@ -1406,6 +1588,10 @@ def evaluate(threshold: float, limit: int) -> None:
     if summary:
         for category, count in sorted(summary.items()):
             click.echo(f"  {category}: {count}")
+    if constraint_summary:
+        click.echo("Constraints:")
+        for constraint_name, count in constraint_summary.items():
+            click.echo(f"  {constraint_name}: {count}")
     if quality_summary:
         click.echo("Quality checks:")
         for check_name, count in quality_summary.items():
@@ -1705,6 +1891,95 @@ def add_constraint_cmd(
     click.echo(f"Constraint '{name}' added to config.")
     for w in warnings:
         click.secho(f"  Warning: {w}", fg="yellow")
+
+
+@click.command("add-decision-policy")
+@click.option("--name", required=True, help="Decision policy name.")
+@click.option(
+    "--applies-to",
+    required=True,
+    type=click.Choice(["query", "workflow"]),
+    help="Policy application surface.",
+)
+@click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
+@click.option(
+    "--effect",
+    required=True,
+    type=click.Choice(["suppress", "require_review"]),
+    help="Policy effect.",
+)
+@click.option("--query-name", default=None, help="Named query for query policies.")
+@click.option("--workflow-name", default=None, help="Workflow name for workflow policies.")
+@click.option("--match", default="{}", help="JSON object for exact-match selectors.")
+@click.option("--description", default=None, help="Optional description.")
+@click.option("--rationale", default="", help="Policy rationale.")
+@click.option("--expires-at", default=None, help="Optional ISO timestamp/date.")
+@handle_errors
+def add_decision_policy_cmd(
+    name: str,
+    applies_to: str,
+    relationship_type: str,
+    effect: str,
+    query_name: str | None,
+    workflow_name: str | None,
+    match: str,
+    description: str | None,
+    rationale: str,
+    expires_at: str | None,
+) -> None:
+    """Add a decision policy to the config."""
+    try:
+        match_dict = json.loads(match)
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--match must be valid JSON") from exc
+    if not isinstance(match_dict, dict):
+        raise click.BadParameter("--match must be a JSON object")
+
+    client = _get_client()
+    if client is not None:
+        result = client.add_decision_policy(
+            _require_instance_id(),
+            name=name,
+            applies_to=cast(contracts.DecisionPolicyAppliesTo, applies_to),
+            relationship_type=relationship_type,
+            effect=cast(contracts.DecisionPolicyEffect, effect),
+            match=contracts.DecisionPolicyMatchInput.model_validate(match_dict),
+            description=description,
+            rationale=rationale,
+            query_name=query_name,
+            workflow_name=workflow_name,
+            expires_at=expires_at,
+        )
+        click.echo(f"Decision policy '{result.name}' added to config.")
+        for warning in result.warnings:
+            click.secho(f"  Warning: {warning}", fg="yellow")
+        return
+
+    instance = CruxibleInstance.load()
+    config = instance.load_config()
+    for existing in config.decision_policies:
+        if existing.name == name:
+            raise ConfigError(f"Decision policy '{name}' already exists in config")
+
+    config.decision_policies.append(
+        DecisionPolicySchema(
+            name=name,
+            description=description,
+            rationale=rationale,
+            applies_to=cast(contracts.DecisionPolicyAppliesTo, applies_to),
+            relationship_type=relationship_type,
+            effect=cast(contracts.DecisionPolicyEffect, effect),
+            query_name=query_name,
+            workflow_name=workflow_name,
+            match=match_dict,
+            expires_at=expires_at,
+        )
+    )
+    warnings = validate_config(config)
+    instance.save_config(config)
+    click.echo(f"Decision policy '{name}' added to config.")
+    for warning in warnings:
+        click.secho(f"  Warning: {warning}", fg="yellow")
 
 
 # ---------------------------------------------------------------------------
@@ -2182,10 +2457,18 @@ def group_propose(
             integrations_used=list(integration) if integration else None,
         )
 
-    click.echo(f"Group {result.group_id} proposed.")
+    if result.group_id is None:
+        click.echo("Group proposal suppressed.")
+    else:
+        click.echo(f"Group {result.group_id} proposed.")
     click.echo(f"  Status: {result.status}")
     click.echo(f"  Priority: {result.review_priority}")
     click.echo(f"  Members: {result.member_count}")
+    if result.policy_summary:
+        click.echo(
+            "  Policies: "
+            + ", ".join(f"{name}={count}" for name, count in sorted(result.policy_summary.items()))
+        )
     click.echo(f"  Signature: {result.signature[:16]}...")
 
 

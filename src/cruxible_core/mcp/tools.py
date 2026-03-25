@@ -196,6 +196,8 @@ def register_tools(server: FastMCP) -> list[str]:
         to_id: str,
         edge_key: int | None = None,
         reason: str = "",
+        reason_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
         group_override: bool = False,
     ) -> contracts.FeedbackResult:
@@ -228,6 +230,8 @@ def register_tools(server: FastMCP) -> list[str]:
             to_id,
             edge_key,
             reason,
+            reason_code,
+            scope_hints,
             corrections,
             group_override,
         )
@@ -345,6 +349,35 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
+    def cruxible_get_feedback_profile(
+        instance_id: str,
+        relationship_type: str,
+    ) -> contracts.FeedbackProfileResult:
+        """Return the configured feedback profile for one relationship type."""
+        return handlers.handle_get_feedback_profile(instance_id, relationship_type)
+
+    @_tool
+    def cruxible_analyze_feedback(
+        instance_id: str,
+        relationship_type: str,
+        limit: int = 200,
+        min_support: int = 5,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+        property_pairs: list[contracts.PropertyPairInput] | None = None,
+    ) -> contracts.AnalyzeFeedbackResult:
+        """Analyze structured feedback into deterministic remediation suggestions."""
+        return handlers.handle_analyze_feedback(
+            instance_id,
+            relationship_type,
+            limit=limit,
+            min_support=min_support,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+            property_pairs=property_pairs,
+        )
+
+    @_tool
     def cruxible_schema(instance_id: str) -> dict[str, Any]:
         """Return the active config schema for an instance."""
         return handlers.handle_schema(instance_id)
@@ -419,6 +452,35 @@ def register_tools(server: FastMCP) -> list[str]:
         Example: classified_as.FROM.Category == classified_as.TO.CategoryName
         """
         return handlers.handle_add_constraint(instance_id, name, rule, severity, description)
+
+    @_tool
+    def cruxible_add_decision_policy(
+        instance_id: str,
+        name: str,
+        applies_to: contracts.DecisionPolicyAppliesTo,
+        relationship_type: str,
+        effect: contracts.DecisionPolicyEffect,
+        match: contracts.DecisionPolicyMatchInput | None = None,
+        description: str | None = None,
+        rationale: str = "",
+        query_name: str | None = None,
+        workflow_name: str | None = None,
+        expires_at: str | None = None,
+    ) -> contracts.AddDecisionPolicyResult:
+        """Add a decision policy to the config for query/workflow execution."""
+        return handlers.handle_add_decision_policy(
+            instance_id,
+            name,
+            applies_to,
+            relationship_type,
+            effect,
+            match=match,
+            description=description,
+            rationale=rationale,
+            query_name=query_name,
+            workflow_name=workflow_name,
+            expires_at=expires_at,
+        )
 
     @_tool
     def cruxible_propose_workflow(

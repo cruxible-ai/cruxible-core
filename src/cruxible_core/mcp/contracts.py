@@ -21,13 +21,15 @@ ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
 CandidateStrategy = Literal["property_match", "shared_neighbors"]
 GroupAction = Literal["approve", "reject"]
 GroupResolvedBy = Literal["human", "ai_review"]
-GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
+GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved", "suppressed"]
 GroupProposedBy = Literal["human", "ai_review"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 EntityProposalStatus = Literal["pending_review", "applying", "resolved"]
 EntityProposalAction = Literal["approve", "reject"]
 EntityProposalResolvedBy = Literal["human", "ai_review"]
 EntityChangeOperation = Literal["create", "patch"]
+DecisionPolicyAppliesTo = Literal["query", "workflow"]
+DecisionPolicyEffect = Literal["suppress", "require_review"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -73,13 +75,29 @@ class MemberInput(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
+class PropertyPairInput(BaseModel):
+    from_property: str
+    to_property: str
+
+
 class FeedbackBatchItemInput(BaseModel):
     receipt_id: str
     action: FeedbackAction
     target: EdgeTargetInput
     reason: str = ""
+    reason_code: str | None = None
+    scope_hints: dict[str, Any] = Field(default_factory=dict)
     corrections: dict[str, Any] | None = None
     group_override: bool = False
+
+
+class DecisionPolicyMatchInput(BaseModel):
+    from_match: dict[str, Any] = Field(default_factory=dict, alias="from")
+    to: dict[str, Any] = Field(default_factory=dict)
+    edge: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"populate_by_name": True}
 
 
 class EntityChangeInput(BaseModel):
@@ -124,6 +142,7 @@ class QueryToolResult(BaseModel):
     truncated: bool = False
     steps_executed: int
     param_hints: "QueryParamHints | None" = None
+    policy_summary: dict[str, int] = Field(default_factory=dict)
 
 
 class FeedbackResult(BaseModel):
@@ -158,6 +177,7 @@ class EvaluateResult(BaseModel):
     edge_count: int
     findings: list[dict[str, Any]]
     summary: dict[str, int]
+    constraint_summary: dict[str, int] = Field(default_factory=dict)
     quality_summary: dict[str, int] = Field(default_factory=dict)
 
 
@@ -242,6 +262,12 @@ class ReloadConfigResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class FeedbackProfileResult(BaseModel):
+    found: bool
+    relationship_type: str
+    profile: dict[str, Any] = Field(default_factory=dict)
+
+
 class WorkflowLockResult(BaseModel):
     lock_path: str
     config_digest: str
@@ -299,12 +325,14 @@ class WorkflowProposeResult(BaseModel):
     workflow: str
     output: Any
     receipt_id: str
-    group_id: str
+    group_id: str | None = None
     group_status: str
     review_priority: str
+    suppressed: bool = False
     query_receipt_ids: list[str] = Field(default_factory=list)
     trace_ids: list[str] = Field(default_factory=list)
     prior_resolution: dict[str, Any] | None = None
+    policy_summary: dict[str, int] = Field(default_factory=dict)
     receipt: dict[str, Any] | None = None
     traces: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -334,12 +362,98 @@ class ForkSnapshotResult(BaseModel):
 
 
 class ProposeGroupToolResult(BaseModel):
-    group_id: str
+    group_id: str | None = None
     signature: str
     status: str
     review_priority: str
     member_count: int
     prior_resolution: dict[str, Any] | None = None
+    suppressed: bool = False
+    policy_summary: dict[str, int] = Field(default_factory=dict)
+
+
+class AddDecisionPolicyResult(BaseModel):
+    name: str
+    added: bool
+    config_updated: bool
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FeedbackGroupSummary(BaseModel):
+    relationship_type: str
+    reason_code: str
+    remediation_hint: str
+    decision_context: dict[str, Any] = Field(default_factory=dict)
+    scope_hints: dict[str, Any] = Field(default_factory=dict)
+    feedback_count: int
+    feedback_ids: list[str] = Field(default_factory=list)
+    sample_reasons: list[str] = Field(default_factory=list)
+
+
+class UncodedFeedbackExample(BaseModel):
+    feedback_id: str
+    relationship_type: str
+    reason: str
+    decision_context: dict[str, Any] = Field(default_factory=dict)
+    scope_hints: dict[str, Any] = Field(default_factory=dict)
+    target: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConstraintSuggestion(BaseModel):
+    name: str
+    description: str
+    relationship_type: str
+    rule: str
+    severity: ConstraintSeverity
+    support_count: int
+    feedback_ids: list[str] = Field(default_factory=list)
+    sample_value_pairs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DecisionPolicySuggestion(BaseModel):
+    name: str
+    description: str
+    relationship_type: str
+    applies_to: DecisionPolicyAppliesTo
+    effect: DecisionPolicyEffect
+    rationale: str
+    match: dict[str, Any] = Field(default_factory=dict)
+    query_name: str | None = None
+    workflow_name: str | None = None
+    support_count: int
+    feedback_ids: list[str] = Field(default_factory=list)
+
+
+class QualityCheckCandidate(BaseModel):
+    relationship_type: str
+    reason_code: str
+    support_count: int
+    description: str
+    feedback_ids: list[str] = Field(default_factory=list)
+
+
+class ProviderFixCandidate(BaseModel):
+    relationship_type: str
+    reason_code: str
+    support_count: int
+    description: str
+    feedback_ids: list[str] = Field(default_factory=list)
+
+
+class AnalyzeFeedbackResult(BaseModel):
+    relationship_type: str
+    feedback_count: int
+    action_counts: dict[str, int] = Field(default_factory=dict)
+    source_counts: dict[str, int] = Field(default_factory=dict)
+    reason_code_counts: dict[str, int] = Field(default_factory=dict)
+    coded_groups: list[FeedbackGroupSummary] = Field(default_factory=list)
+    uncoded_feedback_count: int = 0
+    uncoded_examples: list[UncodedFeedbackExample] = Field(default_factory=list)
+    constraint_suggestions: list[ConstraintSuggestion] = Field(default_factory=list)
+    decision_policy_suggestions: list[DecisionPolicySuggestion] = Field(default_factory=list)
+    quality_check_candidates: list[QualityCheckCandidate] = Field(default_factory=list)
+    provider_fix_candidates: list[ProviderFixCandidate] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ResolveGroupToolResult(BaseModel):

@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from cruxible_core.mcp import contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
+    AnalyzeFeedbackRequest,
     FeedbackBatchRequest,
     FeedbackRequest,
     OutcomeRequest,
@@ -31,6 +32,8 @@ async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.Feedback
         to_id=req.to_id,
         edge_key=req.edge_key,
         reason=req.reason,
+        reason_code=req.reason_code,
+        scope_hints=req.scope_hints,
         corrections=req.corrections,
         group_override=req.group_override,
     )
@@ -46,6 +49,39 @@ async def feedback_batch(
         instance_id=resolved_instance_id,
         items=req.items,
         source=req.source,
+    )
+
+
+@router.post(
+    "/{instance_id}/feedback/analyze",
+    response_model=contracts.AnalyzeFeedbackResult,
+)
+async def analyze_feedback(
+    instance_id: str,
+    req: AnalyzeFeedbackRequest,
+) -> contracts.AnalyzeFeedbackResult:
+    return local_api._handle_analyze_feedback_local(
+        instance_id=resolve_server_instance_id(instance_id),
+        relationship_type=req.relationship_type,
+        limit=req.limit,
+        min_support=req.min_support,
+        decision_surface_type=req.decision_surface_type,
+        decision_surface_name=req.decision_surface_name,
+        property_pairs=req.property_pairs,
+    )
+
+
+@router.get(
+    "/{instance_id}/feedback/profiles/{relationship_type}",
+    response_model=contracts.FeedbackProfileResult,
+)
+async def get_feedback_profile(
+    instance_id: str,
+    relationship_type: str,
+) -> contracts.FeedbackProfileResult:
+    return local_api._handle_get_feedback_profile_local(
+        instance_id=resolve_server_instance_id(instance_id),
+        relationship_type=relationship_type,
     )
 
 

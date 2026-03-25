@@ -66,9 +66,11 @@ def cli(
 
 # Import and register commands after cli group is defined
 from cruxible_core.cli.commands import (  # noqa: E402
+    add_decision_policy_cmd,
     add_constraint_cmd,
     add_entity_cmd,
     add_relationship_cmd,
+    analyze_feedback_cmd,
     apply_cmd,
     entity_proposal_group,
     evaluate,
@@ -76,6 +78,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     export_group,
     feedback_batch_cmd,
     feedback_cmd,
+    feedback_profile_cmd,
     find_candidates_cmd,
     fork_cmd,
     get_entity_cmd,
@@ -116,6 +119,8 @@ cli.add_command(reload_config_cmd, "reload-config")  # type: ignore[has-type]
 cli.add_command(explain)  # type: ignore[has-type]
 cli.add_command(feedback_cmd, "feedback")  # type: ignore[has-type]
 cli.add_command(feedback_batch_cmd, "feedback-batch")  # type: ignore[has-type]
+cli.add_command(feedback_profile_cmd, "feedback-profile")  # type: ignore[has-type]
+cli.add_command(analyze_feedback_cmd, "analyze-feedback")  # type: ignore[has-type]
 cli.add_command(outcome_cmd, "outcome")  # type: ignore[has-type]
 cli.add_command(list_group, "list")  # type: ignore[has-type]
 cli.add_command(find_candidates_cmd, "find-candidates")  # type: ignore[has-type]
@@ -129,6 +134,7 @@ cli.add_command(get_relationship_cmd, "get-relationship")  # type: ignore[has-ty
 cli.add_command(add_entity_cmd, "add-entity")  # type: ignore[has-type]
 cli.add_command(add_relationship_cmd, "add-relationship")  # type: ignore[has-type]
 cli.add_command(add_constraint_cmd, "add-constraint")  # type: ignore[has-type]
+cli.add_command(add_decision_policy_cmd, "add-decision-policy")  # type: ignore[has-type]
 cli.add_command(export_group, "export")  # type: ignore[has-type]
 cli.add_command(entity_proposal_group, "entity-proposal")  # type: ignore[has-type]
 cli.add_command(group_group, "group")  # type: ignore[has-type]

@@ -187,6 +187,8 @@ def handle_feedback(
     to_id: str,
     edge_key: int | None = None,
     reason: str = "",
+    reason_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
 ) -> contracts.FeedbackResult:
@@ -204,6 +206,8 @@ def handle_feedback(
             to_id=to_id,
             edge_key=edge_key,
             reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
             corrections=corrections,
             group_override=group_override,
         ),
@@ -219,8 +223,53 @@ def handle_feedback(
             to_id,
             edge_key=edge_key,
             reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
             corrections=corrections,
             group_override=group_override,
+        ),
+    )
+
+
+def handle_get_feedback_profile(
+    instance_id: str,
+    relationship_type: str,
+) -> contracts.FeedbackProfileResult:
+    """Get a focused feedback profile for one relationship type."""
+    return _dispatch_remote_or_local(
+        lambda client: client.get_feedback_profile(instance_id, relationship_type),
+        lambda: local_api._handle_get_feedback_profile_local(instance_id, relationship_type),
+    )
+
+
+def handle_analyze_feedback(
+    instance_id: str,
+    relationship_type: str,
+    limit: int = 200,
+    min_support: int = 5,
+    decision_surface_type: str | None = None,
+    decision_surface_name: str | None = None,
+    property_pairs: list[contracts.PropertyPairInput] | None = None,
+) -> contracts.AnalyzeFeedbackResult:
+    """Analyze structured feedback into deterministic remediation suggestions."""
+    return _dispatch_remote_or_local(
+        lambda client: client.analyze_feedback(
+            instance_id,
+            relationship_type=relationship_type,
+            limit=limit,
+            min_support=min_support,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+            property_pairs=property_pairs,
+        ),
+        lambda: local_api._handle_analyze_feedback_local(
+            instance_id,
+            relationship_type,
+            limit=limit,
+            min_support=min_support,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+            property_pairs=property_pairs,
         ),
     )
 
@@ -419,6 +468,50 @@ def handle_add_constraint(
             rule,
             severity,
             description,
+        ),
+    )
+
+
+def handle_add_decision_policy(
+    instance_id: str,
+    name: str,
+    applies_to: contracts.DecisionPolicyAppliesTo,
+    relationship_type: str,
+    effect: contracts.DecisionPolicyEffect,
+    match: contracts.DecisionPolicyMatchInput | None = None,
+    description: str | None = None,
+    rationale: str = "",
+    query_name: str | None = None,
+    workflow_name: str | None = None,
+    expires_at: str | None = None,
+) -> contracts.AddDecisionPolicyResult:
+    """Add a decision policy to the config and write back to YAML."""
+    return _dispatch_remote_or_local(
+        lambda client: client.add_decision_policy(
+            instance_id,
+            name=name,
+            applies_to=applies_to,
+            relationship_type=relationship_type,
+            effect=effect,
+            match=match,
+            description=description,
+            rationale=rationale,
+            query_name=query_name,
+            workflow_name=workflow_name,
+            expires_at=expires_at,
+        ),
+        lambda: local_api._handle_add_decision_policy_local(
+            instance_id,
+            name=name,
+            applies_to=applies_to,
+            relationship_type=relationship_type,
+            effect=effect,
+            match=match,
+            description=description,
+            rationale=rationale,
+            query_name=query_name,
+            workflow_name=workflow_name,
+            expires_at=expires_at,
         ),
     )
 

@@ -170,6 +170,8 @@ class CruxibleClient:
         to_id: str,
         edge_key: int | None = None,
         reason: str = "",
+        reason_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
         group_override: bool = False,
     ) -> contracts.FeedbackResult:
@@ -186,6 +188,8 @@ class CruxibleClient:
                 "to_id": to_id,
                 "edge_key": edge_key,
                 "reason": reason,
+                "reason_code": reason_code,
+                "scope_hints": scope_hints,
                 "corrections": corrections,
                 "group_override": group_override,
             },
@@ -293,6 +297,44 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.EvaluateResult)
+
+    def get_feedback_profile(
+        self,
+        instance_id: str,
+        relationship_type: str,
+    ) -> contracts.FeedbackProfileResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/feedback/profiles/{relationship_type}"
+        )
+        return self._parse_model(response, contracts.FeedbackProfileResult)
+
+    def analyze_feedback(
+        self,
+        instance_id: str,
+        *,
+        relationship_type: str,
+        limit: int = 200,
+        min_support: int = 5,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+        property_pairs: list[contracts.PropertyPairInput] | None = None,
+    ) -> contracts.AnalyzeFeedbackResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/feedback/analyze",
+            json={
+                "relationship_type": relationship_type,
+                "limit": limit,
+                "min_support": min_support,
+                "decision_surface_type": decision_surface_type,
+                "decision_surface_name": decision_surface_name,
+                "property_pairs": (
+                    [pair.model_dump(mode="json") for pair in property_pairs]
+                    if property_pairs
+                    else None
+                ),
+            },
+        )
+        return self._parse_model(response, contracts.AnalyzeFeedbackResult)
 
     def schema(self, instance_id: str) -> dict[str, Any]:
         response = self._client.get(f"/api/v1/{instance_id}/schema")
@@ -486,6 +528,38 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.AddConstraintResult)
+
+    def add_decision_policy(
+        self,
+        instance_id: str,
+        *,
+        name: str,
+        applies_to: contracts.DecisionPolicyAppliesTo,
+        relationship_type: str,
+        effect: contracts.DecisionPolicyEffect,
+        match: contracts.DecisionPolicyMatchInput | None = None,
+        description: str | None = None,
+        rationale: str = "",
+        query_name: str | None = None,
+        workflow_name: str | None = None,
+        expires_at: str | None = None,
+    ) -> contracts.AddDecisionPolicyResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/decision-policies",
+            json={
+                "name": name,
+                "applies_to": applies_to,
+                "relationship_type": relationship_type,
+                "effect": effect,
+                "match": match.model_dump(mode="json", by_alias=True) if match else None,
+                "description": description,
+                "rationale": rationale,
+                "query_name": query_name,
+                "workflow_name": workflow_name,
+                "expires_at": expires_at,
+            },
+        )
+        return self._parse_model(response, contracts.AddDecisionPolicyResult)
 
     def get_entity(
         self,
