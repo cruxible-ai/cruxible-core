@@ -10,15 +10,12 @@ from typing import Any, Literal
 from cruxible_core.entity_proposal.types import EntityChangeMember, EntityChangeProposal
 from cruxible_core.errors import (
     ConfigError,
-    CoreError,
     DataValidationError,
     EntityProposalNotFoundError,
-    MutationError,
 )
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service._helpers import _persist_receipt, _save_graph
+from cruxible_core.service._helpers import MutationReceiptContext, _save_graph, mutation_receipt
 from cruxible_core.service.types import (
     GetEntityProposalResult,
     ListEntityProposalsResult,
@@ -170,25 +167,26 @@ def service_resolve_entity_proposal(
         store.close()
         raise
 
-    builder = ReceiptBuilder(
-        operation_type="entity_proposal_resolve",
-        parameters={"proposal_id": proposal_id, "action": action},
-    )
-
-    result: ResolveEntityProposalResult | None = None
-    _exc: CoreError | None = None
-    try:
+    ctx: MutationReceiptContext[ResolveEntityProposalResult]
+    with mutation_receipt(
+        instance,
+        "entity_proposal_resolve",
+        {"proposal_id": proposal_id, "action": action},
+        store=store,
+    ) as ctx:
+        assert ctx.builder is not None
         if action == "reject":
             with store.transaction():
                 resolution_id = store.save_resolution(proposal_id, "reject", rationale, resolved_by)
                 store.update_proposal_status(proposal_id, "resolved", resolution_id)
-            builder.mark_committed()
-            result = ResolveEntityProposalResult(
-                proposal_id=proposal_id,
-                action="reject",
-                entities_created=0,
-                entities_patched=0,
-                resolution_id=resolution_id,
+            ctx.set_result(
+                ResolveEntityProposalResult(
+                    proposal_id=proposal_id,
+                    action="reject",
+                    entities_created=0,
+                    entities_patched=0,
+                    resolution_id=resolution_id,
+                )
             )
         else:
             instance.invalidate_graph_cache()
@@ -201,7 +199,7 @@ def service_resolve_entity_proposal(
                     errors.append(
                         f"Member {index}: type '{member.entity_type}' not found in config"
                     )
-                    builder.record_validation(
+                    ctx.builder.record_validation(
                         passed=False,
                         detail={"member": index, "error": "type not found"},
                     )
@@ -213,7 +211,7 @@ def service_resolve_entity_proposal(
                         f"Member {index}: entity "
                         f"{member.entity_type}:{member.entity_id} already exists"
                     )
-                    builder.record_validation(
+                    ctx.builder.record_validation(
                         passed=False,
                         detail={"member": index, "error": "entity already exists"},
                     )
@@ -224,12 +222,12 @@ def service_resolve_entity_proposal(
                     errors.append(
                         f"Member {index}: entity {member.entity_type}:{member.entity_id} not found"
                     )
-                    builder.record_validation(
+                    ctx.builder.record_validation(
                         passed=False,
                         detail={"member": index, "error": "entity not found"},
                     )
                     continue
-                builder.record_validation(
+                ctx.builder.record_validation(
                     passed=True,
                     detail={
                         "member": index,
@@ -265,7 +263,7 @@ def service_resolve_entity_proposal(
                                 properties=dict(member.properties),
                             )
                         )
-                        builder.record_entity_write(
+                        ctx.builder.record_entity_write(
                             member.entity_type,
                             member.entity_id,
                             is_update=False,
@@ -277,7 +275,7 @@ def service_resolve_entity_proposal(
                             member.entity_id,
                             dict(member.properties),
                         )
-                        builder.record_entity_write(
+                        ctx.builder.record_entity_write(
                             member.entity_type,
                             member.entity_id,
                             is_update=True,
@@ -287,27 +285,16 @@ def service_resolve_entity_proposal(
                 _save_graph(instance, graph)
                 store.update_proposal_status(proposal_id, "resolved", resolution_id)
 
-            builder.mark_committed()
-            result = ResolveEntityProposalResult(
-                proposal_id=proposal_id,
-                action="approve",
-                entities_created=entities_created,
-                entities_patched=entities_patched,
-                resolution_id=resolution_id,
+            ctx.set_result(
+                ResolveEntityProposalResult(
+                    proposal_id=proposal_id,
+                    action="approve",
+                    entities_created=entities_created,
+                    entities_patched=entities_patched,
+                    resolution_id=resolution_id,
+                )
             )
-    except CoreError as e:
-        _exc = e
-        raise
-    except Exception as exc:
-        _exc = MutationError(f"Unexpected failure: {exc}")
-        raise _exc from exc
-    finally:
-        store.close()
-        receipt = builder.build()
-        if _persist_receipt(instance, receipt):
-            if _exc is not None:
-                _exc.mutation_receipt_id = receipt.receipt_id
-            elif result is not None:
-                result.receipt_id = receipt.receipt_id
 
-    return result  # type: ignore[return-value]
+    result = ctx.result
+    assert result is not None
+    return result

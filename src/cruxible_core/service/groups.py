@@ -10,17 +10,14 @@ from typing import Any, Literal
 from cruxible_core.config.schema import MatchingConfig
 from cruxible_core.errors import (
     ConfigError,
-    CoreError,
     DataValidationError,
     GroupNotFoundError,
-    MutationError,
 )
 from cruxible_core.graph.operations import validate_relationship
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service._helpers import _persist_receipt
+from cruxible_core.service._helpers import MutationReceiptContext, mutation_receipt
 from cruxible_core.service.mutations import service_add_relationships
 from cruxible_core.service.types import (
     GetGroupResult,
@@ -338,18 +335,17 @@ def service_resolve_group(
         group_store.close()
         raise
 
-    # Receipt builder — after input validation, before mutation logic
-    builder = ReceiptBuilder(
-        operation_type="group_resolve",
-        parameters={"group_id": group_id, "action": action},
-    )
-
-    result: ResolveGroupResult | None = None
-    _exc: CoreError | None = None
-    try:
+    ctx: MutationReceiptContext[ResolveGroupResult]
+    with mutation_receipt(
+        instance,
+        "group_resolve",
+        {"group_id": group_id, "action": action},
+        store=group_store,
+    ) as ctx:
+        assert ctx.builder is not None
         # 6. Reject path — no graph mutation
         if action == "reject":
-            builder.record_validation(
+            ctx.builder.record_validation(
                 passed=True,
                 detail={"action": "reject", "members": len(members)},
             )
@@ -367,13 +363,14 @@ def service_resolve_group(
                     confirmed=True,
                 )
                 group_store.update_group_status(group_id, "resolved", resolution_id=res_id)
-            builder.mark_committed()
-            result = ResolveGroupResult(
-                group_id=group_id,
-                action="reject",
-                edges_created=0,
-                edges_skipped=0,
-                resolution_id=res_id,
+            ctx.set_result(
+                ResolveGroupResult(
+                    group_id=group_id,
+                    action="reject",
+                    edges_created=0,
+                    edges_skipped=0,
+                    resolution_id=res_id,
+                )
             )
         else:
             # 5. Approve — per-member validation
@@ -390,7 +387,7 @@ def service_resolve_group(
                     m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type
                 )
                 if count > 0:
-                    builder.record_validation(
+                    ctx.builder.record_validation(
                         passed=False,
                         detail={
                             "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
@@ -413,7 +410,7 @@ def service_resolve_group(
                         m.properties,
                     )
                 except DataValidationError:
-                    builder.record_validation(
+                    ctx.builder.record_validation(
                         passed=False,
                         detail={
                             "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
@@ -423,7 +420,7 @@ def service_resolve_group(
                     edges_skipped += 1
                     continue
 
-                builder.record_validation(
+                ctx.builder.record_validation(
                     passed=True,
                     detail={
                         "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
@@ -484,7 +481,7 @@ def service_resolve_group(
 
             # Record relationship_write nodes before inner call
             for inp in valid_inputs:
-                builder.record_relationship_write(
+                ctx.builder.record_relationship_write(
                     from_type=inp.from_type,
                     from_id=inp.from_id,
                     to_type=inp.to_type,
@@ -523,29 +520,19 @@ def service_resolve_group(
                 group_store.confirm_resolution(resolution_id, trust_status=revalidated_trust)
                 group_store.update_group_status(group_id, "resolved")
 
-            builder.mark_committed()
-            result = ResolveGroupResult(
-                group_id=group_id,
-                action="approve",
-                edges_created=edges_created,
-                edges_skipped=edges_skipped,
-                resolution_id=resolution_id,
+            ctx.set_result(
+                ResolveGroupResult(
+                    group_id=group_id,
+                    action="approve",
+                    edges_created=edges_created,
+                    edges_skipped=edges_skipped,
+                    resolution_id=resolution_id,
+                )
             )
-    except CoreError as e:
-        _exc = e
-        raise
-    except Exception as exc:
-        _exc = MutationError(f"Unexpected failure: {exc}")
-        raise _exc from exc
-    finally:
-        group_store.close()
-        receipt = builder.build()
-        if _persist_receipt(instance, receipt):
-            if _exc is not None:
-                _exc.mutation_receipt_id = receipt.receipt_id
-            elif result is not None:
-                result.receipt_id = receipt.receipt_id
-    return result  # type: ignore[return-value]
+
+    result = ctx.result
+    assert result is not None
+    return result
 
 
 def service_get_group(

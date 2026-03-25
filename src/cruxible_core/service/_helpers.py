@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, Generic, Protocol, TypeVar
 
 import structlog
 
@@ -10,9 +14,34 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError, MutationError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 
 logger = structlog.get_logger()
+ResultT = TypeVar("ResultT", bound="SupportsReceiptId")
+
+
+class SupportsReceiptId(Protocol):
+    """Result objects that can be annotated with a mutation receipt."""
+
+    receipt_id: str | None
+
+
+class Closeable(Protocol):
+    """Minimal closeable resource used by mutation services."""
+
+    def close(self) -> None: ...
+
+
+@dataclass
+class MutationReceiptContext(Generic[ResultT]):
+    """Mutable state shared between a mutation call site and receipt wrapper."""
+
+    builder: ReceiptBuilder | None
+    result: ResultT | None = None
+
+    def set_result(self, result: ResultT) -> None:
+        self.result = result
 
 
 def _persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> bool:
@@ -41,3 +70,44 @@ def _save_graph(instance: InstanceProtocol, graph: EntityGraph) -> None:
 def _config_digest(config: CoreConfig) -> str:
     """SHA-256 digest of config JSON (first 12 hex chars)."""
     return hashlib.sha256(config.model_dump_json(exclude_none=True).encode()).hexdigest()[:12]
+
+
+@contextmanager
+def mutation_receipt(
+    instance: InstanceProtocol,
+    operation_type: str,
+    parameters: dict[str, Any],
+    *,
+    store: Closeable | None = None,
+    enabled: bool = True,
+) -> Iterator[MutationReceiptContext[ResultT]]:
+    """Wrap mutation execution with uniform receipt persistence and tagging."""
+    builder = (
+        ReceiptBuilder(operation_type=operation_type, parameters=parameters)
+        if enabled
+        else None
+    )
+    ctx: MutationReceiptContext[ResultT] = MutationReceiptContext(builder=builder)
+    exc_to_tag: CoreError | None = None
+    try:
+        yield ctx
+    except CoreError as exc:
+        exc_to_tag = exc
+        raise
+    except Exception as exc:
+        wrapped = MutationError(f"Unexpected failure: {exc}")
+        exc_to_tag = wrapped
+        raise wrapped from exc
+    else:
+        if builder is not None and ctx.result is not None:
+            builder.mark_committed()
+    finally:
+        if store is not None:
+            store.close()
+        if builder is not None:
+            receipt = builder.build()
+            if _persist_receipt(instance, receipt):
+                if exc_to_tag is not None:
+                    exc_to_tag.mutation_receipt_id = receipt.receipt_id
+                elif ctx.result is not None:
+                    ctx.result.receipt_id = receipt.receipt_id
