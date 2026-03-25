@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -74,6 +76,16 @@ def proposal_workflow_instance(
 def _write_lock_for_instance(instance: CruxibleInstance) -> None:
     config = instance.load_config()
     write_lock(build_lock(config, instance.get_config_path().parent), get_lock_path(instance))
+
+
+def _compute_directory_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        digest.update(child.relative_to(path).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(child.read_bytes()).hexdigest().encode())
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
 
 
 class TestWorkflowCompiler:
@@ -395,3 +407,42 @@ class TestWorkflowExecutor:
         assert applied.committed_snapshot_id is not None
         assert applied.receipt.committed is True
         assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+
+    def test_canonical_preview_reports_duplicate_inputs(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        rows_path = canonical_workflow_instance.root / "bundle" / "rows.json"
+        rows = json.loads(rows_path.read_text())
+        rows.append(
+            {
+                "vendor_id": "vendor-acme",
+                "vendor_name": "Acme",
+                "product_id": "product-acme-widget",
+                "product_name": "Widget Renamed",
+                "cve_id": "CVE-2026-0001",
+                "description": "Widget issue",
+            }
+        )
+        rows_path.write_text(json.dumps(rows, indent=2, sort_keys=True))
+        config = canonical_workflow_instance.load_config()
+        config.artifacts["canonical_bundle"].sha256 = _compute_directory_sha256(
+            canonical_workflow_instance.root / "bundle"
+        )
+        canonical_workflow_instance.save_config(config)
+        _write_lock_for_instance(canonical_workflow_instance)
+
+        result = execute_workflow(
+            canonical_workflow_instance,
+            canonical_workflow_instance.load_config(),
+            "build_reference",
+            {},
+        )
+
+        product_preview = result.apply_previews["apply_products"]
+        assert product_preview["duplicate_input_count"] == 1
+        assert product_preview["conflicting_duplicate_count"] == 1
+        assert product_preview["duplicate_examples"][0]["entity_id"] == "product-acme-widget"
+
+        rel_preview = result.apply_previews["apply_product_vendor"]
+        assert rel_preview["duplicate_input_count"] == 1
+        assert rel_preview["conflicting_duplicate_count"] == 0

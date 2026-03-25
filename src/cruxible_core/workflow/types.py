@@ -215,6 +215,9 @@ class EntitySet(BaseModel):
 
     entity_type: str
     entities: list[EntitySetMember] = Field(default_factory=list)
+    duplicate_input_count: int = 0
+    conflicting_duplicate_count: int = 0
+    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RelationshipSetMember(BaseModel):
@@ -232,6 +235,9 @@ class RelationshipSet(BaseModel):
 
     relationship_type: str
     relationships: list[RelationshipSetMember] = Field(default_factory=list)
+    duplicate_input_count: int = 0
+    conflicting_duplicate_count: int = 0
+    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ApplyEntitiesPreview(BaseModel):
@@ -241,6 +247,9 @@ class ApplyEntitiesPreview(BaseModel):
     create_count: int = 0
     update_count: int = 0
     noop_count: int = 0
+    duplicate_input_count: int = 0
+    conflicting_duplicate_count: int = 0
+    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ApplyRelationshipsPreview(BaseModel):
@@ -250,3 +259,6 @@ class ApplyRelationshipsPreview(BaseModel):
     create_count: int = 0
     update_count: int = 0
     noop_count: int = 0
+    duplicate_input_count: int = 0
+    conflicting_duplicate_count: int = 0
+    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)

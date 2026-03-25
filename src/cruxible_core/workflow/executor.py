@@ -38,6 +38,8 @@ from cruxible_core.workflow.types import (
     WorkflowExecutionResult,
 )
 
+_MAX_DUPLICATE_EXAMPLES = 10
+
 
 def execute_workflow(
     instance: InstanceProtocol,
@@ -230,6 +232,8 @@ def execute_workflow(
                             step_outputs,
                         )
                     ),
+                    "duplicate_input_count": entity_set.duplicate_input_count,
+                    "conflicting_duplicate_count": entity_set.conflicting_duplicate_count,
                 },
             )
             continue
@@ -260,6 +264,8 @@ def execute_workflow(
                             step_outputs,
                         )
                     ),
+                    "duplicate_input_count": relationship_set.duplicate_input_count,
+                    "conflicting_duplicate_count": relationship_set.conflicting_duplicate_count,
                 },
             )
             continue
@@ -716,8 +722,11 @@ def _make_entity_set(
             f"Workflow step '{step_id}' references unknown entity type '{spec.entity_type}'"
         )
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
-    seen: set[str] = set()
+    seen: dict[str, dict[str, Any]] = {}
     entities: list[EntitySetMember] = []
+    duplicate_input_count = 0
+    conflicting_duplicate_count = 0
+    duplicate_examples: list[dict[str, Any]] = []
     for item in items:
         entity_id = str(
             resolve_value(
@@ -728,22 +737,42 @@ def _make_entity_set(
                 allow_item=True,
             )
         )
+        properties = resolve_value(
+            spec.properties,
+            input_payload,
+            step_outputs,
+            item_payload=item,
+            allow_item=True,
+        )
         if entity_id in seen:
+            duplicate_input_count += 1
+            conflicting = seen[entity_id] != properties
+            if conflicting:
+                conflicting_duplicate_count += 1
+            if len(duplicate_examples) < _MAX_DUPLICATE_EXAMPLES:
+                example = {
+                    "entity_id": entity_id,
+                    "conflicting": conflicting,
+                }
+                if conflicting:
+                    example["first_properties"] = seen[entity_id]
+                    example["duplicate_properties"] = properties
+                duplicate_examples.append(example)
             continue
-        seen.add(entity_id)
+        seen[entity_id] = properties
         entities.append(
             EntitySetMember(
                 entity_id=entity_id,
-                properties=resolve_value(
-                    spec.properties,
-                    input_payload,
-                    step_outputs,
-                    item_payload=item,
-                    allow_item=True,
-                ),
+                properties=properties,
             )
         )
-    return EntitySet(entity_type=spec.entity_type, entities=entities)
+    return EntitySet(
+        entity_type=spec.entity_type,
+        entities=entities,
+        duplicate_input_count=duplicate_input_count,
+        conflicting_duplicate_count=conflicting_duplicate_count,
+        duplicate_examples=duplicate_examples,
+    )
 
 
 def _make_relationship_set(
@@ -759,8 +788,11 @@ def _make_relationship_set(
             f"Workflow step '{step_id}' references unknown relationship '{spec.relationship_type}'"
         )
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
-    seen: set[tuple[str, str, str, str, str]] = set()
+    seen: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     relationships: list[RelationshipSetMember] = []
+    duplicate_input_count = 0
+    conflicting_duplicate_count = 0
+    duplicate_examples: list[dict[str, Any]] = []
     for item in items:
         member = RelationshipSetMember.model_validate(
             {
@@ -815,12 +847,32 @@ def _make_relationship_set(
             member.to_id,
         )
         if key in seen:
+            duplicate_input_count += 1
+            conflicting = seen[key] != member.properties
+            if conflicting:
+                conflicting_duplicate_count += 1
+            if len(duplicate_examples) < _MAX_DUPLICATE_EXAMPLES:
+                example = {
+                    "from_type": member.from_type,
+                    "from_id": member.from_id,
+                    "to_type": member.to_type,
+                    "to_id": member.to_id,
+                    "relationship_type": spec.relationship_type,
+                    "conflicting": conflicting,
+                }
+                if conflicting:
+                    example["first_properties"] = seen[key]
+                    example["duplicate_properties"] = member.properties
+                duplicate_examples.append(example)
             continue
-        seen.add(key)
+        seen[key] = member.properties
         relationships.append(member)
     return RelationshipSet(
         relationship_type=spec.relationship_type,
         relationships=relationships,
+        duplicate_input_count=duplicate_input_count,
+        conflicting_duplicate_count=conflicting_duplicate_count,
+        duplicate_examples=duplicate_examples,
     )
 
 
@@ -877,6 +929,9 @@ def _apply_entity_set(
         create_count=create_count,
         update_count=update_count,
         noop_count=noop_count,
+        duplicate_input_count=entity_set.duplicate_input_count,
+        conflicting_duplicate_count=entity_set.conflicting_duplicate_count,
+        duplicate_examples=entity_set.duplicate_examples,
     )
 
 
@@ -960,6 +1015,9 @@ def _apply_relationship_set(
         create_count=create_count,
         update_count=update_count,
         noop_count=noop_count,
+        duplicate_input_count=relationship_set.duplicate_input_count,
+        conflicting_duplicate_count=relationship_set.conflicting_duplicate_count,
+        duplicate_examples=relationship_set.duplicate_examples,
     )
 
 
