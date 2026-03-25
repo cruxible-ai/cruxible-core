@@ -137,15 +137,6 @@ class WorkflowTestCaseResult(BaseModel):
     error: str | None = None
 
 
-class WorkflowTestRunResult(BaseModel):
-    """Summary of executing config-defined workflow tests."""
-
-    total: int
-    passed: int
-    failed: int
-    cases: list[WorkflowTestCaseResult] = Field(default_factory=list)
-
-
 class CandidateSetMember(BaseModel):
     """Candidate relationship endpoints produced inside a workflow."""
 

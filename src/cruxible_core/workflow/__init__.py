@@ -21,7 +21,6 @@ from cruxible_core.workflow.types import (
     WorkflowExecutionResult,
     WorkflowLock,
     WorkflowTestCaseResult,
-    WorkflowTestRunResult,
 )
 
 __all__ = [
@@ -33,7 +32,6 @@ __all__ = [
     "WorkflowExecutionResult",
     "WorkflowLock",
     "WorkflowTestCaseResult",
-    "WorkflowTestRunResult",
     "build_lock",
     "compile_workflow",
     "compute_lock_config_digest",

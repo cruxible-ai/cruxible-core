@@ -8,20 +8,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-class GroupResolution(BaseModel):
-    """Input type for the resolve action — what the caller provides.
-
-    The stored resolution row is richer (adds trust_status, trust_reason,
-    confirmed, resolution_id). CandidateGroup.resolution carries the full
-    stored row as dict, not this input type.
-    """
-
-    chosen_action: Literal["approve", "reject"]
-    rationale: str = ""
-    resolved_by: Literal["human", "ai_review"] = "human"
-    resolved_at: datetime
-
-
 class CandidateSignal(BaseModel):
     """Tri-state signal from an integration. Replaces vibed confidence scores."""
 
