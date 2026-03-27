@@ -28,7 +28,7 @@ from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.store import GroupStore
-from cruxible_core.snapshot.types import WorldSnapshot
+from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
 from cruxible_core.storage.sqlite import SQLiteStore
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
@@ -184,6 +184,21 @@ class CruxibleInstance:
         """Return the current head snapshot identifier, if any."""
         value = self.metadata.get("head_snapshot_id")
         return str(value) if value is not None else None
+
+    def get_upstream_metadata(self) -> UpstreamMetadata | None:
+        """Return typed upstream metadata for release-backed fork instances."""
+        raw = self.metadata.get("upstream")
+        if raw is None:
+            return None
+        return UpstreamMetadata.model_validate(raw)
+
+    def set_upstream_metadata(self, metadata: UpstreamMetadata | None) -> None:
+        """Persist upstream metadata for release-backed fork instances."""
+        if metadata is None:
+            self.metadata.pop("upstream", None)
+        else:
+            self.metadata["upstream"] = metadata.model_dump(mode="json")
+        self._write_metadata()
 
     def _metadata_path(self) -> Path:
         return self.instance_dir / "instance.json"

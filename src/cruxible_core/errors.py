@@ -17,7 +17,9 @@ errors (runtime data), making it easy to catch by category.
     ├── ExecutionError (operation failures)
     │   ├── IngestionError
     │   ├── MutationError
-    │   └── QueryExecutionError
+    │   ├── QueryExecutionError
+    │   └── TransportError
+    ├── OwnershipError (fork type-level ownership)
     └── PermissionDeniedError (MCP permission mode)
 """
 
@@ -238,6 +240,20 @@ class QueryExecutionError(ExecutionError):
     """
 
     def __init__(self, message: str):
+        super().__init__(message)
+
+
+class TransportError(ExecutionError):
+    """Error during model release transport operations."""
+
+    pass
+
+
+class OwnershipError(CoreError):
+    """Write rejected because the target type is upstream-owned in a fork instance."""
+
+    def __init__(self, message: str, *, blocked_types: list[str] | None = None):
+        self.blocked_types = blocked_types or []
         super().__init__(message)
 
 
