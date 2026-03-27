@@ -11,7 +11,7 @@ from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.snapshot.types import WorldSnapshot
+from cruxible_core.snapshot.types import PublishedModelManifest, UpstreamMetadata, WorldSnapshot
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
 
 # ---------------------------------------------------------------------------
@@ -239,6 +239,42 @@ class SnapshotListResult:
 class ForkSnapshotResult:
     instance: InstanceProtocol
     snapshot: WorldSnapshot
+
+
+@dataclass
+class ModelPublishResult:
+    manifest: PublishedModelManifest
+
+
+@dataclass
+class ModelForkResult:
+    instance: InstanceProtocol
+    manifest: PublishedModelManifest
+
+
+@dataclass
+class ModelStatusResult:
+    upstream: UpstreamMetadata | None
+
+
+@dataclass
+class ModelPullPreviewResult:
+    current_release_id: str | None
+    target_release_id: str
+    compatibility: str
+    apply_digest: str
+    warnings: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+    lock_changed: bool = False
+    upstream_entity_delta: int = 0
+    upstream_edge_delta: int = 0
+
+
+@dataclass
+class ModelPullApplyResult:
+    release_id: str
+    apply_digest: str
+    pre_pull_snapshot_id: str
 
 
 # ---------------------------------------------------------------------------

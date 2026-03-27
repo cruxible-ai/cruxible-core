@@ -832,9 +832,10 @@ class CoreConfig(BaseModel):
     description: str | None = None
     cruxible_version: str | None = None
     kind: Literal["ontology", "world_model"] = "world_model"
+    extends: str | None = None
 
-    entity_types: dict[str, EntityTypeSchema]
-    relationships: list[RelationshipSchema]
+    entity_types: dict[str, EntityTypeSchema] = Field(default_factory=dict)
+    relationships: list[RelationshipSchema] = Field(default_factory=list)
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
     quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
@@ -845,6 +846,12 @@ class CoreConfig(BaseModel):
     providers: dict[str, ProviderSchema] = Field(default_factory=dict)
     workflows: dict[str, WorkflowSchema] = Field(default_factory=dict)
     tests: list[WorkflowTestSchema] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_root_config_minimums(self) -> CoreConfig:
+        if self.extends is None and not self.entity_types:
+            raise ValueError("entity_types must not be empty unless extends is set")
+        return self
 
     def get_relationship(self, name: str) -> RelationshipSchema | None:
         """Find a relationship schema by name."""

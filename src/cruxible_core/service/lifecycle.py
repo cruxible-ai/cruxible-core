@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cruxible_core.config.composer import write_composed_config
 from cruxible_core.config.loader import load_config, load_config_from_string
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -92,6 +93,37 @@ def service_reload_config(
     config_path: str | None = None,
 ) -> ReloadConfigResult:
     """Validate the active config or repoint the instance to a new config path."""
+    upstream = instance.get_upstream_metadata()
+    if upstream is not None:
+        root = instance.get_root_path()
+        overlay_path = root / (config_path or upstream.overlay_config_path)
+        if not overlay_path.is_absolute():
+            overlay_path = root / overlay_path
+        if not overlay_path.exists():
+            raise ConfigError(f"Overlay config not found: {overlay_path}")
+
+        composed = write_composed_config(
+            base_path=root / upstream.config_path,
+            overlay_path=overlay_path,
+            output_path=root / upstream.active_config_path,
+        )
+        warnings = validate_config(composed)
+        if config_path is not None:
+            try:
+                overlay_config_path = str(overlay_path.relative_to(root))
+            except ValueError:
+                overlay_config_path = str(overlay_path)
+            updated = upstream.model_copy(
+                update={"overlay_config_path": overlay_config_path}
+            )
+            instance.set_upstream_metadata(updated)
+        instance.set_config_path(upstream.active_config_path)
+        return ReloadConfigResult(
+            config_path=str(instance.get_config_path()),
+            updated=True,
+            warnings=warnings,
+        )
+
     if config_path is not None:
         resolved = Path(config_path)
         if not resolved.is_absolute():
