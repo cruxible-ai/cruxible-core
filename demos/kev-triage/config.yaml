@@ -1,7 +1,7 @@
 version: "1.0"
 name: kev_triage
 kind: world_model
-# extends: cruxible/kev-reference  # future: config composition
+extends: kev-reference.yaml
 description: >
   Fork of the KEV reference world model for internal vulnerability triage.
   The reference layer (Vendor, Product, Vulnerability) comes from public
@@ -9,68 +9,9 @@ description: >
   controls, and the accepted judgment relationships that link public
   vulnerabilities to internal operational impact.
 
-# ─── Reference layer (from kev-reference.yaml) ───────────────────────
-
-entity_types:
-  Vendor:
-    description: Vendor or software publisher.
-    properties:
-      vendor_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      website:
-        type: string
-        optional: true
-
-  Product:
-    description: Product, package, platform, or service affected by vulnerabilities.
-    properties:
-      product_id:
-        type: string
-        primary_key: true
-      vendor_name:
-        type: string
-        optional: true
-      product_name:
-        type: string
-        indexed: true
-      cpe:
-        type: string
-        optional: true
-      product_family:
-        type: string
-        optional: true
-
-  Vulnerability:
-    description: Public vulnerability record such as a CVE entry.
-    properties:
-      cve_id:
-        type: string
-        primary_key: true
-      description:
-        type: string
-        optional: true
-      cvss_score:
-        type: number
-        optional: true
-      epss_score:
-        type: number
-        optional: true
-      kev_due_date:
-        type: string
-        optional: true
-      known_ransomware_use:
-        type: string
-        optional: true
-      published_at:
-        type: string
-        optional: true
-
 # ─── Fork: internal entity types ─────────────────────────────────────
 
+entity_types:
   Asset:
     description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
     properties:
@@ -187,28 +128,9 @@ entity_types:
         type: string
         optional: true
 
-# ─── Reference layer relationships ───────────────────────────────────
-
-relationships:
-  - name: product_from_vendor
-    description: Deterministic product-to-vendor mapping.
-    from: Product
-    to: Vendor
-
-  - name: vulnerability_affects_product
-    description: Public reference mapping from vulnerability to affected product.
-    from: Vulnerability
-    to: Product
-    properties:
-      affected_version_range:
-        type: string
-        optional: true
-      fixed_version:
-        type: string
-        optional: true
-
 # ─── Fork: deterministic internal mappings ────────────────────────────
 
+relationships:
   - name: asset_runs_product
     description: Deterministic mapping from internal asset inventory to installed products.
     from: Asset
@@ -419,59 +341,9 @@ named_queries:
       - relationship: asset_has_control
         direction: outgoing
 
-# ─── Reference layer ingestion ────────────────────────────────────────
-
-ingestion:
-  vendors:
-    description: Vendor reference import built from public product metadata.
-    entity_type: Vendor
-    id_column: vendor_id
-    column_map:
-      vendor_id: vendor_id
-      name: name
-      website: website
-
-  products:
-    description: Product reference import from public product and CPE mappings.
-    entity_type: Product
-    id_column: product_id
-    column_map:
-      product_id: product_id
-      vendor_name: vendor_name
-      product_name: product_name
-      cpe: cpe
-      product_family: product_family
-
-  vulnerabilities:
-    description: Vulnerability reference import from KEV, NVD, or equivalent feeds.
-    entity_type: Vulnerability
-    id_column: cve_id
-    column_map:
-      cve_id: cve_id
-      description: description
-      cvss_score: cvss_score
-      epss_score: epss_score
-      kev_due_date: kev_due_date
-      known_ransomware_use: known_ransomware_use
-      published_at: published_at
-
-  product_from_vendor_edges:
-    description: Public vendor/product mapping import.
-    relationship_type: product_from_vendor
-    from_column: product_id
-    to_column: vendor_id
-
-  vulnerability_affects_product_edges:
-    description: Public vulnerability-to-product mapping import.
-    relationship_type: vulnerability_affects_product
-    from_column: cve_id
-    to_column: product_id
-    column_map:
-      affected_version_range: affected_version_range
-      fixed_version: fixed_version
-
 # ─── Fork: internal ingestion mappings ────────────────────────────────
 
+ingestion:
   assets:
     description: Internal asset inventory import from CMDB, cloud inventory, or EDR.
     entity_type: Asset
