@@ -248,12 +248,29 @@ def register_tools(server: FastMCP) -> list[str]:
     @_tool
     def cruxible_outcome(
         instance_id: str,
-        receipt_id: str,
         outcome: contracts.OutcomeValue,
+        receipt_id: str | None = None,
+        anchor_type: contracts.OutcomeAnchorType = "receipt",
+        anchor_id: str | None = None,
+        source: contracts.FeedbackSource = "human",
+        outcome_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
+        outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> contracts.OutcomeResult:
-        """Record outcome for a receipt."""
-        return handlers.handle_outcome(instance_id, receipt_id, outcome, detail)
+        """Record a structured outcome for a receipt or proposal resolution."""
+        return handlers.handle_outcome(
+            instance_id,
+            outcome,
+            receipt_id=receipt_id,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            source=source,
+            outcome_code=outcome_code,
+            scope_hints=scope_hints,
+            outcome_profile_key=outcome_profile_key,
+            detail=detail,
+        )
 
     @_tool
     def cruxible_list(
@@ -375,6 +392,50 @@ def register_tools(server: FastMCP) -> list[str]:
             decision_surface_type=decision_surface_type,
             decision_surface_name=decision_surface_name,
             property_pairs=property_pairs,
+        )
+
+    @_tool
+    def cruxible_get_outcome_profile(
+        instance_id: str,
+        anchor_type: contracts.OutcomeAnchorType,
+        relationship_type: str | None = None,
+        workflow_name: str | None = None,
+        surface_type: str | None = None,
+        surface_name: str | None = None,
+    ) -> contracts.OutcomeProfileResult:
+        """Return the configured outcome profile for one anchor context."""
+        return handlers.handle_get_outcome_profile(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+        )
+
+    @_tool
+    def cruxible_analyze_outcomes(
+        instance_id: str,
+        anchor_type: contracts.OutcomeAnchorType,
+        relationship_type: str | None = None,
+        workflow_name: str | None = None,
+        query_name: str | None = None,
+        surface_type: str | None = None,
+        surface_name: str | None = None,
+        limit: int = 200,
+        min_support: int = 5,
+    ) -> contracts.AnalyzeOutcomesResult:
+        """Analyze structured outcomes into trust and debugging suggestions."""
+        return handlers.handle_analyze_outcomes(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            query_name=query_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+            limit=limit,
+            min_support=min_support,
         )
 
     @_tool

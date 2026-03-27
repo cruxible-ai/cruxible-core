@@ -66,8 +66,14 @@ class FeedbackBatchRequest(BaseModel):
 
 
 class OutcomeRequest(BaseModel):
-    receipt_id: str
+    receipt_id: str | None = None
     outcome: contracts.OutcomeValue
+    anchor_type: contracts.OutcomeAnchorType = "receipt"
+    anchor_id: str | None = None
+    source: contracts.FeedbackSource = "human"
+    outcome_code: str | None = None
+    scope_hints: dict[str, Any] | None = None
+    outcome_profile_key: str | None = None
     detail: dict[str, Any] | None = None
 
 
@@ -117,6 +123,17 @@ class AnalyzeFeedbackRequest(BaseModel):
     decision_surface_type: str | None = None
     decision_surface_name: str | None = None
     property_pairs: list[contracts.PropertyPairInput] | None = None
+
+
+class AnalyzeOutcomesRequest(BaseModel):
+    anchor_type: contracts.OutcomeAnchorType
+    relationship_type: str | None = None
+    workflow_name: str | None = None
+    query_name: str | None = None
+    surface_type: str | None = None
+    surface_name: str | None = None
+    limit: int = 200
+    min_support: int = 5
 
 
 class AddConstraintRequest(BaseModel):

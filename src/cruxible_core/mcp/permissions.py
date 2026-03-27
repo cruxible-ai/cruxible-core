@@ -94,7 +94,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_get_entity_proposal": PermissionMode.READ_ONLY,
     "cruxible_list_entity_proposals": PermissionMode.READ_ONLY,
     "cruxible_get_feedback_profile": PermissionMode.READ_ONLY,
+    "cruxible_get_outcome_profile": PermissionMode.READ_ONLY,
     "cruxible_analyze_feedback": PermissionMode.READ_ONLY,
+    "cruxible_analyze_outcomes": PermissionMode.READ_ONLY,
     # GOVERNED_WRITE tools
     "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
     "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,

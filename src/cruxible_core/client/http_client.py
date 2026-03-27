@@ -216,13 +216,29 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        receipt_id: str,
+        receipt_id: str | None = None,
         outcome: contracts.OutcomeValue,
+        anchor_type: contracts.OutcomeAnchorType = "receipt",
+        anchor_id: str | None = None,
+        source: contracts.FeedbackSource = "human",
+        outcome_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
+        outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> contracts.OutcomeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/outcome",
-            json={"receipt_id": receipt_id, "outcome": outcome, "detail": detail},
+            json={
+                "receipt_id": receipt_id,
+                "anchor_type": anchor_type,
+                "anchor_id": anchor_id,
+                "outcome": outcome,
+                "source": source,
+                "outcome_code": outcome_code,
+                "scope_hints": scope_hints,
+                "outcome_profile_key": outcome_profile_key,
+                "detail": detail,
+            },
         )
         return self._parse_model(response, contracts.OutcomeResult)
 
@@ -308,6 +324,26 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.FeedbackProfileResult)
 
+    def get_outcome_profile(
+        self,
+        instance_id: str,
+        *,
+        anchor_type: contracts.OutcomeAnchorType,
+        relationship_type: str | None = None,
+        workflow_name: str | None = None,
+        surface_type: str | None = None,
+        surface_name: str | None = None,
+    ) -> contracts.OutcomeProfileResult:
+        params = {
+            "anchor_type": anchor_type,
+            "relationship_type": relationship_type,
+            "workflow_name": workflow_name,
+            "surface_type": surface_type,
+            "surface_name": surface_name,
+        }
+        response = self._client.get(f"/api/v1/{instance_id}/outcome/profile", params=params)
+        return self._parse_model(response, contracts.OutcomeProfileResult)
+
     def analyze_feedback(
         self,
         instance_id: str,
@@ -335,6 +371,34 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.AnalyzeFeedbackResult)
+
+    def analyze_outcomes(
+        self,
+        instance_id: str,
+        *,
+        anchor_type: contracts.OutcomeAnchorType,
+        relationship_type: str | None = None,
+        workflow_name: str | None = None,
+        query_name: str | None = None,
+        surface_type: str | None = None,
+        surface_name: str | None = None,
+        limit: int = 200,
+        min_support: int = 5,
+    ) -> contracts.AnalyzeOutcomesResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/outcomes/analyze",
+            json={
+                "anchor_type": anchor_type,
+                "relationship_type": relationship_type,
+                "workflow_name": workflow_name,
+                "query_name": query_name,
+                "surface_type": surface_type,
+                "surface_name": surface_name,
+                "limit": limit,
+                "min_support": min_support,
+            },
+        )
+        return self._parse_model(response, contracts.AnalyzeOutcomesResult)
 
     def schema(self, instance_id: str) -> dict[str, Any]:
         response = self._client.get(f"/api/v1/{instance_id}/schema")

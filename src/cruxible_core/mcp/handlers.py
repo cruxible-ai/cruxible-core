@@ -274,6 +274,75 @@ def handle_analyze_feedback(
     )
 
 
+def handle_get_outcome_profile(
+    instance_id: str,
+    *,
+    anchor_type: contracts.OutcomeAnchorType,
+    relationship_type: str | None = None,
+    workflow_name: str | None = None,
+    surface_type: str | None = None,
+    surface_name: str | None = None,
+) -> contracts.OutcomeProfileResult:
+    """Get a focused outcome profile for one anchor context."""
+    return _dispatch_remote_or_local(
+        lambda client: client.get_outcome_profile(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+        ),
+        lambda: local_api._handle_get_outcome_profile_local(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+        ),
+    )
+
+
+def handle_analyze_outcomes(
+    instance_id: str,
+    *,
+    anchor_type: contracts.OutcomeAnchorType,
+    relationship_type: str | None = None,
+    workflow_name: str | None = None,
+    query_name: str | None = None,
+    surface_type: str | None = None,
+    surface_name: str | None = None,
+    limit: int = 200,
+    min_support: int = 5,
+) -> contracts.AnalyzeOutcomesResult:
+    """Analyze structured outcomes into trust and debugging suggestions."""
+    return _dispatch_remote_or_local(
+        lambda client: client.analyze_outcomes(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            query_name=query_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+            limit=limit,
+            min_support=min_support,
+        ),
+        lambda: local_api._handle_analyze_outcomes_local(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            query_name=query_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+            limit=limit,
+            min_support=min_support,
+        ),
+    )
+
+
 def handle_feedback_batch(
     instance_id: str,
     items: list[contracts.FeedbackBatchItemInput],
@@ -289,19 +358,42 @@ def handle_feedback_batch(
 
 def handle_outcome(
     instance_id: str,
-    receipt_id: str,
     outcome: contracts.OutcomeValue,
+    receipt_id: str | None = None,
+    anchor_type: contracts.OutcomeAnchorType = "receipt",
+    anchor_id: str | None = None,
+    source: contracts.FeedbackSource = "human",
+    outcome_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
+    outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> contracts.OutcomeResult:
-    """Record an outcome for a query."""
+    """Record a structured outcome for a prior receipt or proposal resolution."""
     return _dispatch_remote_or_local(
         lambda client: client.outcome(
             instance_id,
             receipt_id=receipt_id,
             outcome=outcome,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            source=source,
+            outcome_code=outcome_code,
+            scope_hints=scope_hints,
+            outcome_profile_key=outcome_profile_key,
             detail=detail,
         ),
-        lambda: local_api._handle_outcome_local(instance_id, receipt_id, outcome, detail),
+        lambda: local_api._handle_outcome_local(
+            instance_id,
+            receipt_id,
+            outcome,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            source=source,
+            outcome_code=outcome_code,
+            scope_hints=scope_hints,
+            outcome_profile_key=outcome_profile_key,
+            detail=detail,
+        ),
     )
 
 

@@ -24,6 +24,7 @@ class TestPromptRegistration:
             "review_graph",
             "common_workflows",
             "analyze_feedback",
+            "analyze_outcomes",
             "user_review",
         }
 
@@ -222,5 +223,31 @@ class TestAnalyzeFeedback:
         assert "cruxible_get_feedback_profile" in text
         assert "cruxible_analyze_feedback" in text
         assert "cruxible_add_constraint" in text
+        assert "cruxible_add_decision_policy" in text
+
+
+class TestAnalyzeOutcomes:
+    def test_renders_with_parameters(self, server):
+        result = asyncio.run(
+            server.get_prompt(
+                "analyze_outcomes",
+                {"instance_id": "/tmp/test", "anchor_type": "receipt"},
+            )
+        )
+        text = result.messages[0].content.text
+        assert "/tmp/test" in text
+        assert "receipt" in text
+
+    def test_contains_workflow_steps(self, server):
+        result = asyncio.run(
+            server.get_prompt(
+                "analyze_outcomes",
+                {"instance_id": "inst-1", "anchor_type": "resolution"},
+            )
+        )
+        text = result.messages[0].content.text
+        assert "cruxible_get_outcome_profile" in text
+        assert "cruxible_analyze_outcomes" in text
+        assert "cruxible_update_trust_status" in text
         assert "cruxible_add_decision_policy" in text
         assert "cruxible_evaluate" in text

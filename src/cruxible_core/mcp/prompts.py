@@ -421,6 +421,39 @@ Keep the distinction clean:
 """
 
 
+def _analyze_outcomes(instance_id: str, anchor_type: str) -> str:
+    return f"""\
+Review recorded outcomes for anchor type '{anchor_type}' in instance '{instance_id}'.
+
+## Steps
+
+1. Resolve the applicable outcome profile first.
+   - For resolution-anchored proposal outcomes, call `cruxible_get_outcome_profile`
+     with `anchor_type="resolution"` and the relevant `relationship_type` and
+     `workflow_name`.
+   - For receipt-anchored outcomes, call `cruxible_get_outcome_profile` with
+     `anchor_type="receipt"` and the relevant `surface_type` and `surface_name`.
+2. Call `cruxible_analyze_outcomes` for `anchor_type="{anchor_type}"`.
+   - Review `trust_adjustment_suggestions`
+   - Review `workflow_review_policy_suggestions`
+   - Review `query_policy_suggestions`
+   - Review `provider_fix_candidates`
+   - Review `debug_packages` / `workflow_debug_packages`
+3. Keep the loop-2 boundary clean:
+   - outcomes calibrate process trust
+   - outcomes do not directly mutate graph state
+   - if a bad outcome localizes to a specific wrong edge, route that correction through loop 1
+4. If a proposal-resolution pattern is real, use:
+   - `cruxible_update_trust_status` to demote trust explicitly
+   - `cruxible_add_decision_policy` if a workflow should now require review
+5. If the bad outcome is actually a graph-state problem, route it through loop 1
+   and re-run `cruxible_evaluate` after adding any state-side control.
+6. If a receipt-anchored pattern is real but blame is uncertain:
+   - treat the result as a debugging package
+   - inspect traces/receipts and open a provider or workflow follow-up
+"""
+
+
 def _user_review(instance_id: str) -> str:
     return f"""\
 You are running a collaborative edge review session for instance: {instance_id}
@@ -553,7 +586,12 @@ PROMPT_REGISTRY: dict[str, tuple[Callable[..., str], str]] = {
     ),
     "analyze_feedback": (
         _analyze_feedback,
-        "Analyze structured feedback to suggest constraints, decision policies, and follow-up fixes.",
+        "Analyze structured feedback to suggest constraints, decision policies, "
+        "and follow-up fixes.",
+    ),
+    "analyze_outcomes": (
+        _analyze_outcomes,
+        "Analyze structured outcomes to calibrate proposal trust and assemble debugging packages.",
     ),
     "user_review": (
         _user_review,

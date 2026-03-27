@@ -66,11 +66,12 @@ def cli(
 
 # Import and register commands after cli group is defined
 from cruxible_core.cli.commands import (  # noqa: E402
-    add_decision_policy_cmd,
     add_constraint_cmd,
+    add_decision_policy_cmd,
     add_entity_cmd,
     add_relationship_cmd,
     analyze_feedback_cmd,
+    analyze_outcomes_cmd,
     apply_cmd,
     entity_proposal_group,
     evaluate,
@@ -90,6 +91,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     list_group,
     lock_cmd,
     outcome_cmd,
+    outcome_profile_cmd,
     plan_cmd,
     propose_cmd,
     query,
@@ -122,6 +124,8 @@ cli.add_command(feedback_batch_cmd, "feedback-batch")  # type: ignore[has-type]
 cli.add_command(feedback_profile_cmd, "feedback-profile")  # type: ignore[has-type]
 cli.add_command(analyze_feedback_cmd, "analyze-feedback")  # type: ignore[has-type]
 cli.add_command(outcome_cmd, "outcome")  # type: ignore[has-type]
+cli.add_command(outcome_profile_cmd, "outcome-profile")  # type: ignore[has-type]
+cli.add_command(analyze_outcomes_cmd, "analyze-outcomes")  # type: ignore[has-type]
 cli.add_command(list_group, "list")  # type: ignore[has-type]
 cli.add_command(find_candidates_cmd, "find-candidates")  # type: ignore[has-type]
 cli.add_command(schema)  # type: ignore[has-type]

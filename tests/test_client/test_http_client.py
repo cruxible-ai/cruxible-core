@@ -353,3 +353,76 @@ def test_feedback_analysis_and_policy_routes():
     assert add_result.added is True
     assert captured["path"].endswith("/api/v1/inst_123/decision-policies")
     assert captured["payload"]["name"] == "suppress_brakes"
+
+
+def test_outcome_routes():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "found": True,
+                    "profile_key": "query_quality",
+                    "anchor_type": "receipt",
+                    "profile": {"version": 1},
+                },
+            )
+        captured["payload"] = json.loads(request.content.decode())
+        if request.url.path.endswith("/outcome"):
+            return httpx.Response(200, json={"outcome_id": "OUT-1"})
+        return httpx.Response(
+            200,
+            json={
+                "anchor_type": "receipt",
+                "outcome_count": 2,
+                "outcome_counts": {"incorrect": 2},
+                "outcome_code_counts": {"bad_result": 2},
+                "coded_groups": [],
+                "uncoded_outcome_count": 0,
+                "uncoded_examples": [],
+                "trust_adjustment_suggestions": [],
+                "workflow_review_policy_suggestions": [],
+                "query_policy_suggestions": [],
+                "provider_fix_candidates": [],
+                "debug_packages": [],
+                "workflow_debug_packages": [],
+                "warnings": [],
+            },
+        )
+
+    client = _build_client(handler)
+
+    outcome = client.outcome(
+        "inst_123",
+        receipt_id="RCP-1",
+        outcome="incorrect",
+        source="system",
+        outcome_code="bad_result",
+        scope_hints={"surface": "parts_for_vehicle"},
+        outcome_profile_key="query_quality",
+    )
+    assert outcome.outcome_id == "OUT-1"
+    assert captured["path"].endswith("/api/v1/inst_123/outcome")
+    assert captured["payload"]["outcome_code"] == "bad_result"
+
+    profile = client.get_outcome_profile(
+        "inst_123",
+        anchor_type="receipt",
+        surface_type="query",
+        surface_name="parts_for_vehicle",
+    )
+    assert profile.profile_key == "query_quality"
+    assert "/api/v1/inst_123/outcome/profile" in captured["path"]
+
+    analysis = client.analyze_outcomes(
+        "inst_123",
+        anchor_type="receipt",
+        query_name="parts_for_vehicle",
+        min_support=2,
+    )
+    assert analysis.outcome_count == 2
+    assert captured["path"].endswith("/api/v1/inst_123/outcomes/analyze")
+    assert captured["payload"]["anchor_type"] == "receipt"

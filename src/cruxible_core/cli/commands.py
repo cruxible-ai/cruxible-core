@@ -54,6 +54,7 @@ from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
     service_analyze_feedback,
+    service_analyze_outcomes,
     service_apply_workflow,
     service_create_snapshot,
     service_evaluate,
@@ -64,6 +65,7 @@ from cruxible_core.service import (
     service_get_entity,
     service_get_entity_proposal,
     service_get_group,
+    service_get_outcome_profile,
     service_get_receipt,
     service_get_relationship,
     service_ingest,
@@ -1007,7 +1009,14 @@ def feedback_batch_cmd(
 
 
 @click.command("outcome")
-@click.option("--receipt", "receipt_id", required=True, help="Receipt ID.")
+@click.option("--receipt", "receipt_id", default=None, help="Receipt ID.")
+@click.option(
+    "--anchor-type",
+    default="receipt",
+    type=click.Choice(["receipt", "resolution"]),
+    help="Anchor type for the outcome.",
+)
+@click.option("--anchor-id", default=None, help="Anchor ID (receipt or resolution).")
 @click.option(
     "--outcome",
     "outcome_value",
@@ -1015,9 +1024,28 @@ def feedback_batch_cmd(
     type=click.Choice(["correct", "incorrect", "partial", "unknown"]),
     help="Outcome of the decision.",
 )
+@click.option(
+    "--source",
+    default="human",
+    type=click.Choice(["human", "ai_review", "system"]),
+    help="Outcome source.",
+)
+@click.option("--outcome-code", default=None, help="Structured outcome code.")
+@click.option("--scope-hints", default=None, help="JSON string with structured scope hints.")
+@click.option("--profile-key", "outcome_profile_key", default=None, help="Outcome profile key.")
 @click.option("--detail", default=None, help="JSON string with outcome details.")
 @handle_errors
-def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None:
+def outcome_cmd(
+    receipt_id: str | None,
+    anchor_type: str,
+    anchor_id: str | None,
+    outcome_value: str,
+    source: str,
+    outcome_code: str | None,
+    scope_hints: str | None,
+    outcome_profile_key: str | None,
+    detail: str | None,
+) -> None:
     """Record the outcome of a decision."""
     try:
         detail_dict = json.loads(detail) if detail else None
@@ -1026,12 +1054,25 @@ def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None
     if detail_dict is not None and not isinstance(detail_dict, dict):
         raise click.BadParameter("--detail must be a JSON object")
 
+    try:
+        scope_hints_dict = json.loads(scope_hints) if scope_hints else None
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--scope-hints must be valid JSON") from exc
+    if scope_hints_dict is not None and not isinstance(scope_hints_dict, dict):
+        raise click.BadParameter("--scope-hints must be a JSON object")
+
     client = _get_client()
     if client is not None:
         result = client.outcome(
             _require_instance_id(),
             receipt_id=receipt_id,
             outcome=cast(contracts.OutcomeValue, outcome_value),
+            anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
+            anchor_id=anchor_id,
+            source=cast(contracts.FeedbackSource, source),
+            outcome_code=outcome_code,
+            scope_hints=scope_hints_dict,
+            outcome_profile_key=outcome_profile_key,
             detail=detail_dict,
         )
     else:
@@ -1040,6 +1081,12 @@ def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None
             instance,
             receipt_id=receipt_id,
             outcome=cast(contracts.OutcomeValue, outcome_value),
+            anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
+            anchor_id=anchor_id,
+            source=cast(contracts.FeedbackSource, source),
+            outcome_code=outcome_code,
+            scope_hints=scope_hints_dict,
+            outcome_profile_key=outcome_profile_key,
             detail=detail_dict,
         )
     click.echo(f"Outcome {result.outcome_id} recorded.")
@@ -1267,6 +1314,64 @@ def feedback_profile_cmd(relationship_type: str) -> None:
     click.echo(yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False))
 
 
+@click.command("outcome-profile")
+@click.option(
+    "--anchor-type",
+    required=True,
+    type=click.Choice(["receipt", "resolution"]),
+    help="Anchor type to resolve.",
+)
+@click.option("--relationship", "relationship_type", default=None, help="Relationship type.")
+@click.option("--workflow", "workflow_name", default=None, help="Workflow name.")
+@click.option(
+    "--surface-type",
+    default=None,
+    type=click.Choice(["query", "workflow", "operation"]),
+    help="Receipt surface type.",
+)
+@click.option("--surface-name", default=None, help="Receipt surface name.")
+@handle_errors
+def outcome_profile_cmd(
+    anchor_type: str,
+    relationship_type: str | None,
+    workflow_name: str | None,
+    surface_type: str | None,
+    surface_name: str | None,
+) -> None:
+    """Display the configured outcome profile for one anchor context."""
+    client = _get_client()
+    if client is not None:
+        result = client.get_outcome_profile(
+            _require_instance_id(),
+            anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+        )
+        if not result.found:
+            click.echo("Not found.")
+            return
+        click.echo(f"# profile_key: {result.profile_key}")
+        click.echo(yaml.safe_dump(result.profile, sort_keys=False))
+        return
+
+    instance = CruxibleInstance.load()
+    profile_key, profile = service_get_outcome_profile(
+        instance,
+        anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
+        relationship_type=relationship_type,
+        workflow_name=workflow_name,
+        surface_type=surface_type,
+        surface_name=surface_name,
+    )
+    if profile is None:
+        click.echo("Not found.")
+        return
+    click.echo(f"# profile_key: {profile_key}")
+    click.echo(yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False))
+
+
 @click.command("analyze-feedback")
 @click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
 @click.option("--limit", default=200, type=click.IntRange(min=1), help="Rows to inspect.")
@@ -1308,7 +1413,9 @@ def analyze_feedback_cmd(
         parts = raw_pair.split("=", 1)
         if len(parts) != 2:
             raise click.BadParameter(f"--pair must be FROM_PROP=TO_PROP, got: {raw_pair}")
-        property_pairs.append(contracts.PropertyPairInput(from_property=parts[0], to_property=parts[1]))
+        property_pairs.append(
+            contracts.PropertyPairInput(from_property=parts[0], to_property=parts[1])
+        )
 
     client = _get_client()
     if client is not None:
@@ -1383,6 +1490,74 @@ def analyze_feedback_cmd(
             click.echo(f"  {example['feedback_id']}: {example['reason']}")
     for warning in payload["warnings"]:
         click.secho(f"Warning: {warning}", fg="yellow")
+
+
+@click.command("analyze-outcomes")
+@click.option(
+    "--anchor-type",
+    required=True,
+    type=click.Choice(["receipt", "resolution"]),
+    help="Outcome anchor type to analyze.",
+)
+@click.option("--relationship", "relationship_type", default=None, help="Relationship type.")
+@click.option("--workflow", "workflow_name", default=None, help="Workflow name filter.")
+@click.option("--query", "query_name", default=None, help="Query name filter.")
+@click.option(
+    "--surface-type",
+    default=None,
+    type=click.Choice(["query", "workflow", "operation"]),
+    help="Explicit surface type filter.",
+)
+@click.option("--surface-name", default=None, help="Explicit surface name filter.")
+@click.option("--limit", default=200, type=click.IntRange(min=1), help="Rows to inspect.")
+@click.option(
+    "--min-support",
+    default=5,
+    type=click.IntRange(min=1),
+    help="Minimum support for suggestions.",
+)
+@handle_errors
+def analyze_outcomes_cmd(
+    anchor_type: str,
+    relationship_type: str | None,
+    workflow_name: str | None,
+    query_name: str | None,
+    surface_type: str | None,
+    surface_name: str | None,
+    limit: int,
+    min_support: int,
+) -> None:
+    """Analyze structured outcomes and print trust/debugging suggestions."""
+    client = _get_client()
+    if client is not None:
+        result = client.analyze_outcomes(
+            _require_instance_id(),
+            anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            query_name=query_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+            limit=limit,
+            min_support=min_support,
+        )
+        payload = result.model_dump(mode="json")
+    else:
+        instance = CruxibleInstance.load()
+        result = service_analyze_outcomes(
+            instance,
+            anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            query_name=query_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+            limit=limit,
+            min_support=min_support,
+        )
+        payload = asdict(result)
+
+    click.echo(yaml.safe_dump(payload, sort_keys=False))
 
 
 @click.command("stats")

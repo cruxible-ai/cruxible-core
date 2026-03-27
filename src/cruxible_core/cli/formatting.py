@@ -97,15 +97,20 @@ def outcomes_table(records: list[OutcomeRecord]) -> Table:
     """Build a Rich table for outcome records."""
     table = Table(title="Outcomes")
     table.add_column("ID", style="cyan")
-    table.add_column("Receipt")
+    table.add_column("Anchor")
     table.add_column("Outcome")
+    table.add_column("Code")
+    table.add_column("Source")
     table.add_column("Created At")
 
     for r in records:
+        anchor = f"{r.anchor_type}:{r.anchor_id or r.receipt_id}"
         table.add_row(
             r.outcome_id,
-            r.receipt_id,
+            anchor,
             r.outcome,
+            r.outcome_code or "",
+            r.source,
             str(r.created_at),
         )
 

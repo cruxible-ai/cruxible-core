@@ -29,6 +29,7 @@ from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
     service_analyze_feedback,
+    service_analyze_outcomes,
     service_apply_workflow,
     service_create_snapshot,
     service_evaluate,
@@ -39,6 +40,7 @@ from cruxible_core.service import (
     service_get_entity,
     service_get_entity_proposal,
     service_get_group,
+    service_get_outcome_profile,
     service_get_receipt,
     service_get_relationship,
     service_ingest,
@@ -551,14 +553,31 @@ def _handle_feedback_batch_local(
 
 def _handle_outcome_local(
     instance_id: str,
-    receipt_id: str,
+    receipt_id: str | None,
     outcome: contracts.OutcomeValue,
+    anchor_type: contracts.OutcomeAnchorType = "receipt",
+    anchor_id: str | None = None,
+    source: contracts.FeedbackSource = "human",
+    outcome_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
+    outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> contracts.OutcomeResult:
-    """Record an outcome for a query."""
+    """Record a structured outcome for a prior receipt or proposal resolution."""
     check_permission("cruxible_outcome", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_outcome(instance, receipt_id=receipt_id, outcome=outcome, detail=detail)
+    result = service_outcome(
+        instance,
+        receipt_id=receipt_id,
+        outcome=outcome,
+        anchor_type=anchor_type,
+        anchor_id=anchor_id,
+        source=source,
+        outcome_code=outcome_code,
+        scope_hints=scope_hints,
+        outcome_profile_key=outcome_profile_key,
+        detail=detail,
+    )
     return contracts.OutcomeResult(outcome_id=result.outcome_id)
 
 
@@ -691,6 +710,44 @@ def _handle_get_feedback_profile_local(
     )
 
 
+def _handle_get_outcome_profile_local(
+    instance_id: str,
+    *,
+    anchor_type: contracts.OutcomeAnchorType,
+    relationship_type: str | None = None,
+    workflow_name: str | None = None,
+    surface_type: str | None = None,
+    surface_name: str | None = None,
+) -> contracts.OutcomeProfileResult:
+    """Return one configured outcome profile for an anchor context, if present."""
+    check_permission(
+        "cruxible_get_outcome_profile",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    profile_key, profile = service_get_outcome_profile(
+        instance,
+        anchor_type=anchor_type,
+        relationship_type=relationship_type,
+        workflow_name=workflow_name,
+        surface_type=surface_type,
+        surface_name=surface_name,
+    )
+    if profile is None:
+        return contracts.OutcomeProfileResult(
+            found=False,
+            profile_key=None,
+            anchor_type=anchor_type,
+        )
+    return contracts.OutcomeProfileResult(
+        found=True,
+        profile_key=profile_key,
+        anchor_type=anchor_type,
+        profile=profile.model_dump(mode="json"),
+    )
+
+
 def _handle_analyze_feedback_local(
     instance_id: str,
     relationship_type: str,
@@ -800,6 +857,147 @@ def _handle_analyze_feedback_local(
                 feedback_ids=candidate.feedback_ids,
             )
             for candidate in result.provider_fix_candidates
+        ],
+        warnings=result.warnings,
+    )
+
+
+def _handle_analyze_outcomes_local(
+    instance_id: str,
+    *,
+    anchor_type: contracts.OutcomeAnchorType,
+    relationship_type: str | None = None,
+    workflow_name: str | None = None,
+    query_name: str | None = None,
+    surface_type: str | None = None,
+    surface_name: str | None = None,
+    limit: int = 200,
+    min_support: int = 5,
+) -> contracts.AnalyzeOutcomesResult:
+    """Analyze structured outcomes into trust and debugging suggestions."""
+    check_permission(
+        "cruxible_analyze_outcomes",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    result = service_analyze_outcomes(
+        instance,
+        anchor_type=anchor_type,
+        relationship_type=relationship_type,
+        workflow_name=workflow_name,
+        query_name=query_name,
+        surface_type=surface_type,
+        surface_name=surface_name,
+        limit=limit,
+        min_support=min_support,
+    )
+    return contracts.AnalyzeOutcomesResult(
+        anchor_type=result.anchor_type,  # type: ignore[arg-type]
+        outcome_count=result.outcome_count,
+        outcome_counts=result.outcome_counts,
+        outcome_code_counts=result.outcome_code_counts,
+        coded_groups=[
+            contracts.OutcomeGroupSummary(
+                anchor_type=group.anchor_type,  # type: ignore[arg-type]
+                outcome_code=group.outcome_code,
+                remediation_hint=group.remediation_hint,
+                decision_context=group.decision_context,
+                scope_hints=group.scope_hints,
+                outcome_count=group.outcome_count,
+                outcome_counts=group.outcome_counts,
+                outcome_ids=group.outcome_ids,
+            )
+            for group in result.coded_groups
+        ],
+        uncoded_outcome_count=result.uncoded_outcome_count,
+        uncoded_examples=[
+            contracts.UncodedOutcomeExample(
+                outcome_id=example.outcome_id,
+                anchor_type=example.anchor_type,  # type: ignore[arg-type]
+                anchor_id=example.anchor_id,
+                outcome=example.outcome,  # type: ignore[arg-type]
+                detail=example.detail,
+                decision_context=example.decision_context,
+                scope_hints=example.scope_hints,
+            )
+            for example in result.uncoded_examples
+        ],
+        trust_adjustment_suggestions=[
+            contracts.TrustAdjustmentSuggestion(
+                resolution_id=suggestion.resolution_id,
+                relationship_type=suggestion.relationship_type,
+                group_signature=suggestion.group_signature,
+                current_trust_status=suggestion.current_trust_status,  # type: ignore[arg-type]
+                suggested_trust_status=suggestion.suggested_trust_status,  # type: ignore[arg-type]
+                support_count=suggestion.support_count,
+                rationale=suggestion.rationale,
+                outcome_ids=suggestion.outcome_ids,
+            )
+            for suggestion in result.trust_adjustment_suggestions
+        ],
+        workflow_review_policy_suggestions=[
+            contracts.OutcomeDecisionPolicySuggestion(
+                name=suggestion.name,
+                description=suggestion.description,
+                relationship_type=suggestion.relationship_type,
+                applies_to=suggestion.applies_to,  # type: ignore[arg-type]
+                effect=suggestion.effect,  # type: ignore[arg-type]
+                rationale=suggestion.rationale,
+                match=suggestion.match,
+                query_name=suggestion.query_name,
+                workflow_name=suggestion.workflow_name,
+                support_count=suggestion.support_count,
+                outcome_ids=suggestion.outcome_ids,
+            )
+            for suggestion in result.workflow_review_policy_suggestions
+        ],
+        query_policy_suggestions=[
+            contracts.QueryPolicySuggestion(
+                surface_name=suggestion.surface_name,
+                outcome_code=suggestion.outcome_code,
+                support_count=suggestion.support_count,
+                description=suggestion.description,
+                outcome_ids=suggestion.outcome_ids,
+            )
+            for suggestion in result.query_policy_suggestions
+        ],
+        provider_fix_candidates=[
+            contracts.OutcomeProviderFixCandidate(
+                surface_type=candidate.surface_type,
+                surface_name=candidate.surface_name,
+                outcome_code=candidate.outcome_code,
+                support_count=candidate.support_count,
+                description=candidate.description,
+                outcome_ids=candidate.outcome_ids,
+            )
+            for candidate in result.provider_fix_candidates
+        ],
+        debug_packages=[
+            contracts.DebugPackage(
+                anchor_id=package.anchor_id,
+                outcome_count=package.outcome_count,
+                outcome_breakdown=package.outcome_breakdown,
+                outcome_code_breakdown=package.outcome_code_breakdown,
+                sample_outcome_ids=package.sample_outcome_ids,
+                lineage_summary=package.lineage_summary,
+                common_providers=package.common_providers,
+                common_trace_patterns=package.common_trace_patterns,
+            )
+            for package in result.debug_packages
+        ],
+        workflow_debug_packages=[
+            contracts.DebugPackage(
+                anchor_id=package.anchor_id,
+                outcome_count=package.outcome_count,
+                outcome_breakdown=package.outcome_breakdown,
+                outcome_code_breakdown=package.outcome_code_breakdown,
+                sample_outcome_ids=package.sample_outcome_ids,
+                lineage_summary=package.lineage_summary,
+                common_providers=package.common_providers,
+                common_trace_patterns=package.common_trace_patterns,
+            )
+            for package in result.workflow_debug_packages
         ],
         warnings=result.warnings,
     )
