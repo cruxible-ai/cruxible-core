@@ -195,6 +195,21 @@ class DecisionPolicySuggestion:
 
 
 @dataclass
+class OutcomeDecisionPolicySuggestion:
+    name: str
+    description: str
+    relationship_type: str
+    applies_to: str
+    effect: str
+    rationale: str
+    match: dict[str, Any] = field(default_factory=dict)
+    query_name: str | None = None
+    workflow_name: str | None = None
+    support_count: int = 0
+    outcome_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class QualityCheckCandidate:
     relationship_type: str
     reason_code: str
@@ -226,6 +241,92 @@ class AnalyzeFeedbackResult:
     decision_policy_suggestions: list[DecisionPolicySuggestion] = field(default_factory=list)
     quality_check_candidates: list[QualityCheckCandidate] = field(default_factory=list)
     provider_fix_candidates: list[ProviderFixCandidate] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OutcomeGroupSummary:
+    anchor_type: str
+    outcome_code: str
+    remediation_hint: str
+    decision_context: dict[str, Any] = field(default_factory=dict)
+    scope_hints: dict[str, Any] = field(default_factory=dict)
+    outcome_count: int = 0
+    outcome_counts: dict[str, int] = field(default_factory=dict)
+    outcome_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class UncodedOutcomeExample:
+    outcome_id: str
+    anchor_type: str
+    anchor_id: str
+    outcome: str
+    detail: dict[str, Any] = field(default_factory=dict)
+    decision_context: dict[str, Any] = field(default_factory=dict)
+    scope_hints: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TrustAdjustmentSuggestion:
+    resolution_id: str
+    relationship_type: str
+    group_signature: str
+    current_trust_status: str
+    suggested_trust_status: str
+    support_count: int
+    rationale: str
+    outcome_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class QueryPolicySuggestion:
+    surface_name: str
+    outcome_code: str
+    support_count: int
+    description: str
+    outcome_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OutcomeProviderFixCandidate:
+    surface_type: str
+    surface_name: str
+    outcome_code: str
+    support_count: int
+    description: str
+    outcome_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DebugPackage:
+    anchor_id: str
+    outcome_count: int
+    outcome_breakdown: dict[str, int] = field(default_factory=dict)
+    outcome_code_breakdown: dict[str, int] = field(default_factory=dict)
+    sample_outcome_ids: list[str] = field(default_factory=list)
+    lineage_summary: dict[str, Any] = field(default_factory=dict)
+    common_providers: list[str] = field(default_factory=list)
+    common_trace_patterns: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AnalyzeOutcomesResult:
+    anchor_type: str
+    outcome_count: int
+    outcome_counts: dict[str, int] = field(default_factory=dict)
+    outcome_code_counts: dict[str, int] = field(default_factory=dict)
+    coded_groups: list[OutcomeGroupSummary] = field(default_factory=list)
+    uncoded_outcome_count: int = 0
+    uncoded_examples: list[UncodedOutcomeExample] = field(default_factory=list)
+    trust_adjustment_suggestions: list[TrustAdjustmentSuggestion] = field(default_factory=list)
+    workflow_review_policy_suggestions: list[OutcomeDecisionPolicySuggestion] = field(
+        default_factory=list
+    )
+    query_policy_suggestions: list[QueryPolicySuggestion] = field(default_factory=list)
+    provider_fix_candidates: list[OutcomeProviderFixCandidate] = field(default_factory=list)
+    debug_packages: list[DebugPackage] = field(default_factory=list)
+    workflow_debug_packages: list[DebugPackage] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 

@@ -7,6 +7,7 @@ permission checks, and protocol-specific concerns.
 
 from cruxible_core.service.analysis import (
     service_analyze_feedback,
+    service_analyze_outcomes,
     service_evaluate,
     service_find_candidates,
 )
@@ -24,7 +25,12 @@ from cruxible_core.service.execution import (
     service_run,
     service_test,
 )
-from cruxible_core.service.feedback import service_feedback, service_feedback_batch, service_outcome
+from cruxible_core.service.feedback import (
+    service_feedback,
+    service_feedback_batch,
+    service_get_outcome_profile,
+    service_outcome,
+)
 from cruxible_core.service.groups import (
     derive_review_priority,
     service_get_group,
@@ -63,11 +69,13 @@ from cruxible_core.service.snapshots import (
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
-    ApplyWorkflowResult,
     AnalyzeFeedbackResult,
-    EntityUpsertInput,
+    AnalyzeOutcomesResult,
+    ApplyWorkflowResult,
     ConstraintSuggestion,
+    DebugPackage,
     DecisionPolicySuggestion,
+    EntityUpsertInput,
     FeedbackBatchServiceResult,
     FeedbackGroupSummary,
     FeedbackServiceResult,
@@ -83,6 +91,9 @@ from cruxible_core.service.types import (
     ListResolutionsResult,
     ListResult,
     LockServiceResult,
+    OutcomeDecisionPolicySuggestion,
+    OutcomeGroupSummary,
+    OutcomeProviderFixCandidate,
     OutcomeServiceResult,
     PlanServiceResult,
     ProposeEntityChangesResult,
@@ -91,6 +102,7 @@ from cruxible_core.service.types import (
     ProviderFixCandidate,
     QualityCheckCandidate,
     QueryParamHints,
+    QueryPolicySuggestion,
     QueryServiceResult,
     RelationshipUpsertInput,
     ReloadConfigResult,
@@ -101,7 +113,9 @@ from cruxible_core.service.types import (
     SnapshotListResult,
     StatsServiceResult,
     TestServiceResult,
+    TrustAdjustmentSuggestion,
     UncodedFeedbackExample,
+    UncodedOutcomeExample,
     ValidateServiceResult,
 )
 
@@ -111,9 +125,11 @@ __all__ = [
     "AddRelationshipResult",
     "ApplyWorkflowResult",
     "AnalyzeFeedbackResult",
+    "AnalyzeOutcomesResult",
     "EntityUpsertInput",
     "ConstraintSuggestion",
     "DecisionPolicySuggestion",
+    "DebugPackage",
     "FeedbackBatchServiceResult",
     "FeedbackGroupSummary",
     "FeedbackServiceResult",
@@ -130,10 +146,14 @@ __all__ = [
     "ListResolutionsResult",
     "ListResult",
     "OutcomeServiceResult",
+    "OutcomeDecisionPolicySuggestion",
+    "OutcomeGroupSummary",
+    "OutcomeProviderFixCandidate",
     "PlanServiceResult",
     "ProposeEntityChangesResult",
     "ProposeWorkflowResult",
     "ProviderFixCandidate",
+    "QueryPolicySuggestion",
     "QualityCheckCandidate",
     "ProposeGroupResult",
     "QueryParamHints",
@@ -147,7 +167,9 @@ __all__ = [
     "SnapshotListResult",
     "StatsServiceResult",
     "TestServiceResult",
+    "TrustAdjustmentSuggestion",
     "UncodedFeedbackExample",
+    "UncodedOutcomeExample",
     "ValidateServiceResult",
     # Execution
     "service_lock",
@@ -163,9 +185,11 @@ __all__ = [
     "service_evaluate",
     "service_find_candidates",
     "service_analyze_feedback",
+    "service_analyze_outcomes",
     # Feedback
     "service_feedback",
     "service_feedback_batch",
+    "service_get_outcome_profile",
     "service_outcome",
     # Entity proposals
     "service_get_entity_proposal",

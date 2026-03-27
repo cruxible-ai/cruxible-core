@@ -1,5 +1,7 @@
 """Tests for the feedback system: types, store, applier, and integration."""
 
+import sqlite3
+
 import pytest
 
 from cruxible_core.config.schema import (
@@ -618,7 +620,24 @@ class TestOutcomeStore:
     def test_save_and_get(self, store: FeedbackStore):
         out = OutcomeRecord(
             receipt_id="RCP-1",
+            anchor_type="receipt",
             outcome="correct",
+            outcome_code="bad_result",
+            outcome_remediation_hint="provider_fix",
+            scope_hints={"surface": "parts_for_vehicle"},
+            outcome_profile_key="query_quality",
+            outcome_profile_version=2,
+            decision_context={
+                "surface_type": "query",
+                "surface_name": "parts_for_vehicle",
+                "operation_type": "query",
+            },
+            lineage_snapshot={
+                "receipt": {"receipt_id": "RCP-1", "operation_type": "query"},
+                "surface": {"type": "query", "name": "parts_for_vehicle"},
+                "trace_set": {"trace_ids": [], "provider_names": [], "trace_count": 0},
+            },
+            source="system",
             detail={"installed": True},
         )
         oid = store.save_outcome(out)
@@ -626,6 +645,11 @@ class TestOutcomeStore:
 
         assert loaded is not None
         assert loaded.outcome == "correct"
+        assert loaded.anchor_id == "RCP-1"
+        assert loaded.outcome_code == "bad_result"
+        assert loaded.outcome_remediation_hint == "provider_fix"
+        assert loaded.outcome_profile_key == "query_quality"
+        assert loaded.decision_context["surface_name"] == "parts_for_vehicle"
         assert loaded.detail == {"installed": True}
 
     def test_get_nonexistent(self, store: FeedbackStore):
@@ -655,6 +679,48 @@ class TestOutcomeStore:
         store.save_outcome(OutcomeRecord(receipt_id="RCP-2", outcome="incorrect"))
         assert store.count_outcomes() == 3
         assert store.count_outcomes(receipt_id="RCP-1") == 2
+
+    def test_migrates_legacy_outcomes_schema(self, tmp_path):
+        db_path = tmp_path / "feedback.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE outcomes ("
+            "outcome_id TEXT PRIMARY KEY, "
+            "receipt_id TEXT NOT NULL, "
+            "outcome TEXT NOT NULL, "
+            "detail TEXT NOT NULL DEFAULT '{}', "
+            "created_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO outcomes (outcome_id, receipt_id, outcome, detail, created_at) "
+            "VALUES ('OUT-1', 'RCP-1', 'correct', '{}', '2026-03-01T00:00:00Z')"
+        )
+        conn.commit()
+        conn.close()
+
+        migrated = FeedbackStore(db_path)
+        try:
+            loaded = migrated.get_outcome("OUT-1")
+            assert loaded is not None
+            assert loaded.anchor_type == "receipt"
+            assert loaded.anchor_id == "RCP-1"
+
+            conn2 = sqlite3.connect(db_path)
+            try:
+                columns = {
+                    row[1] for row in conn2.execute("PRAGMA table_info(outcomes)").fetchall()
+                }
+                indexes = {
+                    row[1] for row in conn2.execute("PRAGMA index_list(outcomes)").fetchall()
+                }
+            finally:
+                conn2.close()
+        finally:
+            migrated.close()
+
+        assert {"anchor_type", "anchor_id", "outcome_code", "decision_context"} <= columns
+        assert "idx_outcomes_anchor_type" in indexes
+        assert "idx_outcomes_outcome_code" in indexes
 
 
 # ---------------------------------------------------------------------------

@@ -11,16 +11,25 @@ from cruxible_core.config.schema import (
     ConstraintSchema,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
+    OutcomeCodeSchema,
+    OutcomeProfileSchema,
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget
+from cruxible_core.graph.types import EntityInstance
+from cruxible_core.group.types import CandidateMember
 from cruxible_core.query.candidates import MatchRule
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     service_analyze_feedback,
+    service_analyze_outcomes,
     service_evaluate,
     service_feedback,
     service_find_candidates,
+    service_outcome,
+    service_propose_group,
     service_query,
+    service_resolve_group,
     service_validate,
 )
 from tests.test_cli.conftest import CAR_PARTS_YAML
@@ -441,6 +450,216 @@ class TestAnalyzeFeedback:
         assert result.constraint_suggestions[0].rule == "fits.FROM.category == fits.TO.make"
 
 
+class TestAnalyzeOutcomes:
+    def test_receipt_outcomes_produce_provider_fix_candidates(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            version=1,
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad query result",
+                    remediation_hint="provider_fix",
+                    required_scope_keys=["surface"],
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        query = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        service_outcome(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            outcome="incorrect",
+            source="system",
+            outcome_code="bad_result",
+            scope_hints={"surface": "parts_for_vehicle"},
+        )
+        service_outcome(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            outcome="incorrect",
+            source="system",
+            outcome_code="bad_result",
+            scope_hints={"surface": "parts_for_vehicle"},
+        )
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="receipt",
+            query_name="parts_for_vehicle",
+            min_support=2,
+        )
+
+        assert result.outcome_count == 2
+        assert result.outcome_code_counts["bad_result"] == 2
+        assert len(result.provider_fix_candidates) == 1
+        assert result.provider_fix_candidates[0].surface_name == "parts_for_vehicle"
+        assert len(result.workflow_debug_packages) == 1
+
+    def test_outcome_analysis_uses_stored_hint_across_profile_versions(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            version=1,
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad query result",
+                    remediation_hint="provider_fix",
+                    required_scope_keys=["surface"],
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        query = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        for _ in range(2):
+            service_outcome(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                outcome="incorrect",
+                source="system",
+                outcome_code="bad_result",
+                scope_hints={"surface": "parts_for_vehicle"},
+            )
+
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            version=2,
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad query result",
+                    remediation_hint="decision_policy",
+                    required_scope_keys=["surface"],
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="receipt",
+            query_name="parts_for_vehicle",
+            min_support=2,
+        )
+
+        assert len(result.provider_fix_candidates) == 1
+        assert result.query_policy_suggestions == []
+        assert any("using stored remediation hints" in warning for warning in result.warnings)
+
+    def test_resolution_outcomes_produce_trust_adjustment_suggestions(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["resolution_quality"] = OutcomeProfileSchema(
+            anchor_type="resolution",
+            version=1,
+            relationship_type="fits",
+            outcome_codes={
+                "false_positive": OutcomeCodeSchema(
+                    description="Approved link was wrong",
+                    remediation_hint="trust_adjustment",
+                    required_scope_keys=["vendor"],
+                )
+            },
+            scope_keys={"vendor": "THESIS.vendor"},
+        )
+        populated_instance.save_config(config)
+
+        resolution_id = _create_resolution_anchor(populated_instance)
+        for _ in range(2):
+            service_outcome(
+                populated_instance,
+                outcome="incorrect",
+                anchor_type="resolution",
+                anchor_id=resolution_id,
+                source="system",
+                outcome_code="false_positive",
+                scope_hints={"vendor": "Honda"},
+            )
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="resolution",
+            relationship_type="fits",
+            min_support=2,
+        )
+
+        assert len(result.trust_adjustment_suggestions) == 1
+        suggestion = result.trust_adjustment_suggestions[0]
+        assert suggestion.resolution_id == resolution_id
+        assert suggestion.suggested_trust_status in {"watch", "invalidated"}
+
+    def test_resolution_outcomes_produce_workflow_review_suggestions(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["resolution_review"] = OutcomeProfileSchema(
+            anchor_type="resolution",
+            version=1,
+            relationship_type="fits",
+            outcome_codes={
+                "needs_review": OutcomeCodeSchema(
+                    description="Needs future review",
+                    remediation_hint="require_review",
+                    required_scope_keys=["vendor"],
+                )
+            },
+            scope_keys={"vendor": "THESIS.vendor"},
+        )
+        populated_instance.save_config(config)
+
+        resolution_id = _create_resolution_anchor(populated_instance)
+        for _ in range(2):
+            service_outcome(
+                populated_instance,
+                outcome="incorrect",
+                anchor_type="resolution",
+                anchor_id=resolution_id,
+                source="system",
+                outcome_code="needs_review",
+                scope_hints={"vendor": "Honda"},
+            )
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="resolution",
+            relationship_type="fits",
+            min_support=2,
+        )
+
+        assert len(result.workflow_review_policy_suggestions) == 1
+        suggestion = result.workflow_review_policy_suggestions[0]
+        assert suggestion.workflow_name == "propose_kev_product_links"
+        assert suggestion.match["context"]["vendor"] == "Honda"
+
+
 def _feedback_target(part_id: str) -> EdgeTarget:
     return EdgeTarget(
         from_type="Part",
@@ -449,3 +668,60 @@ def _feedback_target(part_id: str) -> EdgeTarget:
         to_type="Vehicle",
         to_id="V-2024-CIVIC-EX",
     )
+
+
+def _save_workflow_receipt(instance: CruxibleInstance, workflow_name: str) -> str:
+    receipt = Receipt(
+        query_name=workflow_name,
+        parameters={"vehicle_id": "V-2024-CIVIC-EX"},
+        nodes=[],
+        edges=[],
+        operation_type="workflow",
+    )
+    store = instance.get_receipt_store()
+    try:
+        store.save_receipt(receipt)
+    finally:
+        store.close()
+    return receipt.receipt_id
+
+
+def _create_resolution_anchor(instance: CruxibleInstance) -> str:
+    workflow_receipt_id = _save_workflow_receipt(instance, "propose_kev_product_links")
+    graph = instance.load_graph()
+    if graph.get_entity("Vehicle", "V-OUTCOME-1") is None:
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-OUTCOME-1",
+                properties={"vehicle_id": "V-OUTCOME-1", "make": "Honda"},
+            )
+        )
+        instance.save_graph(graph)
+    propose_result = service_propose_group(
+        instance,
+        "fits",
+        members=[
+            CandidateMember(
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-OUTCOME-1",
+                relationship_type="fits",
+            )
+        ],
+        thesis_text="KEV suggests this part affects the vehicle",
+        thesis_facts={"vendor": "Honda"},
+        source_workflow_name="propose_kev_product_links",
+        source_workflow_receipt_id=workflow_receipt_id,
+    )
+    assert propose_result.group_id is not None
+    resolve_result = service_resolve_group(
+        instance,
+        propose_result.group_id,
+        action="approve",
+        rationale="accepted",
+        resolved_by="human",
+    )
+    assert resolve_result.resolution_id is not None
+    return resolve_result.resolution_id

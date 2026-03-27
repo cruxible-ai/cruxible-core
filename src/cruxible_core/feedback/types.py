@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class EdgeTarget(BaseModel):
@@ -59,6 +59,23 @@ class OutcomeRecord(BaseModel):
 
     outcome_id: str = Field(default_factory=lambda: f"OUT-{uuid.uuid4().hex[:12]}")
     receipt_id: str
+    anchor_type: Literal["resolution", "receipt"] = "receipt"
+    anchor_id: str | None = None
     outcome: Literal["correct", "incorrect", "partial", "unknown"]
+    outcome_code: str | None = None
+    outcome_remediation_hint: str | None = None
+    scope_hints: dict[str, Any] = Field(default_factory=dict)
+    outcome_profile_key: str | None = None
+    outcome_profile_version: int | None = None
+    decision_context: dict[str, Any] = Field(default_factory=dict)
+    lineage_snapshot: dict[str, Any] = Field(default_factory=dict)
+    relationship_type: str | None = None
+    source: Literal["human", "ai_review", "system"] = "human"
     detail: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @model_validator(mode="after")
+    def default_anchor_id(self) -> OutcomeRecord:
+        if self.anchor_type == "receipt" and self.anchor_id is None:
+            self.anchor_id = self.receipt_id
+        return self

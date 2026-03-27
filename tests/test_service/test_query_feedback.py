@@ -10,6 +10,8 @@ from cruxible_core.config.schema import (
     DecisionPolicySchema,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
+    OutcomeCodeSchema,
+    OutcomeProfileSchema,
 )
 from cruxible_core.errors import (
     ConfigError,
@@ -20,6 +22,7 @@ from cruxible_core.errors import (
 from cruxible_core.feedback.types import EdgeTarget
 from cruxible_core.service import (
     service_feedback,
+    service_get_outcome_profile,
     service_outcome,
     service_query,
 )
@@ -288,6 +291,87 @@ class TestOutcome:
             outcome="correct",
         )
         assert result.outcome_id.startswith("OUT-")
+
+    def test_receipt_profile_requires_outcome_code_for_system(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad result",
+                    remediation_hint="provider_fix",
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+        receipt_id = self._run_query(populated_instance)
+
+        with pytest.raises(ConfigError, match="requires outcome_code"):
+            service_outcome(
+                populated_instance,
+                receipt_id=receipt_id,
+                outcome="incorrect",
+                source="system",
+            )
+
+    def test_human_receipt_outcome_may_omit_code(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad result",
+                    remediation_hint="provider_fix",
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+        receipt_id = self._run_query(populated_instance)
+
+        result = service_outcome(
+            populated_instance,
+            receipt_id=receipt_id,
+            outcome="partial",
+            source="human",
+        )
+        assert result.outcome_id.startswith("OUT-")
+
+    def test_get_outcome_profile_returns_matching_receipt_profile(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad result",
+                    remediation_hint="provider_fix",
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        profile_key, profile = service_get_outcome_profile(
+            populated_instance,
+            anchor_type="receipt",
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+        )
+        assert profile_key == "query_quality"
+        assert profile is not None
 
     def test_missing_receipt(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ReceiptNotFoundError):

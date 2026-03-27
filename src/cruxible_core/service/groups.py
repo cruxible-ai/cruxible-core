@@ -160,6 +160,7 @@ def service_propose_group(
         relationship_type=relationship_type,
         members=members,
         workflow_name=source_workflow_name,
+        thesis_facts=thesis_facts,
         policy_summary=policy_summary,
     )
 
@@ -305,6 +306,7 @@ def _apply_workflow_policies(
     relationship_type: str,
     members: list[CandidateMember],
     workflow_name: str | None,
+    thesis_facts: dict[str, Any],
     policy_summary: dict[str, int],
 ) -> tuple[list[CandidateMember], bool]:
     """Apply workflow-side decision policies to candidate members."""
@@ -341,6 +343,7 @@ def _apply_workflow_policies(
                 {
                     "workflow_name": workflow_name,
                     "relationship_type": relationship_type,
+                    **thesis_facts,
                 },
                 policy.match.context,
             ):

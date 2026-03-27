@@ -7,17 +7,25 @@ from typing import Any, Literal
 
 from cruxible_core.errors import ConfigError
 from cruxible_core.evaluate import EvaluationReport, evaluate_graph
-from cruxible_core.feedback.types import FeedbackRecord
+from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.candidates import CandidateMatch, MatchRule, find_candidates
 from cruxible_core.service.types import (
     AnalyzeFeedbackResult,
+    AnalyzeOutcomesResult,
     ConstraintSuggestion,
+    DebugPackage,
     DecisionPolicySuggestion,
     FeedbackGroupSummary,
+    OutcomeDecisionPolicySuggestion,
+    OutcomeGroupSummary,
+    OutcomeProviderFixCandidate,
     ProviderFixCandidate,
     QualityCheckCandidate,
+    QueryPolicySuggestion,
+    TrustAdjustmentSuggestion,
     UncodedFeedbackExample,
+    UncodedOutcomeExample,
 )
 
 
@@ -250,9 +258,212 @@ def service_analyze_feedback(
     )
 
 
+def service_analyze_outcomes(
+    instance: InstanceProtocol,
+    *,
+    anchor_type: Literal["resolution", "receipt"],
+    relationship_type: str | None = None,
+    workflow_name: str | None = None,
+    query_name: str | None = None,
+    surface_type: str | None = None,
+    surface_name: str | None = None,
+    limit: int = 200,
+    min_support: int = 5,
+) -> AnalyzeOutcomesResult:
+    """Analyze anchored outcomes into trust and debugging suggestions."""
+    if anchor_type not in {"resolution", "receipt"}:
+        raise ConfigError("anchor_type must be 'resolution' or 'receipt'")
+
+    normalized_surface_type, normalized_surface_name = _normalize_outcome_surface_filters(
+        query_name=query_name,
+        workflow_name=workflow_name,
+        surface_type=surface_type,
+        surface_name=surface_name,
+    )
+
+    config = instance.load_config()
+    store = instance.get_feedback_store()
+    try:
+        outcome_rows = store.list_outcomes(
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            decision_surface_type=normalized_surface_type,
+            decision_surface_name=normalized_surface_name,
+            limit=limit,
+        )
+    finally:
+        store.close()
+
+    outcome_counts: dict[str, int] = {}
+    outcome_code_counts: dict[str, int] = {}
+    warnings: list[str] = []
+    warning_keys: set[str] = set()
+    coded_groups: dict[
+        tuple[str, tuple[tuple[str, Any], ...], tuple[tuple[str, Any], ...]],
+        list[OutcomeRecord],
+    ] = defaultdict(list)
+    uncoded_outcomes: list[OutcomeRecord] = []
+
+    for row in outcome_rows:
+        outcome_counts[row.outcome] = outcome_counts.get(row.outcome, 0) + 1
+        if row.outcome_code:
+            outcome_code_counts[row.outcome_code] = outcome_code_counts.get(row.outcome_code, 0) + 1
+            group_key = (
+                row.outcome_code,
+                _freeze_mapping(row.decision_context),
+                _freeze_mapping(row.scope_hints),
+            )
+            coded_groups[group_key].append(row)
+        else:
+            uncoded_outcomes.append(row)
+
+    coded_group_results: list[OutcomeGroupSummary] = []
+    trust_adjustment_suggestions: list[TrustAdjustmentSuggestion] = []
+    workflow_review_policy_suggestions: list[OutcomeDecisionPolicySuggestion] = []
+    query_policy_suggestions: list[QueryPolicySuggestion] = []
+    provider_fix_candidates: list[OutcomeProviderFixCandidate] = []
+    used_policy_names: set[str] = {policy.name for policy in config.decision_policies}
+
+    for (outcome_code, frozen_context, frozen_scope), rows in coded_groups.items():
+        decision_context = dict(frozen_context)
+        scope_hints = dict(frozen_scope)
+        remediation_hint = _resolve_outcome_group_remediation_hint(
+            config=config,
+            outcome_code=outcome_code,
+            rows=rows,
+            warnings=warnings,
+            warning_keys=warning_keys,
+        )
+        outcome_breakdown = _count_outcomes(rows)
+        coded_group_results.append(
+            OutcomeGroupSummary(
+                anchor_type=anchor_type,
+                outcome_code=outcome_code,
+                remediation_hint=remediation_hint,
+                decision_context=decision_context,
+                scope_hints=scope_hints,
+                outcome_count=len(rows),
+                outcome_counts=outcome_breakdown,
+                outcome_ids=[row.outcome_id for row in rows[:5]],
+            )
+        )
+
+        if len(rows) < min_support:
+            continue
+
+        if anchor_type == "resolution":
+            if remediation_hint == "trust_adjustment":
+                suggestion = _build_trust_adjustment_suggestion(
+                    instance=instance,
+                    rows=rows,
+                    outcome_code=outcome_code,
+                    warnings=warnings,
+                    warning_keys=warning_keys,
+                )
+                if suggestion is not None:
+                    trust_adjustment_suggestions.append(suggestion)
+            if remediation_hint in {"require_review", "decision_policy"}:
+                policy_suggestion = _build_workflow_review_policy_suggestion(
+                    used_names=used_policy_names,
+                    rows=rows,
+                    outcome_code=outcome_code,
+                )
+                if policy_suggestion is not None:
+                    used_policy_names.add(policy_suggestion.name)
+                    workflow_review_policy_suggestions.append(policy_suggestion)
+        else:
+            if remediation_hint == "decision_policy":
+                query_suggestion = _build_query_policy_suggestion(
+                    rows=rows,
+                    outcome_code=outcome_code,
+                )
+                if query_suggestion is not None:
+                    query_policy_suggestions.append(query_suggestion)
+            if remediation_hint in {"provider_fix", "workflow_fix"}:
+                fix_candidate = _build_outcome_provider_fix_candidate(
+                    rows=rows,
+                    outcome_code=outcome_code,
+                )
+                if fix_candidate is not None:
+                    provider_fix_candidates.append(fix_candidate)
+
+    uncoded_examples = [
+        UncodedOutcomeExample(
+            outcome_id=row.outcome_id,
+            anchor_type=row.anchor_type,
+            anchor_id=row.anchor_id or row.receipt_id,
+            outcome=row.outcome,
+            detail=row.detail,
+            decision_context=row.decision_context,
+            scope_hints=row.scope_hints,
+        )
+        for row in uncoded_outcomes[:5]
+    ]
+
+    debug_packages = (
+        _build_debug_packages(outcome_rows, min_support=min_support)
+        if anchor_type == "resolution"
+        else []
+    )
+    workflow_debug_packages = (
+        _build_debug_packages(outcome_rows, min_support=min_support)
+        if anchor_type == "receipt"
+        else []
+    )
+
+    return AnalyzeOutcomesResult(
+        anchor_type=anchor_type,
+        outcome_count=len(outcome_rows),
+        outcome_counts=outcome_counts,
+        outcome_code_counts=outcome_code_counts,
+        coded_groups=sorted(
+            coded_group_results,
+            key=lambda item: item.outcome_count,
+            reverse=True,
+        ),
+        uncoded_outcome_count=len(uncoded_outcomes),
+        uncoded_examples=uncoded_examples,
+        trust_adjustment_suggestions=trust_adjustment_suggestions,
+        workflow_review_policy_suggestions=workflow_review_policy_suggestions,
+        query_policy_suggestions=query_policy_suggestions,
+        provider_fix_candidates=provider_fix_candidates,
+        debug_packages=debug_packages,
+        workflow_debug_packages=workflow_debug_packages,
+        warnings=warnings,
+    )
+
+
 def _freeze_mapping(mapping: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     """Build a stable tuple key for exact grouping."""
     return tuple(sorted((key, _freeze_value(value)) for key, value in mapping.items()))
+
+
+def _normalize_outcome_surface_filters(
+    *,
+    query_name: str | None,
+    workflow_name: str | None,
+    surface_type: str | None,
+    surface_name: str | None,
+) -> tuple[str | None, str | None]:
+    """Normalize analyze-outcomes surface filters into one exact surface pair."""
+    if query_name is not None and workflow_name is not None:
+        raise ConfigError("Specify at most one of query_name or workflow_name")
+
+    if query_name is not None:
+        if surface_type not in (None, "query"):
+            raise ConfigError("query_name requires surface_type='query'")
+        if surface_name not in (None, query_name):
+            raise ConfigError("surface_name must match query_name when both are provided")
+        return "query", query_name
+
+    if workflow_name is not None:
+        if surface_type not in (None, "workflow"):
+            raise ConfigError("workflow_name requires surface_type='workflow'")
+        if surface_name not in (None, workflow_name):
+            raise ConfigError("surface_name must match workflow_name when both are provided")
+        return "workflow", workflow_name
+
+    return surface_type, surface_name
 
 
 def _freeze_value(value: Any) -> Any:
@@ -468,6 +679,413 @@ def _resolve_group_remediation_hint(
         )
         return "unknown"
     return next(iter(hints))
+
+
+def _resolve_outcome_group_remediation_hint(
+    *,
+    config,
+    outcome_code: str,
+    rows: list[OutcomeRecord],
+    warnings: list[str],
+    warning_keys: set[str],
+) -> str:
+    """Resolve one outcome group's remediation lane without reinterpreting old rows."""
+    hints = {
+        hint
+        for hint in (
+            _resolve_outcome_row_remediation_hint(
+                config=config,
+                outcome_code=outcome_code,
+                row=row,
+                warnings=warnings,
+                warning_keys=warning_keys,
+            )
+            for row in rows
+        )
+        if hint is not None
+    }
+    if not hints:
+        return "unknown"
+    if len(hints) > 1:
+        _append_warning_once(
+            warnings=warnings,
+            warning_keys=warning_keys,
+            key=(
+                "mixed-outcome-remediation:"
+                f"{rows[0].anchor_type}:{outcome_code}:{_freeze_mapping(rows[0].decision_context)}:"
+                f"{_freeze_mapping(rows[0].scope_hints)}"
+            ),
+            message=(
+                f"Outcome group '{rows[0].anchor_type}/{outcome_code}' has mixed remediation "
+                "hints across stored outcome rows; automated suggestions were skipped"
+            ),
+        )
+        return "unknown"
+    return next(iter(hints))
+
+
+def _resolve_outcome_row_remediation_hint(
+    *,
+    config,
+    outcome_code: str,
+    row: OutcomeRecord,
+    warnings: list[str],
+    warning_keys: set[str],
+) -> str | None:
+    """Resolve one outcome row's remediation hint from stored metadata first."""
+    if row.outcome_remediation_hint is not None:
+        if row.outcome_profile_key is not None:
+            profile = config.get_outcome_profile(row.outcome_profile_key)
+            if (
+                profile is not None
+                and row.outcome_profile_version is not None
+                and row.outcome_profile_version != profile.version
+            ):
+                _append_warning_once(
+                    warnings=warnings,
+                    warning_keys=warning_keys,
+                    key=(
+                        "outcome-profile-version:"
+                        f"{row.outcome_profile_key}:{row.outcome_profile_version}:{profile.version}"
+                    ),
+                    message=(
+                        f"Outcomes for profile '{row.outcome_profile_key}' reference version "
+                        f"{row.outcome_profile_version} while current config is version "
+                        f"{profile.version}; using stored remediation hints"
+                    ),
+                )
+        return row.outcome_remediation_hint
+
+    if row.outcome_profile_key is None:
+        return None
+
+    profile = config.get_outcome_profile(row.outcome_profile_key)
+    if profile is None:
+        _append_warning_once(
+            warnings=warnings,
+            warning_keys=warning_keys,
+            key=f"outcome-profile-key:{row.outcome_profile_key}",
+            message=f"Outcome profile '{row.outcome_profile_key}' is not defined in config",
+        )
+        return None
+
+    if (
+        row.outcome_profile_version is not None
+        and row.outcome_profile_version != profile.version
+    ):
+        _append_warning_once(
+            warnings=warnings,
+            warning_keys=warning_keys,
+            key=(
+                f"outcome-profile-version-nohint:{row.outcome_profile_key}:"
+                f"{row.outcome_profile_version}:{profile.version}"
+            ),
+            message=(
+                f"Outcome profile '{row.outcome_profile_key}' references version "
+                f"{row.outcome_profile_version} but does not store a remediation hint; "
+                "automated suggestions for those rows were skipped"
+            ),
+        )
+        return None
+
+    code_schema = profile.outcome_codes.get(outcome_code)
+    if code_schema is None:
+        _append_warning_once(
+            warnings=warnings,
+            warning_keys=warning_keys,
+            key=f"outcome-code:{row.outcome_profile_key}:{outcome_code}",
+            message=(
+                f"Outcome code '{outcome_code}' is not defined in the current outcome profile "
+                f"'{row.outcome_profile_key}'"
+            ),
+        )
+        return None
+    return code_schema.remediation_hint
+
+
+def _count_outcomes(rows: list[OutcomeRecord]) -> dict[str, int]:
+    """Count coarse outcome labels in one grouped row set."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row.outcome] = counts.get(row.outcome, 0) + 1
+    return counts
+
+
+def _build_trust_adjustment_suggestion(
+    *,
+    instance: InstanceProtocol,
+    rows: list[OutcomeRecord],
+    outcome_code: str,
+    warnings: list[str],
+    warning_keys: set[str],
+) -> TrustAdjustmentSuggestion | None:
+    """Build a deterministic trust-demotion suggestion from repeated resolution outcomes."""
+    signatures = {
+        (
+            row.relationship_type,
+            _lineage_value(row.lineage_snapshot, "group", "group_signature"),
+        )
+        for row in rows
+    }
+    if len(signatures) != 1:
+        _append_warning_once(
+            warnings=warnings,
+            warning_keys=warning_keys,
+            key=f"mixed-signature:{outcome_code}:{len(rows)}",
+            message=(
+                f"Outcome code '{outcome_code}' spans multiple resolution signatures; "
+                "trust-adjustment suggestions were skipped"
+            ),
+        )
+        return None
+
+    relationship_type, group_signature = next(iter(signatures))
+    if not relationship_type or not group_signature:
+        return None
+
+    incorrect_count = sum(1 for row in rows if row.outcome == "incorrect")
+    if incorrect_count == 0:
+        return None
+
+    group_store = instance.get_group_store()
+    try:
+        latest = group_store.find_resolution(
+            relationship_type,
+            group_signature,
+            action="approve",
+            confirmed=True,
+        )
+    finally:
+        group_store.close()
+    if latest is None:
+        return None
+
+    current_trust = latest.get("trust_status", "watch")
+    if current_trust == "invalidated":
+        return None
+    suggested = "watch" if current_trust == "trusted" else "invalidated"
+    return TrustAdjustmentSuggestion(
+        resolution_id=latest["resolution_id"],
+        relationship_type=relationship_type,
+        group_signature=group_signature,
+        current_trust_status=current_trust,
+        suggested_trust_status=suggested,
+        support_count=incorrect_count,
+        rationale=(
+            f"{incorrect_count} recorded '{outcome_code}' outcomes indicate this trusted "
+            "proposal path should be demoted"
+        ),
+        outcome_ids=[row.outcome_id for row in rows[:5]],
+    )
+
+
+def _build_workflow_review_policy_suggestion(
+    *,
+    used_names: set[str],
+    rows: list[OutcomeRecord],
+    outcome_code: str,
+) -> OutcomeDecisionPolicySuggestion | None:
+    """Build a workflow require-review suggestion from repeated resolution outcomes."""
+    first = rows[0]
+    workflow_name = str(first.decision_context.get("surface_name") or "")
+    relationship_type = first.relationship_type
+    if first.decision_context.get("surface_type") != "workflow" or not workflow_name:
+        return None
+    if not relationship_type:
+        return None
+
+    match = {
+        "from": {},
+        "to": {},
+        "edge": {},
+        "context": {
+            "workflow_name": workflow_name,
+            "relationship_type": relationship_type,
+            **first.scope_hints,
+        },
+    }
+    name = _dedupe_name(used_names, f"{relationship_type}_{outcome_code}_workflow_review")
+    return OutcomeDecisionPolicySuggestion(
+        name=name,
+        description=(
+            f"Suggested from {len(rows)} negative outcomes for outcome_code '{outcome_code}'"
+        ),
+        relationship_type=relationship_type,
+        applies_to="workflow",
+        effect="require_review",
+        rationale=first.detail.get("reason", "") or f"Repeated outcome '{outcome_code}'",
+        match=match,
+        workflow_name=workflow_name,
+        support_count=len(rows),
+        outcome_ids=[row.outcome_id for row in rows[:5]],
+    )
+
+
+def _build_query_policy_suggestion(
+    *,
+    rows: list[OutcomeRecord],
+    outcome_code: str,
+) -> QueryPolicySuggestion | None:
+    """Build a read-only query policy candidate from receipt-anchored outcomes."""
+    first = rows[0]
+    if first.decision_context.get("surface_type") != "query":
+        return None
+    surface_name = str(first.decision_context.get("surface_name") or "")
+    if not surface_name:
+        return None
+    return QueryPolicySuggestion(
+        surface_name=surface_name,
+        outcome_code=outcome_code,
+        support_count=len(rows),
+        description=(
+            f"Repeated receipt outcomes for query '{surface_name}' and outcome_code "
+            f"'{outcome_code}' suggest a query-side policy review"
+        ),
+        outcome_ids=[row.outcome_id for row in rows[:5]],
+    )
+
+
+def _build_outcome_provider_fix_candidate(
+    *,
+    rows: list[OutcomeRecord],
+    outcome_code: str,
+) -> OutcomeProviderFixCandidate | None:
+    """Build a provider/workflow fix candidate from receipt outcomes."""
+    first = rows[0]
+    surface_type = str(first.decision_context.get("surface_type") or "")
+    surface_name = str(first.decision_context.get("surface_name") or "")
+    if not surface_type or not surface_name:
+        return None
+    return OutcomeProviderFixCandidate(
+        surface_type=surface_type,
+        surface_name=surface_name,
+        outcome_code=outcome_code,
+        support_count=len(rows),
+        description=(
+            f"Repeated outcome_code '{outcome_code}' on {surface_type} '{surface_name}' "
+            "suggests a provider or workflow fix"
+        ),
+        outcome_ids=[row.outcome_id for row in rows[:5]],
+    )
+
+
+def _build_debug_packages(
+    rows: list[OutcomeRecord],
+    *,
+    min_support: int,
+) -> list[DebugPackage]:
+    """Build bounded debug packages grouped by anchor identifier."""
+    grouped: dict[str, list[OutcomeRecord]] = defaultdict(list)
+    for row in rows:
+        grouped[row.anchor_id or row.receipt_id].append(row)
+
+    packages: list[DebugPackage] = []
+    for anchor_id, anchor_rows in sorted(grouped.items()):
+        if len(anchor_rows) < min_support:
+            continue
+        packages.append(
+            DebugPackage(
+                anchor_id=anchor_id,
+                outcome_count=len(anchor_rows),
+                outcome_breakdown=_count_outcomes(anchor_rows),
+                outcome_code_breakdown=_count_outcome_codes(anchor_rows),
+                sample_outcome_ids=[row.outcome_id for row in anchor_rows[:5]],
+                lineage_summary=_summarize_lineage(anchor_rows),
+                common_providers=_common_providers(anchor_rows),
+                common_trace_patterns=_common_trace_patterns(anchor_rows),
+            )
+        )
+    return packages
+
+
+def _count_outcome_codes(rows: list[OutcomeRecord]) -> dict[str, int]:
+    """Count structured outcome codes in one row set."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        if not row.outcome_code:
+            continue
+        counts[row.outcome_code] = counts.get(row.outcome_code, 0) + 1
+    return counts
+
+
+def _lineage_value(snapshot: dict[str, Any], section: str, key: str) -> Any:
+    """Read one bounded lineage value from a stored snapshot."""
+    payload = snapshot.get(section)
+    if not isinstance(payload, dict):
+        return None
+    return payload.get(key)
+
+
+def _summarize_lineage(rows: list[OutcomeRecord]) -> dict[str, Any]:
+    """Aggregate stored lineage fields into one bounded debug summary."""
+    first = rows[0]
+    summary: dict[str, Any] = {
+        "surface_type": first.decision_context.get("surface_type"),
+        "surface_name": first.decision_context.get("surface_name"),
+    }
+    if first.anchor_type == "resolution":
+        summary["relationship_type"] = first.relationship_type
+        summary["group_signature"] = _lineage_value(
+            first.lineage_snapshot,
+            "group",
+            "group_signature",
+        )
+    else:
+        summary["operation_type"] = _lineage_value(
+            first.lineage_snapshot,
+            "receipt",
+            "operation_type",
+        )
+    summary["trace_count"] = _lineage_value(first.lineage_snapshot, "trace_set", "trace_count")
+    return summary
+
+
+def _common_providers(rows: list[OutcomeRecord]) -> list[str]:
+    """Return providers that recur across stored lineage snapshots."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        trace_set = row.lineage_snapshot.get("trace_set")
+        if not isinstance(trace_set, dict):
+            continue
+        providers = trace_set.get("provider_names")
+        if not isinstance(providers, list):
+            continue
+        for provider in providers:
+            if not isinstance(provider, str) or not provider:
+                continue
+            counts[provider] = counts.get(provider, 0) + 1
+    return [
+        provider
+        for provider, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    ]
+
+
+def _common_trace_patterns(rows: list[OutcomeRecord]) -> list[str]:
+    """Return repeated provider/step/status patterns from stored trace summaries."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        trace_set = row.lineage_snapshot.get("trace_set")
+        if not isinstance(trace_set, dict):
+            continue
+        summaries = trace_set.get("summaries")
+        if not isinstance(summaries, list):
+            continue
+        seen: set[str] = set()
+        for summary in summaries:
+            if not isinstance(summary, dict):
+                continue
+            provider = str(summary.get("provider_name") or "")
+            step_id = str(summary.get("step_id") or "")
+            status = str(summary.get("status") or "")
+            pattern = f"{provider}:{step_id}:{status}"
+            if pattern in seen or pattern == "::":
+                continue
+            seen.add(pattern)
+            counts[pattern] = counts.get(pattern, 0) + 1
+    return [
+        pattern
+        for pattern, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    ]
 
 
 def _resolve_row_remediation_hint(

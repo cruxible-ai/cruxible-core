@@ -173,6 +173,16 @@ class GroupStore:
             return None
         return self._row_to_group(row)
 
+    def get_group_by_resolution(self, resolution_id: str) -> CandidateGroup | None:
+        """Load the candidate group associated with a resolution, if any."""
+        row = self._conn.execute(
+            "SELECT * FROM candidate_groups WHERE resolution_id = ?",
+            (resolution_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_group(row)
+
     def list_groups(
         self,
         *,

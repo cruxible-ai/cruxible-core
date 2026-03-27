@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from cruxible_core.config.schema import CoreConfig, FeedbackProfileSchema
+from cruxible_core.config.schema import (
+    CoreConfig,
+    FeedbackProfileSchema,
+    OutcomeProfileSchema,
+)
 from cruxible_core.errors import (
     ConfigError,
     CoreError,
@@ -32,6 +36,7 @@ from cruxible_core.service.types import (
 )
 
 _VALID_ACTIONS = ("approve", "reject", "correct", "flag")
+_VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
 _VALID_SOURCES = ("human", "ai_review", "system")
 
 
@@ -285,6 +290,395 @@ def _build_context_snapshot(
     }
 
 
+def _validate_outcome_request_values(
+    *,
+    outcome: str,
+    source: str,
+    detail: Any,
+) -> None:
+    """Validate the basic outcome payload before loading external state."""
+    if outcome not in _VALID_OUTCOMES:
+        raise ConfigError(f"Invalid outcome '{outcome}'. Use: {', '.join(_VALID_OUTCOMES)}")
+
+    if source not in _VALID_SOURCES:
+        raise ConfigError(f"Invalid source '{source}'. Use: {', '.join(_VALID_SOURCES)}")
+
+    if detail is not None and not isinstance(detail, dict):
+        raise ConfigError("detail must be an object")
+
+
+def _resolve_outcome_profile(
+    *,
+    config: CoreConfig,
+    anchor_type: Literal["resolution", "receipt"],
+    relationship_type: str | None,
+    workflow_name: str | None,
+    surface_type: str | None,
+    surface_name: str | None,
+    outcome_profile_key: str | None,
+) -> tuple[str | None, OutcomeProfileSchema | None]:
+    """Resolve the applicable outcome profile for one anchored outcome."""
+    if outcome_profile_key is not None:
+        profile = config.get_outcome_profile(outcome_profile_key)
+        if profile is None:
+            raise ConfigError(f"Outcome profile '{outcome_profile_key}' not found")
+        _validate_outcome_profile_match(
+            profile_key=outcome_profile_key,
+            profile=profile,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+        )
+        return outcome_profile_key, profile
+
+    matches: list[tuple[str, OutcomeProfileSchema]] = []
+    wildcard: list[tuple[str, OutcomeProfileSchema]] = []
+    for profile_key, profile in config.outcome_profiles.items():
+        if profile.anchor_type != anchor_type:
+            continue
+        if anchor_type == "resolution":
+            if profile.relationship_type != relationship_type:
+                continue
+            if profile.workflow_name is None:
+                wildcard.append((profile_key, profile))
+            elif profile.workflow_name == workflow_name:
+                matches.append((profile_key, profile))
+        else:
+            if profile.surface_type == surface_type and profile.surface_name == surface_name:
+                matches.append((profile_key, profile))
+
+    if anchor_type == "resolution" and matches:
+        if len(matches) > 1:
+            names = ", ".join(sorted(name for name, _ in matches))
+            raise ConfigError(f"Ambiguous outcome profiles for resolution anchor: {names}")
+        return matches[0]
+
+    if not matches and anchor_type == "resolution" and wildcard:
+        if len(wildcard) > 1:
+            names = ", ".join(sorted(name for name, _ in wildcard))
+            raise ConfigError(f"Ambiguous wildcard outcome profiles for resolution anchor: {names}")
+        return wildcard[0]
+
+    if len(matches) > 1:
+        names = ", ".join(sorted(name for name, _ in matches))
+        raise ConfigError(f"Ambiguous outcome profiles for receipt anchor: {names}")
+
+    return matches[0] if matches else (None, None)
+
+
+def _validate_outcome_profile_match(
+    *,
+    profile_key: str,
+    profile: OutcomeProfileSchema,
+    anchor_type: Literal["resolution", "receipt"],
+    relationship_type: str | None,
+    workflow_name: str | None,
+    surface_type: str | None,
+    surface_name: str | None,
+) -> None:
+    """Ensure an explicitly requested outcome profile matches the anchor context."""
+    if profile.anchor_type != anchor_type:
+        raise ConfigError(
+            f"Outcome profile '{profile_key}' requires anchor_type '{profile.anchor_type}', "
+            f"not '{anchor_type}'"
+        )
+    if anchor_type == "resolution":
+        if profile.relationship_type != relationship_type:
+            raise ConfigError(
+                f"Outcome profile '{profile_key}' requires relationship_type "
+                f"'{profile.relationship_type}', not '{relationship_type}'"
+            )
+        if profile.workflow_name is not None and profile.workflow_name != workflow_name:
+            raise ConfigError(
+                f"Outcome profile '{profile_key}' requires workflow_name "
+                f"'{profile.workflow_name}', not '{workflow_name}'"
+            )
+    else:
+        if profile.surface_type != surface_type or profile.surface_name != surface_name:
+            raise ConfigError(
+                f"Outcome profile '{profile_key}' requires surface "
+                f"'{profile.surface_type}:{profile.surface_name}', not "
+                f"'{surface_type}:{surface_name}'"
+            )
+
+
+def _validate_outcome_inputs(
+    *,
+    profile: OutcomeProfileSchema | None,
+    profile_key: str | None,
+    source: Literal["human", "ai_review", "system"],
+    outcome_code: str | None,
+    scope_hints: dict[str, Any],
+) -> None:
+    """Validate structured outcome inputs against the configured profile."""
+    if profile is None:
+        if outcome_code is not None:
+            raise ConfigError("Outcome uses outcome_code but no matching outcome profile exists")
+        if scope_hints:
+            raise ConfigError("Outcome uses scope_hints but no matching outcome profile exists")
+        return
+
+    if source in {"ai_review", "system"} and not outcome_code:
+        raise ConfigError(
+            f"Outcome for profile '{profile_key}' requires outcome_code for source '{source}'"
+        )
+
+    if outcome_code is not None:
+        code_schema = profile.outcome_codes.get(outcome_code)
+        if code_schema is None:
+            raise ConfigError(
+                f"Outcome for profile '{profile_key}' uses unknown outcome_code '{outcome_code}'"
+            )
+        missing_scope = [
+            key for key in code_schema.required_scope_keys if key not in scope_hints
+        ]
+        if missing_scope:
+            missing_str = ", ".join(sorted(missing_scope))
+            raise ConfigError(
+                f"Outcome outcome_code '{outcome_code}' requires scope_hints for: {missing_str}"
+            )
+
+    unexpected_scope = sorted(set(scope_hints) - set(profile.scope_keys))
+    if unexpected_scope:
+        unexpected_str = ", ".join(unexpected_scope)
+        raise ConfigError(
+            f"Outcome for profile '{profile_key}' uses undeclared scope_hints: "
+            f"{unexpected_str}"
+        )
+
+
+def _build_receipt_trace_summaries(receipt: Receipt) -> list[dict[str, Any]]:
+    """Extract bounded trace summaries from workflow receipt plan-step nodes."""
+    summaries: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for node in receipt.nodes:
+        if node.node_type != "plan_step":
+            continue
+        trace_id = str(node.detail.get("trace_id", "")).strip()
+        if not trace_id:
+            continue
+        provider_name = str(node.detail.get("provider_name", "")).strip()
+        step_id = str(node.detail.get("step_id", "")).strip()
+        status = str(node.detail.get("status", "success")).strip()
+        key = (trace_id, provider_name, step_id, status)
+        if key in seen:
+            continue
+        seen.add(key)
+        summaries.append(
+            {
+                "trace_id": trace_id,
+                "provider_name": provider_name,
+                "step_id": step_id,
+                "status": status,
+            }
+        )
+    return sorted(summaries, key=lambda item: item["trace_id"])
+
+
+def _load_trace_summaries(
+    instance: InstanceProtocol,
+    trace_ids: list[str],
+    *,
+    fallback_receipt: Receipt | None = None,
+) -> list[dict[str, Any]]:
+    """Load bounded trace summaries from stored traces, falling back to receipt nodes."""
+    if not trace_ids:
+        return _build_receipt_trace_summaries(fallback_receipt) if fallback_receipt else []
+
+    store = instance.get_receipt_store()
+    summaries: list[dict[str, Any]] = []
+    try:
+        for trace_id in trace_ids:
+            trace = store.get_trace(trace_id)
+            if trace is None:
+                continue
+            summaries.append(
+                {
+                    "trace_id": trace.trace_id,
+                    "provider_name": trace.provider_name,
+                    "step_id": trace.step_id,
+                    "status": trace.status,
+                }
+            )
+    finally:
+        store.close()
+
+    if summaries:
+        return sorted(summaries, key=lambda item: item["trace_id"])
+    return _build_receipt_trace_summaries(fallback_receipt) if fallback_receipt else []
+
+
+def _iter_thesis_scope_keys(profile: OutcomeProfileSchema | None) -> set[str]:
+    """Return THESIS field names referenced by one outcome profile."""
+    if profile is None:
+        return set()
+    return {
+        path.partition(".")[2]
+        for path in profile.scope_keys.values()
+        if path.startswith("THESIS.")
+    }
+
+
+def _build_trace_set_snapshot(trace_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build bounded aggregated trace metadata for grouping and debug packages."""
+    provider_names = sorted(
+        {
+            provider
+            for provider in (summary.get("provider_name") for summary in trace_summaries)
+            if provider
+        }
+    )
+    trace_ids = [summary["trace_id"] for summary in trace_summaries]
+    return {
+        "trace_ids": trace_ids,
+        "provider_names": provider_names,
+        "trace_count": len(trace_summaries),
+        "summaries": trace_summaries,
+    }
+
+
+def _build_receipt_lineage_snapshot(
+    *,
+    receipt: Receipt,
+    trace_summaries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Capture a bounded receipt-time lineage snapshot."""
+    decision_context = _build_decision_context(receipt)
+    return {
+        "receipt": {
+            "receipt_id": receipt.receipt_id,
+            "operation_type": receipt.operation_type,
+        },
+        "surface": {
+            "type": decision_context["surface_type"],
+            "name": decision_context["surface_name"],
+        },
+        "trace_set": _build_trace_set_snapshot(trace_summaries),
+    }
+
+
+def _build_resolution_lineage_snapshot(
+    *,
+    profile: OutcomeProfileSchema | None,
+    resolution: dict[str, Any],
+    group,
+    trace_summaries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Capture a bounded resolution-time lineage snapshot."""
+    thesis_keys = _iter_thesis_scope_keys(profile)
+    thesis_facts = {
+        key: resolution["thesis_facts"][key]
+        for key in thesis_keys
+        if key in resolution["thesis_facts"]
+    }
+    return {
+        "resolution": {
+            "resolution_id": resolution["resolution_id"],
+            "relationship_type": resolution["relationship_type"],
+            "action": resolution["action"],
+            "trust_status": resolution["trust_status"],
+            "resolved_by": resolution["resolved_by"],
+        },
+        "group": {
+            "group_signature": resolution["group_signature"],
+        },
+        "workflow": {
+            "name": group.source_workflow_name,
+            "receipt_id": group.source_workflow_receipt_id,
+            "trace_ids": list(group.source_trace_ids),
+        },
+        "trace_set": _build_trace_set_snapshot(trace_summaries),
+        "thesis": thesis_facts,
+    }
+
+
+def _resolve_receipt_outcome_context(
+    instance: InstanceProtocol,
+    *,
+    receipt_id: str,
+) -> tuple[Receipt, dict[str, Any], list[dict[str, Any]]]:
+    """Load receipt-anchored lineage context for one outcome record."""
+    receipt_store = instance.get_receipt_store()
+    try:
+        receipt = receipt_store.get_receipt(receipt_id)
+        if receipt is None:
+            raise ReceiptNotFoundError(receipt_id)
+    finally:
+        receipt_store.close()
+
+    decision_context = _build_decision_context(receipt)
+    trace_summaries = _build_receipt_trace_summaries(receipt)
+    return receipt, decision_context, trace_summaries
+
+
+def _resolve_resolution_outcome_context(
+    instance: InstanceProtocol,
+    *,
+    resolution_id: str,
+) -> tuple[dict[str, Any], Any, Receipt, dict[str, Any], list[dict[str, Any]]]:
+    """Load proposal-resolution lineage context for one outcome record."""
+    group_store = instance.get_group_store()
+    try:
+        resolution = group_store.get_resolution(resolution_id)
+        if resolution is None:
+            raise ConfigError(f"Resolution '{resolution_id}' not found")
+        group = group_store.get_group_by_resolution(resolution_id)
+    finally:
+        group_store.close()
+
+    if group is None:
+        raise ConfigError(f"Resolution '{resolution_id}' is not attached to a candidate group")
+    if resolution["action"] != "approve" or not resolution["confirmed"]:
+        raise ConfigError(
+            f"Resolution '{resolution_id}' must be a confirmed approved proposal resolution"
+        )
+    if not group.source_workflow_name or not group.source_workflow_receipt_id:
+        raise ConfigError(
+            f"Resolution '{resolution_id}' is not linked to a proposal workflow receipt"
+        )
+
+    receipt_store = instance.get_receipt_store()
+    try:
+        receipt = receipt_store.get_receipt(group.source_workflow_receipt_id)
+        if receipt is None:
+            raise ReceiptNotFoundError(group.source_workflow_receipt_id)
+    finally:
+        receipt_store.close()
+
+    decision_context = _build_decision_context(receipt)
+    decision_context["relationship_type"] = resolution["relationship_type"]
+    trace_summaries = _load_trace_summaries(
+        instance,
+        list(group.source_trace_ids),
+        fallback_receipt=receipt,
+    )
+    return resolution, group, receipt, decision_context, trace_summaries
+
+
+def service_get_outcome_profile(
+    instance: InstanceProtocol,
+    *,
+    anchor_type: Literal["resolution", "receipt"],
+    relationship_type: str | None = None,
+    workflow_name: str | None = None,
+    surface_type: str | None = None,
+    surface_name: str | None = None,
+) -> tuple[str | None, OutcomeProfileSchema | None]:
+    """Resolve the focused outcome profile for one anchor context."""
+    config = instance.load_config()
+    return _resolve_outcome_profile(
+        config=config,
+        anchor_type=anchor_type,
+        relationship_type=relationship_type,
+        workflow_name=workflow_name,
+        surface_type=surface_type,
+        surface_name=surface_name,
+        outcome_profile_key=None,
+    )
+
+
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str,
@@ -485,31 +879,111 @@ def service_feedback_batch(
 
 def service_outcome(
     instance: InstanceProtocol,
-    receipt_id: str,
     outcome: Literal["correct", "incorrect", "partial", "unknown"],
+    receipt_id: str | None = None,
+    *,
+    anchor_type: Literal["resolution", "receipt"] = "receipt",
+    anchor_id: str | None = None,
+    source: Literal["human", "ai_review", "system"] = "human",
+    outcome_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
+    outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> OutcomeServiceResult:
-    """Record an outcome for a query.
+    """Record an anchored outcome for a prior receipt or proposal resolution.
 
-    Validates receipt existence, persists the outcome record.
+    Validates the anchor, resolves an outcome profile when available,
+    and persists a bounded lineage snapshot for later analysis.
     """
-    _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
-    if outcome not in _VALID_OUTCOMES:
-        raise ConfigError(f"Invalid outcome '{outcome}'. Use: {', '.join(_VALID_OUTCOMES)}")
+    _validate_outcome_request_values(
+        outcome=outcome,
+        source=source,
+        detail=detail,
+    )
+    normalized_scope_hints = dict(scope_hints or {})
+    config = instance.load_config()
 
-    if detail is not None and not isinstance(detail, dict):
-        raise ConfigError("detail must be an object")
+    if anchor_type == "receipt":
+        normalized_receipt_id = anchor_id or receipt_id
+        if not normalized_receipt_id:
+            raise ConfigError("Receipt outcomes require receipt_id or anchor_id")
+        receipt, decision_context, trace_summaries = _resolve_receipt_outcome_context(
+            instance,
+            receipt_id=normalized_receipt_id,
+        )
+        resolved_profile_key, profile = _resolve_outcome_profile(
+            config=config,
+            anchor_type="receipt",
+            relationship_type=None,
+            workflow_name=None,
+            surface_type=str(decision_context.get("surface_type") or ""),
+            surface_name=str(decision_context.get("surface_name") or ""),
+            outcome_profile_key=outcome_profile_key,
+        )
+        _validate_outcome_inputs(
+            profile=profile,
+            profile_key=resolved_profile_key,
+            source=source,
+            outcome_code=outcome_code,
+            scope_hints=normalized_scope_hints,
+        )
+        lineage_snapshot = _build_receipt_lineage_snapshot(
+            receipt=receipt,
+            trace_summaries=trace_summaries,
+        )
+        relationship_type = None
+        normalized_anchor_id = normalized_receipt_id
+        normalized_receipt_id = receipt.receipt_id
+    else:
+        normalized_anchor_id = anchor_id
+        if not normalized_anchor_id:
+            raise ConfigError("Resolution outcomes require anchor_id")
+        resolution, group, receipt, decision_context, trace_summaries = (
+            _resolve_resolution_outcome_context(instance, resolution_id=normalized_anchor_id)
+        )
+        resolved_profile_key, profile = _resolve_outcome_profile(
+            config=config,
+            anchor_type="resolution",
+            relationship_type=resolution["relationship_type"],
+            workflow_name=group.source_workflow_name,
+            surface_type=None,
+            surface_name=None,
+            outcome_profile_key=outcome_profile_key,
+        )
+        _validate_outcome_inputs(
+            profile=profile,
+            profile_key=resolved_profile_key,
+            source=source,
+            outcome_code=outcome_code,
+            scope_hints=normalized_scope_hints,
+        )
+        lineage_snapshot = _build_resolution_lineage_snapshot(
+            profile=profile,
+            resolution=resolution,
+            group=group,
+            trace_summaries=trace_summaries,
+        )
+        relationship_type = resolution["relationship_type"]
+        normalized_receipt_id = receipt.receipt_id
 
-    receipt_store = instance.get_receipt_store()
-    try:
-        if receipt_store.get_receipt(receipt_id) is None:
-            raise ReceiptNotFoundError(receipt_id)
-    finally:
-        receipt_store.close()
+    outcome_remediation_hint: str | None = None
+    if profile is not None and outcome_code is not None:
+        outcome_remediation_hint = profile.outcome_codes[outcome_code].remediation_hint
 
     record = OutcomeRecord(
-        receipt_id=receipt_id,
+        receipt_id=normalized_receipt_id,
+        anchor_type=anchor_type,
+        anchor_id=normalized_anchor_id,
         outcome=outcome,
+        outcome_code=outcome_code,
+        outcome_remediation_hint=outcome_remediation_hint,
+        scope_hints=normalized_scope_hints,
+        outcome_profile_key=resolved_profile_key,
+        outcome_profile_version=profile.version if profile is not None else None,
+        decision_context=decision_context,
+        lineage_snapshot=lineage_snapshot,
+        relationship_type=relationship_type,
+        source=source,
         detail=detail or {},
     )
     feedback_store = instance.get_feedback_store()

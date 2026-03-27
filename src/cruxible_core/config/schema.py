@@ -14,6 +14,7 @@ Hierarchy:
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
     ├── feedback_profiles: dict[str, FeedbackProfileSchema]
+    ├── outcome_profiles: dict[str, OutcomeProfileSchema]
     ├── quality_checks: list[QualityCheckSchema]
     ├── decision_policies: list[DecisionPolicySchema]
     ├── ingestion: dict[str, IngestionMapping]
@@ -33,6 +34,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 _PATH_TOKEN = r"[\w-]+"
 _FEEDBACK_PATH_PATTERN = rf"^(FROM|TO|EDGE)\.({_PATH_TOKEN})$"
+_OUTCOME_PATH_PATTERN = (
+    rf"^(RESOLUTION|GROUP|WORKFLOW|THESIS|RECEIPT|SURFACE|TRACESET)\.({_PATH_TOKEN})$"
+)
 
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
@@ -231,6 +235,7 @@ class ConstraintSchema(BaseModel):
 
 
 FeedbackPathRef = Annotated[str, Field(pattern=_FEEDBACK_PATH_PATTERN)]
+OutcomePathRef = Annotated[str, Field(pattern=_OUTCOME_PATH_PATTERN)]
 
 
 class FeedbackReasonCodeSchema(BaseModel):
@@ -264,6 +269,85 @@ class FeedbackProfileSchema(BaseModel):
                 msg = (
                     f"Feedback reason code '{code}' references undeclared "
                     f"required_scope_keys: {missing_str}"
+                )
+                raise ValueError(msg)
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Outcome Profile Schema
+# ---------------------------------------------------------------------------
+
+
+class OutcomeCodeSchema(BaseModel):
+    """Structured outcome code used by agents and outcome analysis."""
+
+    description: str
+    remediation_hint: Literal[
+        "trust_adjustment",
+        "require_review",
+        "decision_policy",
+        "provider_fix",
+        "workflow_fix",
+        "graph_fix",
+        "unknown",
+    ] = "unknown"
+    required_scope_keys: list[str] = Field(default_factory=list)
+
+
+class OutcomeProfileSchema(BaseModel):
+    """Anchor-scoped outcome vocabulary and grouping metadata."""
+
+    anchor_type: Literal["resolution", "receipt"]
+    version: int = 1
+    relationship_type: str | None = None
+    workflow_name: str | None = None
+    surface_type: Literal["query", "workflow", "operation"] | None = None
+    surface_name: str | None = None
+    outcome_codes: dict[str, OutcomeCodeSchema] = Field(default_factory=dict)
+    scope_keys: dict[str, OutcomePathRef] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> OutcomeProfileSchema:
+        declared = set(self.scope_keys.keys())
+        for code, schema in self.outcome_codes.items():
+            missing = [key for key in schema.required_scope_keys if key not in declared]
+            if missing:
+                missing_str = ", ".join(sorted(missing))
+                msg = (
+                    f"Outcome code '{code}' references undeclared required_scope_keys: "
+                    f"{missing_str}"
+                )
+                raise ValueError(msg)
+
+        if self.anchor_type == "resolution":
+            if self.relationship_type is None:
+                msg = "Resolution outcome profiles require relationship_type"
+                raise ValueError(msg)
+            if self.surface_type is not None or self.surface_name is not None:
+                msg = (
+                    "Resolution outcome profiles may not define surface_type or surface_name"
+                )
+                raise ValueError(msg)
+            allowed_prefixes = {"RESOLUTION", "GROUP", "WORKFLOW", "THESIS"}
+        else:
+            if self.surface_type is None or self.surface_name is None:
+                msg = "Receipt outcome profiles require surface_type and surface_name"
+                raise ValueError(msg)
+            if self.relationship_type is not None or self.workflow_name is not None:
+                msg = (
+                    "Receipt outcome profiles may not define relationship_type or workflow_name"
+                )
+                raise ValueError(msg)
+            allowed_prefixes = {"RECEIPT", "SURFACE", "TRACESET"}
+
+        for scope_key, path in self.scope_keys.items():
+            prefix, _, _ = path.partition(".")
+            if prefix not in allowed_prefixes:
+                allowed_str = ", ".join(sorted(allowed_prefixes))
+                msg = (
+                    f"Outcome profile scope key '{scope_key}' uses unsupported path '{path}'. "
+                    f"Allowed prefixes: {allowed_str}"
                 )
                 raise ValueError(msg)
         return self
@@ -933,6 +1017,7 @@ class CoreConfig(BaseModel):
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
     feedback_profiles: dict[str, FeedbackProfileSchema] = Field(default_factory=dict)
+    outcome_profiles: dict[str, OutcomeProfileSchema] = Field(default_factory=dict)
     quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
     decision_policies: list[DecisionPolicySchema] = Field(default_factory=list)
     ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
@@ -957,6 +1042,10 @@ class CoreConfig(BaseModel):
     def get_feedback_profile(self, relationship_type: str) -> FeedbackProfileSchema | None:
         """Find a feedback profile by relationship type."""
         return self.feedback_profiles.get(relationship_type)
+
+    def get_outcome_profile(self, profile_key: str) -> OutcomeProfileSchema | None:
+        """Find an outcome profile by key."""
+        return self.outcome_profiles.get(profile_key)
 
     def get_hierarchy_relationships(self) -> list[RelationshipSchema]:
         """Return relationship schemas marked as hierarchy."""

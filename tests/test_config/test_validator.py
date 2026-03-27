@@ -18,6 +18,8 @@ from cruxible_core.config.schema import (
     IngestionMapping,
     IntegrationSpec,
     NamedQuerySchema,
+    OutcomeCodeSchema,
+    OutcomeProfileSchema,
     PropertySchema,
     ProviderArtifactSchema,
     ProviderSchema,
@@ -241,6 +243,41 @@ class TestValidateLoopOneControls:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any("proposal-bearing alias" in e for e in exc_info.value.errors)
+
+    def test_receipt_outcome_profile_requires_known_query_surface(self):
+        config = _minimal_config(
+            outcome_profiles={
+                "query_quality": OutcomeProfileSchema(
+                    anchor_type="receipt",
+                    surface_type="query",
+                    surface_name="missing_query",
+                    outcome_codes={
+                        "bad_result": OutcomeCodeSchema(
+                            description="Bad result",
+                            remediation_hint="provider_fix",
+                        )
+                    },
+                    scope_keys={"surface": "SURFACE.name"},
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("missing_query" in e for e in exc_info.value.errors)
+
+    def test_resolution_outcome_profile_rejects_unsupported_path(self):
+        with pytest.raises(ValidationError):
+            OutcomeProfileSchema(
+                anchor_type="resolution",
+                relationship_type="links",
+                outcome_codes={
+                    "bad_link": OutcomeCodeSchema(
+                        description="Bad approved link",
+                        remediation_hint="trust_adjustment",
+                    )
+                },
+                scope_keys={"bad": "RECEIPT.operation_type"},
+            )
 
 
 class TestValidateMultiRelationshipStep:

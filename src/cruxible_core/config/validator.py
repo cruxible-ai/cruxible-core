@@ -28,6 +28,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_named_queries(config, errors)
     _validate_constraints(config, errors, warnings)
     _validate_feedback_profiles(config, errors)
+    _validate_outcome_profiles(config, errors)
     _validate_ingestion(config, errors)
     _validate_primary_keys(config, errors)
     _validate_matching_integrations(config, errors)
@@ -167,6 +168,129 @@ def _validate_feedback_profiles(config: CoreConfig, errors: list[str]) -> None:
                     f"Feedback profile '{relationship_type}': scope key '{scope_key}' "
                     f"references unknown EDGE property '{prop_name}'"
                 )
+
+
+def _validate_outcome_profiles(config: CoreConfig, errors: list[str]) -> None:
+    """Validate anchor-scoped outcome profile references."""
+    resolution_wildcards: set[str] = set()
+    resolution_exact: set[tuple[str, str]] = set()
+    receipt_profiles: set[tuple[str, str]] = set()
+
+    resolution_field_sets = {
+        "RESOLUTION": {
+            "resolution_id",
+            "relationship_type",
+            "action",
+            "trust_status",
+            "resolved_by",
+        },
+        "GROUP": {"group_signature"},
+        "WORKFLOW": {"name", "receipt_id", "trace_ids"},
+    }
+    receipt_field_sets = {
+        "RECEIPT": {"receipt_id", "operation_type"},
+        "SURFACE": {"type", "name"},
+        "TRACESET": {"trace_ids", "provider_names", "trace_count"},
+    }
+
+    for profile_key, profile in config.outcome_profiles.items():
+        if profile.anchor_type == "resolution":
+            if profile.relationship_type is None:
+                errors.append(
+                    f"Outcome profile '{profile_key}': resolution profiles require "
+                    "relationship_type"
+                )
+                continue
+            rel = config.get_relationship(profile.relationship_type)
+            if rel is None:
+                errors.append(
+                    f"Outcome profile '{profile_key}': relationship_type "
+                    f"'{profile.relationship_type}' not defined in relationships"
+                )
+            if profile.workflow_name is None:
+                if profile.relationship_type in resolution_wildcards:
+                    errors.append(
+                        f"Outcome profile '{profile_key}': duplicate wildcard resolution profile "
+                        f"for relationship_type '{profile.relationship_type}'"
+                    )
+                resolution_wildcards.add(profile.relationship_type)
+            else:
+                workflow = config.workflows.get(profile.workflow_name)
+                if workflow is None:
+                    errors.append(
+                        f"Outcome profile '{profile_key}': workflow_name "
+                        f"'{profile.workflow_name}' not found in workflows"
+                    )
+                elif workflow.canonical:
+                    errors.append(
+                        f"Outcome profile '{profile_key}': workflow_name "
+                        f"'{profile.workflow_name}' must be non-canonical"
+                    )
+                elif not _workflow_returns_relationship_proposal(workflow):
+                    errors.append(
+                        f"Outcome profile '{profile_key}': workflow_name "
+                        f"'{profile.workflow_name}' must return a proposal-bearing alias "
+                        "produced by propose_relationship_group"
+                    )
+
+                combo = (profile.relationship_type, profile.workflow_name)
+                if combo in resolution_exact:
+                    errors.append(
+                        f"Outcome profile '{profile_key}': duplicate resolution profile for "
+                        f"relationship_type '{profile.relationship_type}' and workflow_name "
+                        f"'{profile.workflow_name}'"
+                    )
+                resolution_exact.add(combo)
+
+            for scope_key, path in profile.scope_keys.items():
+                prefix, _, field_name = path.partition(".")
+                if prefix == "THESIS":
+                    continue
+                allowed = resolution_field_sets.get(prefix)
+                if allowed is None or field_name not in allowed:
+                    allowed_str = ", ".join(sorted(allowed or set()))
+                    errors.append(
+                        f"Outcome profile '{profile_key}': scope key '{scope_key}' references "
+                        f"unsupported path '{path}'. Allowed {prefix} fields: {allowed_str}"
+                    )
+        else:
+            if profile.surface_type is None or profile.surface_name is None:
+                errors.append(
+                    f"Outcome profile '{profile_key}': receipt profiles require "
+                    "surface_type and surface_name"
+                )
+                continue
+            if profile.surface_type == "query":
+                if profile.surface_name not in config.named_queries:
+                    errors.append(
+                        f"Outcome profile '{profile_key}': surface_name "
+                        f"'{profile.surface_name}' not found in named_queries"
+                    )
+            elif profile.surface_type == "workflow":
+                if profile.surface_name not in config.workflows:
+                    errors.append(
+                        f"Outcome profile '{profile_key}': surface_name "
+                        f"'{profile.surface_name}' not found in workflows"
+                    )
+
+            combo = (profile.surface_type, profile.surface_name)
+            if combo in receipt_profiles:
+                errors.append(
+                    f"Outcome profile '{profile_key}': duplicate receipt profile for "
+                    f"surface_type '{profile.surface_type}' and surface_name "
+                    f"'{profile.surface_name}'"
+                )
+            receipt_profiles.add(combo)
+
+            for scope_key, path in profile.scope_keys.items():
+                prefix, _, field_name = path.partition(".")
+                allowed = receipt_field_sets.get(prefix)
+                if allowed is None or field_name not in allowed:
+                    allowed_str = ", ".join(sorted(allowed or set()))
+                    errors.append(
+                        f"Outcome profile '{profile_key}': scope key '{scope_key}' references "
+                        f"unsupported path '{path}'. Allowed {prefix} fields: {allowed_str}"
+                    )
 
 
 def _validate_decision_policies(config: CoreConfig, errors: list[str]) -> None:

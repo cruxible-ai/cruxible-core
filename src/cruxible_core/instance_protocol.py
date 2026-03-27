@@ -61,7 +61,15 @@ class FeedbackStoreProtocol(Protocol):
     def count_feedback(self, *, receipt_id: str | None = None) -> int: ...
     def save_outcome(self, record: OutcomeRecord) -> str: ...
     def list_outcomes(
-        self, *, receipt_id: str | None = None, limit: int = 50
+        self,
+        *,
+        receipt_id: str | None = None,
+        anchor_type: str | None = None,
+        anchor_id: str | None = None,
+        relationship_type: str | None = None,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+        limit: int = 50,
     ) -> list[OutcomeRecord]: ...
     def count_outcomes(self, *, receipt_id: str | None = None) -> int: ...
     @contextmanager
@@ -73,6 +81,7 @@ class GroupStoreProtocol(Protocol):
     """Minimal interface for group store operations."""
 
     def get_group(self, group_id: str) -> CandidateGroup | None: ...
+    def get_group_by_resolution(self, resolution_id: str) -> CandidateGroup | None: ...
     def list_groups(
         self,
         *,
