@@ -103,6 +103,18 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ValidateResult)
 
+    def model_fork(
+        self,
+        *,
+        transport_ref: str,
+        root_dir: str,
+    ) -> contracts.ModelForkResult:
+        response = self._client.post(
+            "/api/v1/models/fork",
+            json={"transport_ref": transport_ref, "root_dir": root_dir},
+        )
+        return self._parse_model(response, contracts.ModelForkResult)
+
     def ingest(
         self,
         instance_id: str,
@@ -573,6 +585,46 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ForkSnapshotResult)
 
+    def model_publish(
+        self,
+        instance_id: str,
+        *,
+        transport_ref: str,
+        model_id: str,
+        release_id: str,
+        compatibility: contracts.ModelCompatibility,
+    ) -> contracts.ModelPublishResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/model/publish",
+            json={
+                "transport_ref": transport_ref,
+                "model_id": model_id,
+                "release_id": release_id,
+                "compatibility": compatibility,
+            },
+        )
+        return self._parse_model(response, contracts.ModelPublishResult)
+
+    def model_status(self, instance_id: str) -> contracts.ModelStatusResult:
+        response = self._client.get(f"/api/v1/{instance_id}/model/status")
+        return self._parse_model(response, contracts.ModelStatusResult)
+
+    def model_pull_preview(self, instance_id: str) -> contracts.ModelPullPreviewResult:
+        response = self._client.post(f"/api/v1/{instance_id}/model/pull/preview")
+        return self._parse_model(response, contracts.ModelPullPreviewResult)
+
+    def model_pull_apply(
+        self,
+        instance_id: str,
+        *,
+        expected_apply_digest: str,
+    ) -> contracts.ModelPullApplyResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/model/pull/apply",
+            json={"expected_apply_digest": expected_apply_digest},
+        )
+        return self._parse_model(response, contracts.ModelPullApplyResult)
+
     def add_constraint(
         self,
         instance_id: str,
@@ -754,71 +806,3 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.ListResolutionsToolResult)
-
-    def propose_entity_changes(
-        self,
-        instance_id: str,
-        *,
-        members: list[contracts.EntityChangeInput],
-        thesis_text: str = "",
-        thesis_facts: dict[str, Any] | None = None,
-        analysis_state: dict[str, Any] | None = None,
-        proposed_by: contracts.GroupProposedBy = "ai_review",
-        suggested_priority: str | None = None,
-        source_workflow_name: str | None = None,
-        source_workflow_receipt_id: str | None = None,
-        source_trace_ids: list[str] | None = None,
-        source_step_ids: list[str] | None = None,
-    ) -> contracts.ProposeEntityChangesToolResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/entity-proposals",
-            json={
-                "members": [item.model_dump(mode="json") for item in members],
-                "thesis_text": thesis_text,
-                "thesis_facts": thesis_facts,
-                "analysis_state": analysis_state,
-                "proposed_by": proposed_by,
-                "suggested_priority": suggested_priority,
-                "source_workflow_name": source_workflow_name,
-                "source_workflow_receipt_id": source_workflow_receipt_id,
-                "source_trace_ids": source_trace_ids,
-                "source_step_ids": source_step_ids,
-            },
-        )
-        return self._parse_model(response, contracts.ProposeEntityChangesToolResult)
-
-    def get_entity_proposal(
-        self,
-        instance_id: str,
-        proposal_id: str,
-    ) -> contracts.GetEntityProposalToolResult:
-        response = self._client.get(f"/api/v1/{instance_id}/entity-proposals/{proposal_id}")
-        return self._parse_model(response, contracts.GetEntityProposalToolResult)
-
-    def list_entity_proposals(
-        self,
-        instance_id: str,
-        *,
-        status: contracts.EntityProposalStatus | None = None,
-        limit: int = 50,
-    ) -> contracts.ListEntityProposalsToolResult:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/entity-proposals",
-            params={"status": status, "limit": limit},
-        )
-        return self._parse_model(response, contracts.ListEntityProposalsToolResult)
-
-    def resolve_entity_proposal(
-        self,
-        instance_id: str,
-        proposal_id: str,
-        *,
-        action: contracts.GroupAction,
-        rationale: str = "",
-        resolved_by: contracts.GroupResolvedBy = "human",
-    ) -> contracts.ResolveEntityProposalToolResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/entity-proposals/{proposal_id}/resolve",
-            json={"action": action, "rationale": rationale, "resolved_by": resolved_by},
-        )
-        return self._parse_model(response, contracts.ResolveEntityProposalToolResult)

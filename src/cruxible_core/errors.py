@@ -17,7 +17,9 @@ errors (runtime data), making it easy to catch by category.
     ├── ExecutionError (operation failures)
     │   ├── IngestionError
     │   ├── MutationError
-    │   └── QueryExecutionError
+    │   ├── QueryExecutionError
+    │   └── TransportError
+    ├── OwnershipError (fork type-level ownership)
     └── PermissionDeniedError (MCP permission mode)
 """
 
@@ -241,6 +243,20 @@ class QueryExecutionError(ExecutionError):
         super().__init__(message)
 
 
+class TransportError(ExecutionError):
+    """Error during model release transport operations."""
+
+    pass
+
+
+class OwnershipError(CoreError):
+    """Write rejected because the target type is upstream-owned in a fork instance."""
+
+    def __init__(self, message: str, *, blocked_types: list[str] | None = None):
+        self.blocked_types = blocked_types or []
+        super().__init__(message)
+
+
 # ---------------------------------------------------------------------------
 # Store errors — persistence lookups
 # ---------------------------------------------------------------------------
@@ -276,14 +292,6 @@ class GroupNotFoundError(CoreError):
     def __init__(self, group_id: str):
         self.group_id = group_id
         super().__init__(f"Group '{group_id}' not found")
-
-
-class EntityProposalNotFoundError(CoreError):
-    """Entity proposal ID not found in store."""
-
-    def __init__(self, proposal_id: str):
-        self.proposal_id = proposal_id
-        super().__init__(f"Entity proposal '{proposal_id}' not found")
 
 
 # ---------------------------------------------------------------------------

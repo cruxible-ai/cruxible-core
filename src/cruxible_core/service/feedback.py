@@ -12,10 +12,8 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.errors import (
     ConfigError,
-    CoreError,
     DataValidationError,
     EdgeAmbiguityError,
-    MutationError,
     ReceiptNotFoundError,
 )
 from cruxible_core.feedback.applier import apply_feedback
@@ -26,9 +24,9 @@ from cruxible_core.feedback.types import (
     OutcomeRecord,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.service._helpers import _persist_receipt, _save_graph
+from cruxible_core.service._helpers import MutationReceiptContext, _save_graph, mutation_receipt
+from cruxible_core.service._ownership import check_type_ownership
 from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
     FeedbackServiceResult,
@@ -702,6 +700,7 @@ def service_feedback(
         source=source,
         corrections=corrections,
     )
+    check_type_ownership(instance, relationship_types=[target.relationship])
     config = instance.load_config()
     graph = instance.load_graph()
     receipts = _load_receipts(instance, [receipt_id])
@@ -723,19 +722,19 @@ def service_feedback(
     target_str = (
         f"{target.from_type}:{target.from_id}:{target.relationship}:{target.to_type}:{target.to_id}"
     )
-    builder = ReceiptBuilder(
-        operation_type="feedback",
-        parameters={"receipt_id": receipt_id, "action": action, "source": source},
-    )
-
-    result: FeedbackServiceResult | None = None
-    _exc: CoreError | None = None
     feedback_store = instance.get_feedback_store()
-    try:
+    ctx: MutationReceiptContext[FeedbackServiceResult]
+    with mutation_receipt(
+        instance,
+        "feedback",
+        {"receipt_id": receipt_id, "action": action, "source": source},
+        store=feedback_store,
+    ) as ctx:
+        assert ctx.builder is not None
         feedback_store.save_feedback(record)
 
         applied = apply_feedback(graph, record)
-        builder.record_feedback_applied(target_str, action, applied)
+        ctx.builder.record_feedback_applied(target_str, action, applied)
 
         # Stamp group_override on the edge after applying feedback
         if group_override:
@@ -750,23 +749,11 @@ def service_feedback(
             )
 
         _save_graph(instance, graph)
-        builder.mark_committed()
-        result = FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied)
-    except CoreError as e:
-        _exc = e
-        raise
-    except Exception as exc:
-        _exc = MutationError(f"Unexpected failure: {exc}")
-        raise _exc from exc
-    finally:
-        feedback_store.close()
-        receipt = builder.build()
-        if _persist_receipt(instance, receipt):
-            if _exc is not None:
-                _exc.mutation_receipt_id = receipt.receipt_id
-            elif result is not None:
-                result.receipt_id = receipt.receipt_id
-    return result  # type: ignore[return-value]
+        ctx.set_result(FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied))
+
+    result = ctx.result
+    assert result is not None
+    return result
 
 
 def service_feedback_batch(
@@ -778,6 +765,7 @@ def service_feedback_batch(
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
         raise ConfigError("Batch feedback items must not be empty")
+    check_type_ownership(instance, relationship_types=[item.target.relationship for item in items])
 
     for item in items:
         _validate_feedback_request_values(
@@ -808,17 +796,17 @@ def service_feedback_batch(
         for item in items
     ]
 
-    builder = ReceiptBuilder(
-        operation_type="feedback_batch",
-        parameters={"count": len(items), "source": source},
-    )
-
-    result: FeedbackBatchServiceResult | None = None
-    _exc: CoreError | None = None
     feedback_store = instance.get_feedback_store()
-    try:
+    ctx: MutationReceiptContext[FeedbackBatchServiceResult]
+    with mutation_receipt(
+        instance,
+        "feedback_batch",
+        {"count": len(items), "source": source},
+        store=feedback_store,
+    ) as ctx:
+        assert ctx.builder is not None
         for index, record in enumerate(records, start=1):
-            builder.record_validation(
+            ctx.builder.record_validation(
                 passed=True,
                 detail={
                     "index": index,
@@ -840,7 +828,7 @@ def service_feedback_batch(
                 applied = apply_feedback(graph, record)
                 if applied:
                     applied_count += 1
-                builder.record_feedback_applied(target_str, record.action, applied)
+                ctx.builder.record_feedback_applied(target_str, record.action, applied)
                 if item.group_override:
                     graph.update_edge_properties(
                         target.from_type,
@@ -854,27 +842,17 @@ def service_feedback_batch(
 
             _save_graph(instance, graph)
 
-        builder.mark_committed()
-        result = FeedbackBatchServiceResult(
-            feedback_ids=[record.feedback_id for record in records],
-            applied_count=applied_count,
-            total=len(records),
+        ctx.set_result(
+            FeedbackBatchServiceResult(
+                feedback_ids=[record.feedback_id for record in records],
+                applied_count=applied_count,
+                total=len(records),
+            )
         )
-    except CoreError as e:
-        _exc = e
-        raise
-    except Exception as exc:
-        _exc = MutationError(f"Unexpected failure: {exc}")
-        raise _exc from exc
-    finally:
-        feedback_store.close()
-        receipt = builder.build()
-        if _persist_receipt(instance, receipt):
-            if _exc is not None:
-                _exc.mutation_receipt_id = receipt.receipt_id
-            elif result is not None:
-                result.receipt_id = receipt.receipt_id
-    return result  # type: ignore[return-value]
+
+    result = ctx.result
+    assert result is not None
+    return result
 
 
 def service_outcome(

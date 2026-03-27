@@ -278,6 +278,7 @@ def execute_workflow(
                 detail={},
             )
             preview = _apply_entity_set(
+                instance,
                 graph,
                 compiled_step.step_id,
                 step_outputs[compiled_step.apply_entities_spec.entities_from],
@@ -301,6 +302,7 @@ def execute_workflow(
                 detail={},
             )
             preview = _apply_relationship_set(
+                instance,
                 graph,
                 workflow_name,
                 compiled_step.step_id,
@@ -877,6 +879,7 @@ def _make_relationship_set(
 
 
 def _apply_entity_set(
+    instance: InstanceProtocol,
     graph: EntityGraph,
     step_id: str,
     raw_entity_set: Any,
@@ -886,6 +889,9 @@ def _apply_entity_set(
     parent_id: str | None,
 ) -> ApplyEntitiesPreview:
     entity_set = EntitySet.model_validate(raw_entity_set)
+    from cruxible_core.service._ownership import check_type_ownership
+
+    check_type_ownership(instance, entity_types=[entity_set.entity_type])
     create_count = 0
     update_count = 0
     noop_count = 0
@@ -936,6 +942,7 @@ def _apply_entity_set(
 
 
 def _apply_relationship_set(
+    instance: InstanceProtocol,
     graph: EntityGraph,
     workflow_name: str,
     step_id: str,
@@ -946,6 +953,9 @@ def _apply_relationship_set(
     parent_id: str | None,
 ) -> ApplyRelationshipsPreview:
     relationship_set = RelationshipSet.model_validate(raw_relationship_set)
+    from cruxible_core.service._ownership import check_type_ownership
+
+    check_type_ownership(instance, relationship_types=[relationship_set.relationship_type])
     create_count = 0
     update_count = 0
     noop_count = 0

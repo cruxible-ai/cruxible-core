@@ -25,12 +25,9 @@ GroupResolvedBy = Literal["human", "ai_review"]
 GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved", "suppressed"]
 GroupProposedBy = Literal["human", "ai_review"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
-EntityProposalStatus = Literal["pending_review", "applying", "resolved"]
-EntityProposalAction = Literal["approve", "reject"]
-EntityProposalResolvedBy = Literal["human", "ai_review"]
-EntityChangeOperation = Literal["create", "patch"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
+ModelCompatibility = Literal["data_only", "additive_schema", "breaking"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -100,12 +97,6 @@ class DecisionPolicyMatchInput(BaseModel):
 
     model_config = {"populate_by_name": True}
 
-
-class EntityChangeInput(BaseModel):
-    entity_type: str
-    entity_id: str
-    operation: EntityChangeOperation
-    properties: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Tool return contracts ─────────────────────────────────────────────
@@ -369,6 +360,66 @@ class ForkSnapshotResult(BaseModel):
     snapshot: SnapshotMetadata
 
 
+class PublishedModelManifest(BaseModel):
+    format_version: int
+    model_id: str
+    release_id: str
+    snapshot_id: str
+    compatibility: ModelCompatibility
+    owned_entity_types: list[str] = Field(default_factory=list)
+    owned_relationship_types: list[str] = Field(default_factory=list)
+    parent_release_id: str | None = None
+
+
+class UpstreamMetadataResult(BaseModel):
+    transport_ref: str
+    model_id: str
+    release_id: str
+    snapshot_id: str
+    compatibility: ModelCompatibility
+    owned_entity_types: list[str] = Field(default_factory=list)
+    owned_relationship_types: list[str] = Field(default_factory=list)
+    overlay_config_path: str
+    active_config_path: str
+    manifest_path: str
+    graph_path: str
+    config_path: str
+    lock_path: str
+    manifest_digest: str | None = None
+    graph_digest: str | None = None
+
+
+class ModelPublishResult(BaseModel):
+    manifest: PublishedModelManifest
+
+
+class ModelForkResult(BaseModel):
+    instance_id: str
+    manifest: PublishedModelManifest
+
+
+class ModelStatusResult(BaseModel):
+    upstream: UpstreamMetadataResult | None = None
+
+
+class ModelPullPreviewResult(BaseModel):
+    current_release_id: str | None = None
+    target_release_id: str
+    compatibility: ModelCompatibility
+    apply_digest: str
+    warnings: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    lock_changed: bool = False
+    upstream_entity_delta: int = 0
+    upstream_edge_delta: int = 0
+
+
+class ModelPullApplyResult(BaseModel):
+    release_id: str
+    apply_digest: str
+    pre_pull_snapshot_id: str
+
+
 class ProposeGroupToolResult(BaseModel):
     group_id: str | None = None
     signature: str
@@ -562,31 +613,6 @@ class ResolveGroupToolResult(BaseModel):
     action: str
     edges_created: int
     edges_skipped: int
-    resolution_id: str | None = None
-    receipt_id: str | None = None
-
-
-class ProposeEntityChangesToolResult(BaseModel):
-    proposal_id: str
-    status: str
-    member_count: int
-
-
-class GetEntityProposalToolResult(BaseModel):
-    proposal: dict[str, Any]
-    members: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class ListEntityProposalsToolResult(BaseModel):
-    proposals: list[dict[str, Any]] = Field(default_factory=list)
-    total: int
-
-
-class ResolveEntityProposalToolResult(BaseModel):
-    proposal_id: str
-    action: str
-    entities_created: int
-    entities_patched: int
     resolution_id: str | None = None
     receipt_id: str | None = None
 

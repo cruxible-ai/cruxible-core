@@ -244,14 +244,18 @@ class TestIngestReceipts:
         with pytest.raises(Exception) as exc_info:
             service_ingest(initialized_instance, "nonexistent_mapping", data_csv="a,b\n1,2")
         exc = exc_info.value
-        if hasattr(exc, "mutation_receipt_id") and exc.mutation_receipt_id:
-            store = initialized_instance.get_receipt_store()
-            try:
-                receipt = store.get_receipt(exc.mutation_receipt_id)
-            finally:
-                store.close()
-            assert receipt is not None
-            assert receipt.committed is False
+        assert hasattr(exc, "mutation_receipt_id")
+        assert exc.mutation_receipt_id is not None
+
+        store = initialized_instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(exc.mutation_receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.committed is False
+        validation_nodes = [n for n in receipt.nodes if n.node_type == "validation"]
+        assert any(node.detail.get("passed") is False for node in validation_nodes)
 
 
 # ---------------------------------------------------------------------------

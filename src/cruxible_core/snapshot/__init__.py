@@ -1,5 +1,5 @@
-"""Snapshot types and helpers."""
+"""Snapshot and release types."""
 
-from cruxible_core.snapshot.types import WorldSnapshot
+from cruxible_core.snapshot.types import PublishedModelManifest, UpstreamMetadata, WorldSnapshot
 
-__all__ = ["WorldSnapshot"]
+__all__ = ["PublishedModelManifest", "UpstreamMetadata", "WorldSnapshot"]

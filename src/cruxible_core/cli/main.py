@@ -73,7 +73,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     analyze_feedback_cmd,
     analyze_outcomes_cmd,
     apply_cmd,
-    entity_proposal_group,
     evaluate,
     explain,
     export_group,
@@ -90,6 +89,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     inspect_group,
     list_group,
     lock_cmd,
+    model_group,
     outcome_cmd,
     outcome_profile_cmd,
     plan_cmd,
@@ -103,11 +103,12 @@ from cruxible_core.cli.commands import (  # noqa: E402
     stats_cmd,
     test_cmd,
     validate,
-)
+)  # re-exported from cli.commands submodules
 
 cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]
 cli.add_command(lock_cmd)  # type: ignore[has-type]
+cli.add_command(model_group, "model")  # type: ignore[has-type]
 cli.add_command(plan_cmd)  # type: ignore[has-type]
 cli.add_command(run_cmd)  # type: ignore[has-type]
 cli.add_command(apply_cmd)  # type: ignore[has-type]
@@ -140,5 +141,4 @@ cli.add_command(add_relationship_cmd, "add-relationship")  # type: ignore[has-ty
 cli.add_command(add_constraint_cmd, "add-constraint")  # type: ignore[has-type]
 cli.add_command(add_decision_policy_cmd, "add-decision-policy")  # type: ignore[has-type]
 cli.add_command(export_group, "export")  # type: ignore[has-type]
-cli.add_command(entity_proposal_group, "entity-proposal")  # type: ignore[has-type]
 cli.add_command(group_group, "group")  # type: ignore[has-type]

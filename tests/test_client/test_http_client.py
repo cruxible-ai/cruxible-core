@@ -230,6 +230,118 @@ def test_snapshot_create_uses_expected_route():
     assert captured["payload"]["label"] == "baseline"
 
 
+def test_model_endpoints_use_expected_routes():
+    captured: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = request.content.decode() if request.content else None
+        captured.append((str(request.url), payload))
+        if request.url.path == "/api/v1/models/fork":
+            return httpx.Response(
+                200,
+                json={
+                    "instance_id": "inst_fork",
+                    "manifest": {
+                        "format_version": 1,
+                        "model_id": "case-law",
+                        "release_id": "v1.0.0",
+                        "snapshot_id": "snap_1",
+                        "compatibility": "data_only",
+                        "owned_entity_types": ["Case"],
+                        "owned_relationship_types": ["cites"],
+                        "parent_release_id": None,
+                    },
+                },
+            )
+        if request.url.path.endswith("/model/publish"):
+            return httpx.Response(
+                200,
+                json={
+                    "manifest": {
+                        "format_version": 1,
+                        "model_id": "case-law",
+                        "release_id": "v1.0.0",
+                        "snapshot_id": "snap_1",
+                        "compatibility": "data_only",
+                        "owned_entity_types": ["Case"],
+                        "owned_relationship_types": ["cites"],
+                        "parent_release_id": None,
+                    }
+                },
+            )
+        if request.url.path.endswith("/model/status"):
+            return httpx.Response(
+                200,
+                json={
+                    "upstream": {
+                        "transport_ref": "file:///tmp/releases/current",
+                        "model_id": "case-law",
+                        "release_id": "v1.0.0",
+                        "snapshot_id": "snap_1",
+                        "compatibility": "data_only",
+                        "owned_entity_types": ["Case"],
+                        "owned_relationship_types": ["cites"],
+                        "overlay_config_path": "config.yaml",
+                        "active_config_path": ".cruxible/composed/config.yaml",
+                        "manifest_path": ".cruxible/upstream/current/manifest.json",
+                        "graph_path": ".cruxible/upstream/current/graph.json",
+                        "config_path": ".cruxible/upstream/current/config.yaml",
+                        "lock_path": ".cruxible/upstream/current/cruxible.lock.yaml",
+                        "manifest_digest": "sha256:abc",
+                        "graph_digest": "sha256:def",
+                    }
+                },
+            )
+        if request.url.path.endswith("/model/pull/preview"):
+            return httpx.Response(
+                200,
+                json={
+                    "current_release_id": "v1.0.0",
+                    "target_release_id": "v1.1.0",
+                    "compatibility": "data_only",
+                    "apply_digest": "sha256:apply",
+                    "warnings": [],
+                    "conflicts": [],
+                    "lock_changed": True,
+                    "upstream_entity_delta": 1,
+                    "upstream_edge_delta": 0,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "release_id": "v1.1.0",
+                "apply_digest": "sha256:apply",
+                "pre_pull_snapshot_id": "snap_pre",
+            },
+        )
+
+    client = _build_client(handler)
+    assert client.model_fork(
+        transport_ref="file:///tmp/releases/current",
+        root_dir="/tmp/fork",
+    ).instance_id == "inst_fork"
+    assert client.model_publish(
+        "inst_123",
+        transport_ref="file:///tmp/releases/current",
+        model_id="case-law",
+        release_id="v1.0.0",
+        compatibility="data_only",
+    ).manifest.release_id == "v1.0.0"
+    assert client.model_status("inst_123").upstream is not None
+    assert client.model_pull_preview("inst_123").apply_digest == "sha256:apply"
+    assert client.model_pull_apply(
+        "inst_123",
+        expected_apply_digest="sha256:apply",
+    ).pre_pull_snapshot_id == "snap_pre"
+
+    assert captured[0][0].endswith("/api/v1/models/fork")
+    assert captured[1][0].endswith("/api/v1/inst_123/model/publish")
+    assert captured[2][0].endswith("/api/v1/inst_123/model/status")
+    assert captured[3][0].endswith("/api/v1/inst_123/model/pull/preview")
+    assert captured[4][0].endswith("/api/v1/inst_123/model/pull/apply")
+
+
 def test_stats_inspect_and_reload_use_expected_routes():
     captured: dict[str, Any] = {}
 

@@ -102,6 +102,17 @@ def handle_validate(
     )
 
 
+def handle_model_fork(
+    transport_ref: str,
+    root_dir: str,
+) -> contracts.ModelForkResult:
+    """Create a new local fork from a published model release."""
+    return _dispatch_remote_or_local(
+        lambda client: client.model_fork(transport_ref=transport_ref, root_dir=root_dir),
+        lambda: local_api._handle_model_fork_local(transport_ref, root_dir),
+    )
+
+
 def handle_propose_workflow(
     instance_id: str,
     workflow_name: str,
@@ -796,101 +807,60 @@ def handle_list_resolutions(
     )
 
 
-def handle_propose_entity_changes(
+def handle_model_publish(
     instance_id: str,
-    members: list[contracts.EntityChangeInput],
-    *,
-    thesis_text: str = "",
-    thesis_facts: dict[str, Any] | None = None,
-    analysis_state: dict[str, Any] | None = None,
-    proposed_by: contracts.GroupProposedBy = "ai_review",
-    suggested_priority: str | None = None,
-    source_workflow_name: str | None = None,
-    source_workflow_receipt_id: str | None = None,
-    source_trace_ids: list[str] | None = None,
-    source_step_ids: list[str] | None = None,
-) -> contracts.ProposeEntityChangesToolResult:
-    """Propose a governed batch of entity creates or patches."""
+    transport_ref: str,
+    model_id: str,
+    release_id: str,
+    compatibility: contracts.ModelCompatibility,
+) -> contracts.ModelPublishResult:
+    """Publish a root world-model instance to a transport ref."""
     return _dispatch_remote_or_local(
-        lambda client: client.propose_entity_changes(
+        lambda client: client.model_publish(
             instance_id,
-            members=members,
-            thesis_text=thesis_text,
-            thesis_facts=thesis_facts,
-            analysis_state=analysis_state,
-            proposed_by=proposed_by,
-            suggested_priority=suggested_priority,
-            source_workflow_name=source_workflow_name,
-            source_workflow_receipt_id=source_workflow_receipt_id,
-            source_trace_ids=source_trace_ids,
-            source_step_ids=source_step_ids,
+            transport_ref=transport_ref,
+            model_id=model_id,
+            release_id=release_id,
+            compatibility=compatibility,
         ),
-        lambda: local_api._handle_propose_entity_changes_local(
+        lambda: local_api._handle_model_publish_local(
             instance_id,
-            members,
-            thesis_text=thesis_text,
-            thesis_facts=thesis_facts,
-            analysis_state=analysis_state,
-            proposed_by=proposed_by,
-            suggested_priority=suggested_priority,
-            source_workflow_name=source_workflow_name,
-            source_workflow_receipt_id=source_workflow_receipt_id,
-            source_trace_ids=source_trace_ids,
-            source_step_ids=source_step_ids,
+            transport_ref,
+            model_id,
+            release_id,
+            compatibility,
         ),
     )
 
 
-def handle_get_entity_proposal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.GetEntityProposalToolResult:
-    """Get an entity proposal with its members."""
+def handle_model_status(instance_id: str) -> contracts.ModelStatusResult:
+    """Read upstream tracking metadata for a release-backed fork."""
     return _dispatch_remote_or_local(
-        lambda client: client.get_entity_proposal(instance_id, proposal_id),
-        lambda: local_api._handle_get_entity_proposal_local(instance_id, proposal_id),
+        lambda client: client.model_status(instance_id),
+        lambda: local_api._handle_model_status_local(instance_id),
     )
 
 
-def handle_list_entity_proposals(
-    instance_id: str,
-    *,
-    status: contracts.EntityProposalStatus | None = None,
-    limit: int = 50,
-) -> contracts.ListEntityProposalsToolResult:
-    """List entity proposals with optional status filter."""
+def handle_model_pull_preview(instance_id: str) -> contracts.ModelPullPreviewResult:
+    """Preview pulling a new upstream release into a local fork."""
     return _dispatch_remote_or_local(
-        lambda client: client.list_entity_proposals(instance_id, status=status, limit=limit),
-        lambda: local_api._handle_list_entity_proposals_local(
-            instance_id,
-            status=status,
-            limit=limit,
-        ),
+        lambda client: client.model_pull_preview(instance_id),
+        lambda: local_api._handle_model_pull_preview_local(instance_id),
     )
 
 
-def handle_resolve_entity_proposal(
+def handle_model_pull_apply(
     instance_id: str,
-    proposal_id: str,
-    action: contracts.EntityProposalAction,
-    *,
-    rationale: str = "",
-    resolved_by: contracts.EntityProposalResolvedBy = "human",
-) -> contracts.ResolveEntityProposalToolResult:
-    """Resolve an entity proposal."""
+    expected_apply_digest: str,
+) -> contracts.ModelPullApplyResult:
+    """Apply a previewed upstream release into a local fork."""
     return _dispatch_remote_or_local(
-        lambda client: client.resolve_entity_proposal(
+        lambda client: client.model_pull_apply(
             instance_id,
-            proposal_id,
-            action=action,
-            rationale=rationale,
-            resolved_by=resolved_by,
+            expected_apply_digest=expected_apply_digest,
         ),
-        lambda: local_api._handle_resolve_entity_proposal_local(
+        lambda: local_api._handle_model_pull_apply_local(
             instance_id,
-            proposal_id,
-            action,
-            rationale=rationale,
-            resolved_by=resolved_by,
+            expected_apply_digest,
         ),
     )

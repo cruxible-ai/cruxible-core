@@ -1,19 +1,14 @@
-"""Tests for batch feedback and governed entity proposals."""
+"""Tests for governed-write service operations."""
 
 from __future__ import annotations
 
 import pytest
 
-from cruxible_core.entity_proposal.types import EntityChangeMember
-from cruxible_core.errors import DataValidationError, ReceiptNotFoundError
+from cruxible_core.errors import ReceiptNotFoundError
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
-from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import (
     service_feedback_batch,
-    service_get_entity_proposal,
-    service_propose_entity_changes,
     service_query,
-    service_resolve_entity_proposal,
 )
 
 
@@ -103,87 +98,3 @@ def test_service_feedback_batch_invalid_receipt_rolls_back(populated_instance):
         assert feedback_store.count_feedback() == 0
     finally:
         feedback_store.close()
-
-
-def test_entity_proposal_create_and_patch_flow(populated_instance):
-    propose = service_propose_entity_changes(
-        populated_instance,
-        [
-            EntityChangeMember(
-                entity_type="Vehicle",
-                entity_id="V-2025-PILOT-ELITE",
-                operation="create",
-                properties={
-                    "vehicle_id": "V-2025-PILOT-ELITE",
-                    "year": 2025,
-                    "make": "Honda",
-                    "model": "Pilot",
-                },
-            ),
-            EntityChangeMember(
-                entity_type="Part",
-                entity_id="BP-1001",
-                operation="patch",
-                properties={"price": 59.99},
-            ),
-        ],
-        thesis_text="Curated entity changes",
-        proposed_by="human",
-    )
-    assert propose.status == "pending_review"
-
-    loaded = service_get_entity_proposal(populated_instance, propose.proposal_id)
-    assert loaded.proposal.member_count == 2
-    assert len(loaded.members) == 2
-
-    resolved = service_resolve_entity_proposal(
-        populated_instance,
-        propose.proposal_id,
-        "approve",
-        rationale="looks good",
-        resolved_by="human",
-    )
-    assert resolved.entities_created == 1
-    assert resolved.entities_patched == 1
-    assert resolved.receipt_id is not None
-
-    graph = populated_instance.load_graph()
-    created = graph.get_entity("Vehicle", "V-2025-PILOT-ELITE")
-    assert created == EntityInstance(
-        entity_type="Vehicle",
-        entity_id="V-2025-PILOT-ELITE",
-        properties={
-            "vehicle_id": "V-2025-PILOT-ELITE",
-            "year": 2025,
-            "make": "Honda",
-            "model": "Pilot",
-        },
-    )
-    patched = graph.get_entity("Part", "BP-1001")
-    assert patched is not None
-    assert patched.properties["price"] == 59.99
-    assert patched.properties["name"] == "Ceramic Brake Pads"
-
-
-def test_entity_proposal_invalid_approval_leaves_pending(populated_instance):
-    propose = service_propose_entity_changes(
-        populated_instance,
-        [
-            EntityChangeMember(
-                entity_type="Part",
-                entity_id="BP-1001",
-                operation="create",
-                properties={"part_number": "BP-1001", "name": "Duplicate"},
-            )
-        ],
-    )
-
-    with pytest.raises(DataValidationError, match="already exists"):
-        service_resolve_entity_proposal(
-            populated_instance,
-            propose.proposal_id,
-            "approve",
-        )
-
-    loaded = service_get_entity_proposal(populated_instance, propose.proposal_id)
-    assert loaded.proposal.status == "pending_review"

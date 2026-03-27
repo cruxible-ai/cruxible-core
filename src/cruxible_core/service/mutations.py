@@ -6,7 +6,7 @@ import json as _json
 from collections.abc import Sequence
 from typing import Any
 
-from cruxible_core.errors import ConfigError, CoreError, DataValidationError, MutationError
+from cruxible_core.errors import ConfigError, CoreError, DataValidationError
 from cruxible_core.graph.operations import (
     apply_entity,
     apply_relationship,
@@ -15,8 +15,13 @@ from cruxible_core.graph.operations import (
 )
 from cruxible_core.ingest import ingest_file, ingest_from_mapping, load_data_from_string
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service._helpers import _config_digest, _persist_receipt, _save_graph
+from cruxible_core.service._helpers import (
+    MutationReceiptContext,
+    _config_digest,
+    _save_graph,
+    mutation_receipt,
+)
+from cruxible_core.service._ownership import check_type_ownership
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
@@ -37,18 +42,18 @@ def service_add_entities(
     Validates all entities first, then applies atomically.
     Raises DataValidationError on duplicates within the batch or schema violations.
     """
+    check_type_ownership(instance, entity_types=[entity.entity_type for entity in entities])
     config = instance.load_config()
     graph = instance.load_graph()
 
-    builder = (
-        ReceiptBuilder(operation_type="add_entity", parameters={"count": len(entities)})
-        if _create_receipt
-        else None
-    )
-
-    result: AddEntityResult | None = None
-    _exc: CoreError | None = None
-    try:
+    ctx: MutationReceiptContext[AddEntityResult]
+    with mutation_receipt(
+        instance,
+        "add_entity",
+        {"count": len(entities)},
+        enabled=_create_receipt,
+    ) as ctx:
+        builder = ctx.builder
         errors: list[str] = []
         batch_seen: set[tuple[str, str]] = set()
         pending = []
@@ -108,24 +113,11 @@ def service_add_entities(
                 added += 1
 
         _save_graph(instance, graph)
-        if builder:
-            builder.mark_committed()
-        result = AddEntityResult(added=added, updated=updated)
-    except CoreError as e:
-        _exc = e
-        raise
-    except Exception as exc:
-        _exc = MutationError(f"Unexpected failure: {exc}")
-        raise _exc from exc
-    finally:
-        if builder:
-            receipt = builder.build()
-            if _persist_receipt(instance, receipt):
-                if _exc is not None:
-                    _exc.mutation_receipt_id = receipt.receipt_id
-                elif result is not None:
-                    result.receipt_id = receipt.receipt_id
-    return result  # type: ignore[return-value]
+        ctx.set_result(AddEntityResult(added=added, updated=updated))
+
+    result = ctx.result
+    assert result is not None
+    return result
 
 
 def service_add_relationships(
@@ -142,21 +134,21 @@ def service_add_relationships(
     New edges get provenance stamped. Updated edges preserve existing provenance.
     Raises DataValidationError on duplicates within the batch or schema violations.
     """
+    check_type_ownership(
+        instance,
+        relationship_types=[relationship.relationship for relationship in relationships],
+    )
     config = instance.load_config()
     graph = instance.load_graph()
 
-    builder = (
-        ReceiptBuilder(
-            operation_type="add_relationship",
-            parameters={"count": len(relationships), "source": source},
-        )
-        if _create_receipt
-        else None
-    )
-
-    result: AddRelationshipResult | None = None
-    _exc: CoreError | None = None
-    try:
+    ctx: MutationReceiptContext[AddRelationshipResult]
+    with mutation_receipt(
+        instance,
+        "add_relationship",
+        {"count": len(relationships), "source": source},
+        enabled=_create_receipt,
+    ) as ctx:
+        builder = ctx.builder
         errors: list[str] = []
         batch_seen: set[tuple[str, str, str, str, str]] = set()
         pending = []
@@ -236,24 +228,11 @@ def service_add_relationships(
                 added += 1
 
         _save_graph(instance, graph)
-        if builder:
-            builder.mark_committed()
-        result = AddRelationshipResult(added=added, updated=updated)
-    except CoreError as e:
-        _exc = e
-        raise
-    except Exception as exc:
-        _exc = MutationError(f"Unexpected failure: {exc}")
-        raise _exc from exc
-    finally:
-        if builder:
-            receipt = builder.build()
-            if _persist_receipt(instance, receipt):
-                if _exc is not None:
-                    _exc.mutation_receipt_id = receipt.receipt_id
-                elif result is not None:
-                    result.receipt_id = receipt.receipt_id
-    return result  # type: ignore[return-value]
+        ctx.set_result(AddRelationshipResult(added=added, updated=updated))
+
+    result = ctx.result
+    assert result is not None
+    return result
 
 
 def service_ingest(
@@ -286,52 +265,45 @@ def service_ingest(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    builder = ReceiptBuilder(
-        operation_type="ingest",
-        parameters={"mapping": mapping_name, "config_digest": _config_digest(config)},
-    )
+    ctx: MutationReceiptContext[IngestResult]
+    with mutation_receipt(
+        instance,
+        "ingest",
+        {"mapping": mapping_name, "config_digest": _config_digest(config)},
+    ) as ctx:
+        assert ctx.builder is not None
+        try:
+            if file_path is not None:
+                added, updated = ingest_file(config, graph, mapping_name, file_path)
+            elif data_csv is not None:
+                df = load_data_from_string(data_csv, "csv")
+                added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+            elif data_ndjson is not None:
+                df = load_data_from_string(data_ndjson, "ndjson")
+                added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+            else:
+                assert data_json is not None
+                if not isinstance(data_json, str):
+                    data_json = _json.dumps(data_json)
+                df = load_data_from_string(data_json, "json")
+                added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+        except CoreError as exc:
+            ctx.builder.record_validation(passed=False, detail={"error": str(exc)})
+            raise
 
-    result: IngestResult | None = None
-    _exc: CoreError | None = None
-    try:
-        if file_path is not None:
-            added, updated = ingest_file(config, graph, mapping_name, file_path)
-        elif data_csv is not None:
-            df = load_data_from_string(data_csv, "csv")
-            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
-        elif data_ndjson is not None:
-            df = load_data_from_string(data_ndjson, "ndjson")
-            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
-        else:
-            assert data_json is not None
-            if not isinstance(data_json, str):
-                data_json = _json.dumps(data_json)
-            df = load_data_from_string(data_json, "json")
-            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
-
-        builder.record_ingest_batch(mapping_name, added, updated)
+        ctx.builder.record_ingest_batch(mapping_name, added, updated)
         _save_graph(instance, graph)
-        builder.mark_committed()
         mapping = config.ingestion[mapping_name]
-        result = IngestResult(
-            records_ingested=added,
-            records_updated=updated,
-            mapping=mapping_name,
-            entity_type=mapping.entity_type,
-            relationship_type=mapping.relationship_type,
+        ctx.set_result(
+            IngestResult(
+                records_ingested=added,
+                records_updated=updated,
+                mapping=mapping_name,
+                entity_type=mapping.entity_type,
+                relationship_type=mapping.relationship_type,
+            )
         )
-    except CoreError as e:
-        builder.record_validation(passed=False, detail={"error": str(e)})
-        _exc = e
-        raise
-    except Exception as exc:
-        _exc = MutationError(f"Unexpected failure: {exc}")
-        raise _exc from exc
-    finally:
-        receipt = builder.build()
-        if _persist_receipt(instance, receipt):
-            if _exc is not None:
-                _exc.mutation_receipt_id = receipt.receipt_id
-            elif result is not None:
-                result.receipt_id = receipt.receipt_id
-    return result  # type: ignore[return-value]
+
+    result = ctx.result
+    assert result is not None
+    return result

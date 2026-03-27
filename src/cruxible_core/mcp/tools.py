@@ -116,6 +116,14 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_validate(config_path, config_yaml)
 
     @_tool
+    def cruxible_model_fork(
+        transport_ref: str,
+        root_dir: str,
+    ) -> contracts.ModelForkResult:
+        """Create a new local fork from a published model release."""
+        return handlers.handle_model_fork(transport_ref, root_dir)
+
+    @_tool
     def cruxible_ingest(
         instance_id: str,
         mapping_name: str,
@@ -691,67 +699,41 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
-    def cruxible_propose_entity_changes(
+    def cruxible_model_publish(
         instance_id: str,
-        members: list[contracts.EntityChangeInput],
-        thesis_text: str = "",
-        thesis_facts: dict[str, Any] | None = None,
-        analysis_state: dict[str, Any] | None = None,
-        proposed_by: contracts.GroupProposedBy = "ai_review",
-        suggested_priority: str | None = None,
-        source_workflow_name: str | None = None,
-        source_workflow_receipt_id: str | None = None,
-        source_trace_ids: list[str] | None = None,
-        source_step_ids: list[str] | None = None,
-    ) -> contracts.ProposeEntityChangesToolResult:
-        """Propose a governed batch of entity creates or property patches."""
-        return handlers.handle_propose_entity_changes(
+        transport_ref: str,
+        model_id: str,
+        release_id: str,
+        compatibility: contracts.ModelCompatibility,
+    ) -> contracts.ModelPublishResult:
+        """Publish a root world-model instance as an immutable release bundle."""
+        return handlers.handle_model_publish(
             instance_id,
-            members,
-            thesis_text=thesis_text,
-            thesis_facts=thesis_facts,
-            analysis_state=analysis_state,
-            proposed_by=proposed_by,
-            suggested_priority=suggested_priority,
-            source_workflow_name=source_workflow_name,
-            source_workflow_receipt_id=source_workflow_receipt_id,
-            source_trace_ids=source_trace_ids,
-            source_step_ids=source_step_ids,
+            transport_ref,
+            model_id,
+            release_id,
+            compatibility,
         )
 
     @_tool
-    def cruxible_get_entity_proposal(
-        instance_id: str,
-        proposal_id: str,
-    ) -> contracts.GetEntityProposalToolResult:
-        """Fetch one governed entity proposal with its members."""
-        return handlers.handle_get_entity_proposal(instance_id, proposal_id)
+    def cruxible_model_status(instance_id: str) -> contracts.ModelStatusResult:
+        """Return upstream tracking metadata for a release-backed fork."""
+        return handlers.handle_model_status(instance_id)
 
     @_tool
-    def cruxible_list_entity_proposals(
+    def cruxible_model_pull_preview(
         instance_id: str,
-        status: contracts.EntityProposalStatus | None = None,
-        limit: int = 50,
-    ) -> contracts.ListEntityProposalsToolResult:
-        """List governed entity proposals."""
-        return handlers.handle_list_entity_proposals(instance_id, status=status, limit=limit)
+    ) -> contracts.ModelPullPreviewResult:
+        """Preview pulling a newer upstream release into a release-backed fork."""
+        return handlers.handle_model_pull_preview(instance_id)
 
     @_tool
-    def cruxible_resolve_entity_proposal(
+    def cruxible_model_pull_apply(
         instance_id: str,
-        proposal_id: str,
-        action: contracts.GroupAction,
-        rationale: str = "",
-        resolved_by: contracts.GroupResolvedBy = "human",
-    ) -> contracts.ResolveEntityProposalToolResult:
-        """Resolve an entity proposal. Approve applies graph changes."""
-        return handlers.handle_resolve_entity_proposal(
-            instance_id,
-            proposal_id,
-            action,
-            rationale=rationale,
-            resolved_by=resolved_by,
-        )
+        expected_apply_digest: str,
+    ) -> contracts.ModelPullApplyResult:
+        """Apply a previewed upstream release into a release-backed fork."""
+        return handlers.handle_model_pull_apply(instance_id, expected_apply_digest)
 
     @_tool
     def cruxible_get_entity(

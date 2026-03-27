@@ -719,6 +719,85 @@ class EntityGraph:
             if data.get("relationship_type") == relationship_type
         )
 
+    def extract_owned_subgraph(
+        self,
+        *,
+        entity_types: list[str],
+        relationship_types: list[str],
+    ) -> EntityGraph:
+        """Extract a subgraph containing selected entity and relationship types."""
+        entity_type_set = set(entity_types)
+        relationship_type_set = set(relationship_types)
+        subgraph = EntityGraph()
+
+        for entity in self.iter_all_entities():
+            if entity.entity_type in entity_type_set:
+                subgraph.add_entity(entity)
+
+        for edge in self.iter_edges():
+            if edge["relationship_type"] not in relationship_type_set:
+                continue
+            if (
+                edge["from_type"] in entity_type_set
+                and not subgraph.has_entity(edge["from_type"], edge["from_id"])
+            ):
+                source = self.get_entity(edge["from_type"], edge["from_id"])
+                if source is not None:
+                    subgraph.add_entity(source)
+            if (
+                edge["to_type"] in entity_type_set
+                and not subgraph.has_entity(edge["to_type"], edge["to_id"])
+            ):
+                target = self.get_entity(edge["to_type"], edge["to_id"])
+                if target is not None:
+                    subgraph.add_entity(target)
+            subgraph.add_relationship(
+                RelationshipInstance(
+                    relationship_type=edge["relationship_type"],
+                    from_entity_type=edge["from_type"],
+                    from_entity_id=edge["from_id"],
+                    to_entity_type=edge["to_type"],
+                    to_entity_id=edge["to_id"],
+                    edge_key=edge["edge_key"],
+                    properties=dict(edge["properties"]),
+                )
+            )
+
+        return subgraph
+
+    @classmethod
+    def merge_graphs(cls, base: EntityGraph, overlay: EntityGraph) -> EntityGraph:
+        """Merge two graphs by upserting overlay entities and appending overlay edges."""
+        merged = cls.from_dict(base.to_dict())
+
+        for entity in overlay.iter_all_entities():
+            merged.add_entity(entity)
+
+        for edge in overlay.iter_edges():
+            if not merged.has_entity(edge["from_type"], edge["from_id"]):
+                raise ValueError(
+                    "Overlay relationship references missing source entity "
+                    f"{edge['from_type']}:{edge['from_id']}"
+                )
+            if not merged.has_entity(edge["to_type"], edge["to_id"]):
+                raise ValueError(
+                    "Overlay relationship references missing target entity "
+                    f"{edge['to_type']}:{edge['to_id']}"
+                )
+            merged.add_relationship(
+                RelationshipInstance(
+                    relationship_type=edge["relationship_type"],
+                    from_entity_type=edge["from_type"],
+                    from_entity_id=edge["from_id"],
+                    to_entity_type=edge["to_type"],
+                    to_entity_id=edge["to_id"],
+                    edge_key=edge["edge_key"],
+                    properties=dict(edge["properties"]),
+                )
+            )
+
+        return merged
+
     # -------------------------------------------------------------------------
     # Serialization
     # -------------------------------------------------------------------------

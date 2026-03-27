@@ -224,6 +224,44 @@ def test_add_entity_returns_contract_shape(app_client: TestClient, server_projec
     assert response.json()["entities_added"] == 1
 
 
+def test_model_publish_fork_and_status_routes(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    release_dir = tmp_path / "releases" / "current"
+
+    publish = app_client.post(
+        f"/api/v1/{instance_id}/model/publish",
+        json={
+            "transport_ref": f"file://{release_dir}",
+            "model_id": "car-parts",
+            "release_id": "v1.0.0",
+            "compatibility": "data_only",
+        },
+    )
+    assert publish.status_code == 200
+    assert publish.json()["manifest"]["release_id"] == "v1.0.0"
+
+    fork_root = tmp_path / "forked-model"
+    fork = app_client.post(
+        "/api/v1/models/fork",
+        json={
+            "transport_ref": f"file://{release_dir}",
+            "root_dir": str(fork_root),
+        },
+    )
+    assert fork.status_code == 200
+    fork_instance_id = fork.json()["instance_id"]
+    assert fork_instance_id != str(fork_root)
+
+    status = app_client.get(f"/api/v1/{fork_instance_id}/model/status")
+    assert status.status_code == 200
+    assert status.json()["upstream"]["model_id"] == "car-parts"
+    assert status.json()["upstream"]["release_id"] == "v1.0.0"
+
+
 def test_permission_denied_returns_structured_403(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -514,78 +552,6 @@ def test_feedback_batch_route(
     assert payload["total"] == 2
     assert payload["applied_count"] == 2
     assert payload["receipt_id"]
-
-
-def test_entity_proposal_routes(
-    app_client: TestClient,
-    server_project: Path,
-):
-    instance_id = _init_instance(app_client, server_project)
-    add = app_client.post(
-        f"/api/v1/{instance_id}/entities",
-        json={
-            "entities": [
-                {
-                    "entity_type": "Part",
-                    "entity_id": "BP-1",
-                    "properties": {
-                        "part_number": "BP-1",
-                        "name": "Pads",
-                        "category": "brakes",
-                        "price": 49.99,
-                    },
-                }
-            ]
-        },
-    )
-    assert add.status_code == 200
-
-    propose = app_client.post(
-        f"/api/v1/{instance_id}/entity-proposals",
-        json={
-            "members": [
-                {
-                    "entity_type": "Vehicle",
-                    "entity_id": "V-2",
-                    "operation": "create",
-                    "properties": {
-                        "vehicle_id": "V-2",
-                        "year": 2025,
-                        "make": "Honda",
-                        "model": "Pilot",
-                    },
-                },
-                {
-                    "entity_type": "Part",
-                    "entity_id": "BP-1",
-                    "operation": "patch",
-                    "properties": {"price": 59.99},
-                },
-            ],
-            "thesis_text": "Curated entity updates",
-        },
-    )
-    assert propose.status_code == 200
-    proposal_id = propose.json()["proposal_id"]
-
-    fetched = app_client.get(f"/api/v1/{instance_id}/entity-proposals/{proposal_id}")
-    assert fetched.status_code == 200
-    assert fetched.json()["proposal"]["proposal_id"] == proposal_id
-
-    listed = app_client.get(
-        f"/api/v1/{instance_id}/entity-proposals",
-        params={"status": "pending_review", "limit": 10},
-    )
-    assert listed.status_code == 200
-    assert listed.json()["total"] >= 1
-
-    resolved = app_client.post(
-        f"/api/v1/{instance_id}/entity-proposals/{proposal_id}/resolve",
-        json={"action": "approve"},
-    )
-    assert resolved.status_code == 200
-    assert resolved.json()["entities_created"] == 1
-    assert resolved.json()["entities_patched"] == 1
 
 
 def test_workflow_propose_snapshot_and_fork_round_trip(

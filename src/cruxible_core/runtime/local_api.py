@@ -8,7 +8,6 @@ from typing import Any, TypeVar
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import ConstraintSchema, DecisionPolicySchema
 from cruxible_core.config.validator import validate_config
-from cruxible_core.entity_proposal.types import EntityChangeMember
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -36,9 +35,9 @@ from cruxible_core.service import (
     service_feedback,
     service_feedback_batch,
     service_find_candidates,
+    service_fork_model,
     service_fork_snapshot,
     service_get_entity,
-    service_get_entity_proposal,
     service_get_group,
     service_get_outcome_profile,
     service_get_receipt,
@@ -47,19 +46,20 @@ from cruxible_core.service import (
     service_init,
     service_inspect_entity,
     service_list,
-    service_list_entity_proposals,
     service_list_groups,
     service_list_resolutions,
     service_list_snapshots,
     service_lock,
+    service_model_status,
     service_outcome,
     service_plan,
-    service_propose_entity_changes,
     service_propose_group,
     service_propose_workflow,
+    service_publish_model,
+    service_pull_model_apply,
+    service_pull_model_preview,
     service_query,
     service_reload_config,
-    service_resolve_entity_proposal,
     service_resolve_group,
     service_run,
     service_sample,
@@ -1482,104 +1482,109 @@ def _handle_list_resolutions_local(
     )
 
 
-def _handle_propose_entity_changes_local(
+def _handle_model_publish_local(
     instance_id: str,
-    members: list[contracts.EntityChangeInput],
-    *,
-    thesis_text: str = "",
-    thesis_facts: dict[str, Any] | None = None,
-    analysis_state: dict[str, Any] | None = None,
-    proposed_by: contracts.GroupProposedBy = "ai_review",
-    suggested_priority: str | None = None,
-    source_workflow_name: str | None = None,
-    source_workflow_receipt_id: str | None = None,
-    source_trace_ids: list[str] | None = None,
-    source_step_ids: list[str] | None = None,
-) -> contracts.ProposeEntityChangesToolResult:
-    """Propose a governed batch of entity creates or patches."""
-    check_permission("cruxible_propose_entity_changes", instance_id=instance_id)
+    transport_ref: str,
+    model_id: str,
+    release_id: str,
+    compatibility: contracts.ModelCompatibility,
+) -> contracts.ModelPublishResult:
+    """Publish a root world-model instance as an immutable release bundle."""
+    check_permission(
+        "cruxible_model_publish",
+        instance_id=instance_id,
+        required_mode=PermissionMode.ADMIN,
+    )
     instance = get_manager().get(instance_id)
-    result = service_propose_entity_changes(
+    result = service_publish_model(
         instance,
-        [
-            EntityChangeMember(
-                entity_type=member.entity_type,
-                entity_id=member.entity_id,
-                operation=member.operation,
-                properties=member.properties,
-            )
-            for member in members
-        ],
-        thesis_text=thesis_text,
-        thesis_facts=thesis_facts,
-        analysis_state=analysis_state,
-        proposed_by=proposed_by,
-        suggested_priority=suggested_priority,
-        source_workflow_name=source_workflow_name,
-        source_workflow_receipt_id=source_workflow_receipt_id,
-        source_trace_ids=source_trace_ids,
-        source_step_ids=source_step_ids,
+        transport_ref=transport_ref,
+        model_id=model_id,
+        release_id=release_id,
+        compatibility=compatibility,
     )
-    return contracts.ProposeEntityChangesToolResult(
-        proposal_id=result.proposal_id,
-        status=result.status,
-        member_count=result.member_count,
+    return contracts.ModelPublishResult(
+        manifest=contracts.PublishedModelManifest.model_validate(
+            result.manifest.model_dump(mode="json")
+        )
     )
 
 
-def _handle_get_entity_proposal_local(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.GetEntityProposalToolResult:
-    """Get an entity proposal with its members."""
-    check_permission("cruxible_get_entity_proposal")
+def _handle_model_fork_local(
+    transport_ref: str,
+    root_dir: str,
+) -> contracts.ModelForkResult:
+    """Create a new local fork from a published model release."""
+    check_permission(
+        "cruxible_model_fork",
+        instance_id=root_dir,
+        required_mode=PermissionMode.ADMIN,
+    )
+    validate_root_dir(root_dir)
+    result = service_fork_model(transport_ref=transport_ref, root_dir=root_dir)
+    registered = get_registry().get_or_create_local_instance(Path(root_dir))
+    get_manager().register(registered.record.instance_id, result.instance)
+    return contracts.ModelForkResult(
+        instance_id=registered.record.instance_id,
+        manifest=contracts.PublishedModelManifest.model_validate(
+            result.manifest.model_dump(mode="json")
+        ),
+    )
+
+
+def _handle_model_status_local(instance_id: str) -> contracts.ModelStatusResult:
+    """Return upstream tracking metadata for a release-backed fork."""
+    check_permission(
+        "cruxible_model_status",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
     instance = get_manager().get(instance_id)
-    result = service_get_entity_proposal(instance, proposal_id)
-    return contracts.GetEntityProposalToolResult(
-        proposal=result.proposal.model_dump(mode="json"),
-        members=[member.model_dump(mode="json") for member in result.members],
+    result = service_model_status(instance)
+    upstream = (
+        contracts.UpstreamMetadataResult.model_validate(result.upstream.model_dump(mode="json"))
+        if result.upstream is not None
+        else None
     )
+    return contracts.ModelStatusResult(upstream=upstream)
 
 
-def _handle_list_entity_proposals_local(
-    instance_id: str,
-    *,
-    status: contracts.EntityProposalStatus | None = None,
-    limit: int = 50,
-) -> contracts.ListEntityProposalsToolResult:
-    """List entity proposals with optional status filter."""
-    check_permission("cruxible_list_entity_proposals")
+def _handle_model_pull_preview_local(instance_id: str) -> contracts.ModelPullPreviewResult:
+    """Preview pulling a newer upstream release into a fork."""
+    check_permission(
+        "cruxible_model_pull_preview",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
     instance = get_manager().get(instance_id)
-    result = service_list_entity_proposals(instance, status=status, limit=limit)
-    return contracts.ListEntityProposalsToolResult(
-        proposals=[proposal.model_dump(mode="json") for proposal in result.proposals],
-        total=result.total,
+    result = service_pull_model_preview(instance)
+    return contracts.ModelPullPreviewResult(
+        current_release_id=result.current_release_id,
+        target_release_id=result.target_release_id,
+        compatibility=result.compatibility,
+        apply_digest=result.apply_digest,
+        warnings=result.warnings,
+        conflicts=result.conflicts,
+        lock_changed=result.lock_changed,
+        upstream_entity_delta=result.upstream_entity_delta,
+        upstream_edge_delta=result.upstream_edge_delta,
     )
 
 
-def _handle_resolve_entity_proposal_local(
+def _handle_model_pull_apply_local(
     instance_id: str,
-    proposal_id: str,
-    action: contracts.EntityProposalAction,
-    *,
-    rationale: str = "",
-    resolved_by: contracts.EntityProposalResolvedBy = "human",
-) -> contracts.ResolveEntityProposalToolResult:
-    """Resolve an entity proposal."""
-    check_permission("cruxible_resolve_entity_proposal", instance_id=instance_id)
-    instance = get_manager().get(instance_id)
-    result = service_resolve_entity_proposal(
-        instance,
-        proposal_id,
-        action,
-        rationale=rationale,
-        resolved_by=resolved_by,
+    expected_apply_digest: str,
+) -> contracts.ModelPullApplyResult:
+    """Apply a previewed upstream pull to a tracked fork."""
+    check_permission(
+        "cruxible_model_pull_apply",
+        instance_id=instance_id,
+        required_mode=PermissionMode.ADMIN,
     )
-    return contracts.ResolveEntityProposalToolResult(
-        proposal_id=result.proposal_id,
-        action=result.action,
-        entities_created=result.entities_created,
-        entities_patched=result.entities_patched,
-        resolution_id=result.resolution_id,
-        receipt_id=result.receipt_id,
+    instance = get_manager().get(instance_id)
+    result = service_pull_model_apply(instance, expected_apply_digest=expected_apply_digest)
+    return contracts.ModelPullApplyResult(
+        release_id=result.release_id,
+        apply_digest=result.apply_digest,
+        pre_pull_snapshot_id=result.pre_pull_snapshot_id,
     )

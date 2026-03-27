@@ -79,6 +79,8 @@ class TestCheckPermission:
         init_permissions()
         # Should not raise
         check_permission("cruxible_schema")
+        check_permission("cruxible_model_status")
+        check_permission("cruxible_model_pull_preview")
 
     def test_graph_write_tool_in_read_only(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
@@ -100,6 +102,10 @@ class TestCheckPermission:
         init_permissions()
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_ingest")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_model_publish")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_model_pull_apply")
 
     def test_graph_write_tool_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
@@ -114,7 +120,6 @@ class TestCheckPermission:
         check_permission("cruxible_feedback")
         check_permission("cruxible_feedback_batch")
         check_permission("cruxible_propose_workflow")
-        check_permission("cruxible_propose_entity_changes")
 
     def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
@@ -124,8 +129,6 @@ class TestCheckPermission:
             check_permission("cruxible_add_entity")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_resolve_group")
-        with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_resolve_entity_proposal")
 
     def test_admin_tool_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
@@ -136,6 +139,9 @@ class TestCheckPermission:
 
     def test_admin_tool_in_admin(self):
         check_permission("cruxible_ingest")
+        check_permission("cruxible_model_publish")
+        check_permission("cruxible_model_fork")
+        check_permission("cruxible_model_pull_apply")
 
     def test_denial_message_includes_modes(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")

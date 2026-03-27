@@ -6,13 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.entity_proposal.types import EntityChangeMember, EntityChangeProposal
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.snapshot.types import WorldSnapshot
+from cruxible_core.snapshot.types import PublishedModelManifest, UpstreamMetadata, WorldSnapshot
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
 
 # ---------------------------------------------------------------------------
@@ -431,32 +430,39 @@ class ForkSnapshotResult:
 
 
 @dataclass
-class ProposeEntityChangesResult:
-    proposal_id: str
-    status: str
-    member_count: int
+class ModelPublishResult:
+    manifest: PublishedModelManifest
 
 
 @dataclass
-class GetEntityProposalResult:
-    proposal: EntityChangeProposal
-    members: list[EntityChangeMember]
+class ModelForkResult:
+    instance: InstanceProtocol
+    manifest: PublishedModelManifest
 
 
 @dataclass
-class ListEntityProposalsResult:
-    proposals: list[EntityChangeProposal]
-    total: int
+class ModelStatusResult:
+    upstream: UpstreamMetadata | None
 
 
 @dataclass
-class ResolveEntityProposalResult:
-    proposal_id: str
-    action: str
-    entities_created: int
-    entities_patched: int
-    resolution_id: str | None = None
-    receipt_id: str | None = None
+class ModelPullPreviewResult:
+    current_release_id: str | None
+    target_release_id: str
+    compatibility: str
+    apply_digest: str
+    warnings: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+    lock_changed: bool = False
+    upstream_entity_delta: int = 0
+    upstream_edge_delta: int = 0
+
+
+@dataclass
+class ModelPullApplyResult:
+    release_id: str
+    apply_digest: str
+    pre_pull_snapshot_id: str
 
 
 # ---------------------------------------------------------------------------
