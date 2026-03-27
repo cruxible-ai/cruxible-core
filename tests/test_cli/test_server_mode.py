@@ -62,6 +62,71 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
     assert "Instance ID: inst_abc123" in result.output
 
 
+def test_server_mode_validate_composes_overlay_before_upload(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    base = tmp_path / "base.yaml"
+    base.write_text(
+        'version: "1.0"\n'
+        "name: base\n"
+        "entity_types:\n"
+        "  Case:\n"
+        "    properties:\n"
+        "      case_id: {type: string, primary_key: true}\n"
+        "relationships:\n"
+        "  - name: cites\n"
+        "    from: Case\n"
+        "    to: Case\n"
+    )
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text(
+        'version: "1.0"\n'
+        "name: fork\n"
+        "extends: base.yaml\n"
+        "entity_types: {}\n"
+        "relationships:\n"
+        "  - name: follows\n"
+        "    from: Case\n"
+        "    to: Case\n"
+    )
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def validate(self, *, config_path=None, config_yaml=None):
+            captured["config_path"] = config_path
+            captured["config_yaml"] = config_yaml
+            return contracts.ValidateResult(
+                valid=True,
+                name="fork",
+                entity_types=["Case"],
+                relationships=["cites", "follows"],
+                named_queries=[],
+                warnings=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "validate",
+            "--config",
+            str(overlay),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["config_path"] is None
+    assert isinstance(captured["config_yaml"], str)
+    assert "extends:" not in captured["config_yaml"]
+    assert "Case:" in captured["config_yaml"]
+    assert "follows" in captured["config_yaml"]
+    assert "Config 'fork' is valid." in result.output
+
+
 def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
     result = runner.invoke(

@@ -73,7 +73,7 @@ def init(config_path: str, root_dir: str | None, data_dir: str | None) -> None:
 def validate(config_path: str) -> None:
     """Validate a config YAML file without creating an instance."""
     result = _dispatch_cli(
-        lambda client: client.validate(config_yaml=_read_text_or_error(config_path)),
+        lambda client: client.validate(config_yaml=_common._read_validation_yaml_or_error(config_path)),
         lambda: service_validate(config_path=config_path),
     )
     if isinstance(result, contracts.ValidateResult):

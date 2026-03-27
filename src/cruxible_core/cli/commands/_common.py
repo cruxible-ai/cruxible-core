@@ -12,6 +12,8 @@ from rich.console import Console
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.client import CruxibleClient
+from cruxible_core.config.composer import compose_configs
+from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
@@ -99,6 +101,26 @@ def _read_text_or_error(path_str: str) -> str:
         return path.read_text()
     except OSError as exc:
         raise ConfigError(f"Failed to read {path}: {exc}") from exc
+
+
+def _read_validation_yaml_or_error(path_str: str) -> str:
+    """Read config YAML for remote validation, composing overlays when needed."""
+    path = Path(path_str)
+    raw_yaml = _read_text_or_error(path_str)
+    config = load_config(path)
+    if config.extends is None:
+        return raw_yaml
+
+    base_path = Path(config.extends)
+    if not base_path.is_absolute():
+        base_path = path.resolve().parent / base_path
+    if not base_path.exists():
+        raise ConfigError(f"Base config for extends not found: {base_path}")
+
+    base = load_config(base_path)
+    composed = compose_configs(base, config)
+    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
+    return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
 
 
 def _read_input_payload(path_str: str) -> dict[str, Any]:
