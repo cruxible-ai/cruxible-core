@@ -2,6 +2,7 @@
 
 import pytest
 
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.storage.sqlite import SQLiteStore
@@ -151,3 +152,112 @@ class TestSQLiteStore:
         assert loaded is not None
         assert loaded.query_name == "q"
         store2.close()
+
+    def test_migration_adds_operation_type(self, tmp_path):
+        """Open store, close, reopen — operation_type column exists."""
+        db_path = tmp_path / "migrate.db"
+        store1 = SQLiteStore(db_path)
+        b = ReceiptBuilder(query_name="q", parameters={})
+        store1.save_receipt(b.build(results=[]))
+        store1.close()
+
+        store2 = SQLiteStore(db_path)
+        items = store2.list_receipts()
+        assert items[0]["operation_type"] == "query"
+        store2.close()
+
+    def test_save_stores_operation_type(self, store: SQLiteStore):
+        b = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})
+        b.mark_committed()
+        receipt = b.build()
+        store.save_receipt(receipt)
+        items = store.list_receipts()
+        assert items[0]["operation_type"] == "add_entity"
+
+    def test_list_filter_by_operation_type(self, store: SQLiteStore):
+        b1 = ReceiptBuilder(query_name="q", parameters={})
+        b2 = ReceiptBuilder(operation_type="add_entity", parameters={})
+        b2.mark_committed()
+        store.save_receipt(b1.build(results=[]))
+        store.save_receipt(b2.build())
+
+        items = store.list_receipts(operation_type="add_entity")
+        assert len(items) == 1
+        assert items[0]["operation_type"] == "add_entity"
+
+    def test_count_filter_by_operation_type(self, store: SQLiteStore):
+        b1 = ReceiptBuilder(query_name="q", parameters={})
+        b2 = ReceiptBuilder(operation_type="ingest", parameters={})
+        b2.mark_committed()
+        store.save_receipt(b1.build(results=[]))
+        store.save_receipt(b2.build())
+
+        assert store.count_receipts(operation_type="ingest") == 1
+        assert store.count_receipts(operation_type="query") == 1
+
+    def test_combined_filters(self, store: SQLiteStore):
+        b1 = ReceiptBuilder(query_name="q1", parameters={})
+        b2 = ReceiptBuilder(query_name="q1", parameters={}, operation_type="add_entity")
+        b2.mark_committed()
+        store.save_receipt(b1.build(results=[]))
+        store.save_receipt(b2.build())
+
+        items = store.list_receipts(query_name="q1", operation_type="add_entity")
+        assert len(items) == 1
+
+    def test_old_receipts_default_to_query(self, store: SQLiteStore, sample_receipt: Receipt):
+        store.save_receipt(sample_receipt)
+        loaded = store.get_receipt(sample_receipt.receipt_id)
+        assert loaded.operation_type == "query"
+
+    def test_save_and_get_trace(self, store: SQLiteStore):
+        trace = ExecutionTrace(
+            workflow_name="evaluate_promo",
+            step_id="lift",
+            provider_name="lift_predictor",
+            provider_version="1.2.0",
+            provider_ref="tests.support.workflow_test_providers.lift_predictor",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+            artifact_name="promo_model",
+            artifact_sha256="abc123",
+            input_payload={"sku": "SKU-123"},
+            output_payload={"predicted_lift_pct": 0.12},
+        )
+
+        trace_id = store.save_trace(trace)
+        loaded = store.get_trace(trace_id)
+
+        assert loaded is not None
+        assert loaded.trace_id == trace.trace_id
+        assert loaded.provider_name == "lift_predictor"
+        assert loaded.output_payload["predicted_lift_pct"] == 0.12
+
+    def test_list_traces(self, store: SQLiteStore):
+        trace_a = ExecutionTrace(
+            workflow_name="wf_a",
+            step_id="step",
+            provider_name="provider_a",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.lift_predictor",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+        )
+        trace_b = ExecutionTrace(
+            workflow_name="wf_b",
+            step_id="step",
+            provider_name="provider_b",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.margin_calculator",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+        )
+        store.save_trace(trace_a)
+        store.save_trace(trace_b)
+
+        listed = store.list_traces(workflow_name="wf_a")
+        assert len(listed) == 1
+        assert listed[0]["provider_name"] == "provider_a"

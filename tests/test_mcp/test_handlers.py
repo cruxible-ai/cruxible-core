@@ -1563,6 +1563,7 @@ class TestEvaluate:
         assert result["edge_count"] > 0
         assert isinstance(result["findings"], list)
         assert isinstance(result["summary"], dict)
+        assert isinstance(result["quality_summary"], dict)
 
     def test_evaluate_empty_graph(self, server, tmp_project):
         call_tool(
@@ -1583,6 +1584,7 @@ class TestEvaluate:
         assert result["entity_count"] == 0
         # Should have coverage gaps at minimum
         assert len(result["findings"]) > 0
+        assert result["quality_summary"] == {}
 
 
 # ── cruxible_schema ────────────────────────────────────────────────────
@@ -2381,10 +2383,10 @@ class TestAddConstraint:
         )
         assert "syntax" in error_msg.lower()
 
-    def test_add_constraint_bad_relationship_warns(self, server, tmp_project):
-        """Valid syntax but nonexistent relationship succeeds with warning."""
+    def test_add_constraint_bad_relationship_errors(self, server, tmp_project):
+        """Valid syntax with nonexistent relationship should fail strict validation."""
         self._init(server, tmp_project)
-        result = call_tool(
+        error_msg = call_tool_expect_error(
             server,
             "cruxible_add_constraint",
             {
@@ -2393,13 +2395,12 @@ class TestAddConstraint:
                 "rule": "ghost_rel.FROM.prop == ghost_rel.TO.prop",
             },
         )
-        assert result["added"] is True
-        assert any("ghost_rel" in w for w in result["warnings"])
+        assert "ghost_rel" in error_msg
 
-    def test_add_constraint_bad_property_warns(self, server, tmp_project):
-        """Valid syntax, nonexistent property name succeeds with warning."""
+    def test_add_constraint_bad_property_errors(self, server, tmp_project):
+        """Valid syntax with nonexistent properties should fail strict validation."""
         self._init(server, tmp_project)
-        result = call_tool(
+        error_msg = call_tool_expect_error(
             server,
             "cruxible_add_constraint",
             {
@@ -2408,8 +2409,7 @@ class TestAddConstraint:
                 "rule": "replaces.FROM.nonexistent == replaces.TO.nonexistent",
             },
         )
-        assert result["added"] is True
-        assert any("nonexistent" in w for w in result["warnings"])
+        assert "nonexistent" in error_msg
 
 
 # ── cruxible_get_entity ───────────────────────────────────────────────
@@ -2591,9 +2591,9 @@ class TestGetRelationship:
 
         # Add second edge (different properties, creates a new edge)
         # Use graph directly since add_relationship does upsert
-        from cruxible_core.mcp.handlers import _manager
+        from cruxible_core.runtime.instance_manager import get_manager
 
-        instance = _manager.get(str(tmp_project))
+        instance = get_manager().get(str(tmp_project))
         graph = instance.load_graph()
         from cruxible_core.graph.types import RelationshipInstance
 
@@ -2655,9 +2655,9 @@ class TestGetRelationship:
             },
         )
         # Add two edges directly
-        from cruxible_core.mcp.handlers import _manager
+        from cruxible_core.runtime.instance_manager import get_manager
 
-        instance = _manager.get(str(tmp_project))
+        instance = get_manager().get(str(tmp_project))
         graph = instance.load_graph()
         from cruxible_core.graph.types import RelationshipInstance
 

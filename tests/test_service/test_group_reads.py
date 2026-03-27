@@ -1,0 +1,306 @@
+"""Tests for service_get_group, service_list_groups, service_list_resolutions."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.errors import GroupNotFoundError
+from cruxible_core.group.signature import compute_group_signature
+from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.service import (
+    service_get_group,
+    service_list_groups,
+    service_list_resolutions,
+    service_propose_group,
+    service_resolve_group,
+)
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+CONFIG_YAML = """\
+version: "1.0"
+name: read_tests
+description: For read service tests
+
+integrations:
+  check_v1:
+    kind: generic
+    contract: {}
+
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes, suspension, engine, electrical, body, interior]
+      price:
+        type: float
+        optional: true
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+      source:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        check_v1:
+          role: required
+  - name: replaces
+    from: Part
+    to: Part
+    properties:
+      direction:
+        type: string
+        enum: [upgrade, downgrade, equivalent]
+      confidence:
+        type: float
+
+constraints: []
+ingestion: {}
+"""
+
+
+@pytest.fixture
+def instance(tmp_path: Path) -> CruxibleInstance:
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    inst = CruxibleInstance.init(tmp_path, "config.yaml")
+    # Seed entities
+    from cruxible_core.graph.types import EntityInstance
+
+    graph = inst.load_graph()
+    for pid in ("BP-1", "BP-2", "BP-3"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id=pid,
+                properties={"part_number": pid, "name": f"Part {pid}", "category": "brakes"},
+            )
+        )
+    for vid in ("V-1", "V-2", "V-3"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id=vid,
+                properties={
+                    "vehicle_id": vid,
+                    "year": 2024,
+                    "make": "Honda",
+                    "model": "Civic",
+                },
+            )
+        )
+    inst.save_graph(graph)
+    return inst
+
+
+def _member(from_id="BP-1", to_id="V-1"):
+    return CandidateMember(
+        from_type="Part",
+        from_id=from_id,
+        to_type="Vehicle",
+        to_id=to_id,
+        relationship_type="fits",
+        signals=[CandidateSignal(integration="check_v1", signal="support")],
+    )
+
+
+# ---------------------------------------------------------------------------
+# service_get_group
+# ---------------------------------------------------------------------------
+
+
+class TestGetGroup:
+    def test_returns_group_and_members(self, instance: CruxibleInstance) -> None:
+        result = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1"), _member("BP-2", "V-2")],
+            thesis_text="test thesis",
+            thesis_facts={"k": "v"},
+        )
+        get_result = service_get_group(instance, result.group_id)
+        assert get_result.group.group_id == result.group_id
+        assert len(get_result.members) == 2
+        assert get_result.group.thesis_text == "test thesis"
+
+    def test_resolution_populated_as_full_dict(self, instance: CruxibleInstance) -> None:
+        result = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_facts={"k": "v"},
+        )
+        service_resolve_group(instance, result.group_id, "approve")
+        get_result = service_get_group(instance, result.group_id)
+        assert get_result.group.resolution is not None
+        assert "trust_status" in get_result.group.resolution
+        assert "trust_reason" in get_result.group.resolution
+        assert "confirmed" in get_result.group.resolution
+        assert "resolution_id" in get_result.group.resolution
+
+    def test_not_found(self, instance: CruxibleInstance) -> None:
+        with pytest.raises(GroupNotFoundError):
+            service_get_group(instance, "GRP-nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# service_list_groups
+# ---------------------------------------------------------------------------
+
+
+class TestListGroups:
+    def test_list_all(self, instance: CruxibleInstance) -> None:
+        service_propose_group(instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1})
+        service_propose_group(instance, "fits", [_member("BP-2", "V-2")], thesis_facts={"a": 2})
+        result = service_list_groups(instance)
+        assert result.total == 2
+        assert len(result.groups) == 2
+
+    def test_filter_by_status(self, instance: CruxibleInstance) -> None:
+        pr = service_propose_group(
+            instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1}
+        )
+        service_propose_group(instance, "fits", [_member("BP-2", "V-2")], thesis_facts={"a": 2})
+        service_resolve_group(instance, pr.group_id, "reject")
+        pending = service_list_groups(instance, status="pending_review")
+        assert pending.total == 1
+        resolved = service_list_groups(instance, status="resolved")
+        assert resolved.total == 1
+
+    def test_filter_by_relationship_type(self, instance: CruxibleInstance) -> None:
+        service_propose_group(instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1})
+        fits = service_list_groups(instance, relationship_type="fits")
+        assert fits.total == 1
+        replaces = service_list_groups(instance, relationship_type="replaces")
+        assert replaces.total == 0
+
+    def test_sorted_by_priority(self, instance: CruxibleInstance) -> None:
+        """Critical groups should appear before review and normal."""
+        # Create a group (no prior → review priority)
+        service_propose_group(instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1})
+        # Create a group with invalidated prior → critical priority
+        facts2 = {"b": 2}
+        sig = compute_group_signature("fits", facts2)
+        store = instance.get_group_store()
+        try:
+            with store.transaction():
+                store.save_resolution(
+                    "fits",
+                    sig,
+                    "approve",
+                    "",
+                    "",
+                    facts2,
+                    {},
+                    "human",
+                    trust_status="invalidated",
+                    confirmed=True,
+                )
+        finally:
+            store.close()
+        service_propose_group(instance, "fits", [_member("BP-2", "V-2")], thesis_facts=facts2)
+
+        result = service_list_groups(instance)
+        assert result.groups[0].review_priority == "critical"
+        assert result.groups[1].review_priority == "review"
+
+    def test_limit(self, instance: CruxibleInstance) -> None:
+        for i in range(5):
+            service_propose_group(
+                instance,
+                "fits",
+                [_member(f"BP-{i + 1}", f"V-{i + 1}")],
+                thesis_facts={"i": i},
+            )
+        result = service_list_groups(instance, limit=2)
+        assert len(result.groups) == 2
+        assert result.total == 5
+
+
+# ---------------------------------------------------------------------------
+# service_list_resolutions
+# ---------------------------------------------------------------------------
+
+
+class TestListResolutions:
+    def test_returns_analysis_state_and_thesis(self, instance: CruxibleInstance) -> None:
+        pr = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="the thesis",
+            thesis_facts={"k": "v"},
+            analysis_state={"centroid": [0.1, 0.2]},
+        )
+        service_resolve_group(instance, pr.group_id, "approve", rationale="good")
+        result = service_list_resolutions(instance)
+        assert result.total == 1
+        r = result.resolutions[0]
+        assert r["analysis_state"] == {"centroid": [0.1, 0.2]}
+        assert r["thesis_facts"] == {"k": "v"}
+        assert r["trust_status"] == "watch"
+        assert "trust_reason" in r
+
+    def test_filter_by_relationship_type(self, instance: CruxibleInstance) -> None:
+        pr = service_propose_group(
+            instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"k": "v"}
+        )
+        service_resolve_group(instance, pr.group_id, "approve")
+        fits = service_list_resolutions(instance, relationship_type="fits")
+        assert fits.total == 1
+        replaces = service_list_resolutions(instance, relationship_type="replaces")
+        assert replaces.total == 0
+
+    def test_filter_by_action(self, instance: CruxibleInstance) -> None:
+        pr1 = service_propose_group(
+            instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1}
+        )
+        service_resolve_group(instance, pr1.group_id, "approve")
+        pr2 = service_propose_group(
+            instance, "fits", [_member("BP-2", "V-2")], thesis_facts={"a": 2}
+        )
+        service_resolve_group(instance, pr2.group_id, "reject")
+        approvals = service_list_resolutions(instance, action="approve")
+        assert approvals.total == 1
+        rejects = service_list_resolutions(instance, action="reject")
+        assert rejects.total == 1
+
+    def test_limit(self, instance: CruxibleInstance) -> None:
+        for i in range(3):
+            pr = service_propose_group(
+                instance,
+                "fits",
+                [_member(f"BP-{i + 1}", f"V-{i + 1}")],
+                thesis_facts={"i": i},
+            )
+            service_resolve_group(instance, pr.group_id, "reject")
+        result = service_list_resolutions(instance, limit=2)
+        assert len(result.resolutions) == 2

@@ -164,40 +164,39 @@ without external docs:
    (e.g. known fitments, explicit FK mappings).
 3. Stop and handle tool errors from MCP before continuing.
 
-## Step 6 — Discover Cross-References
+## Step 6 — Create Cross-Dataset Relationships
 
-For entities from free text or external sources (no CSV available):
-- Use `cruxible_add_entity` — entities must exist before adding relationships to them.
+Choose the right path based on the relationship type:
 
-For each cross-dataset relationship type in your config, ask:
-can `cruxible_find_candidates` with `property_match` express this match?
+**Classification at scale** — mapping entities from one dataset to a standard
+taxonomy using deterministic rules (keyword extraction, category lookup, etc.):
+1. Declare integration contracts in the config (`integrations` section).
+2. Add a `matching` block on the relationship with integration roles and policy.
+3. Run integrations externally to produce tri-state signals (support/unsure/contradict).
+4. Propose groups with `cruxible_propose_group` — thesis_facts drive signatures
+   and trust tracking.
+5. Resolve groups to create edges in batch with receipts and provenance.
+6. Review, refine rules, and build trust through the flywheel.
 
-If yes, use it — candidates are reproducible, auditable, and iterative:
-1. Use `cruxible_sample` to inspect entities on both sides.
-2. Use `property_match` with `iequals` on name fields to cross-reference entities
-   across types/datasets.
-3. Use `shared_neighbors` when entities share connections through an intermediary.
-4. Review candidates and persist confirmed matches with `cruxible_add_relationship`
-   — include `source`, `confidence`, and `evidence` in properties for provenance.
+This is the right path when you have two datasets, structured matching rules,
+and need batch review with earned trust. See the `classification-at-scale`
+skill doc for the full workflow.
 
-**Confidence guidelines** — always set `confidence` on every edge you add:
+**Simple cross-references** — linking entities across datasets where exact or
+case-insensitive property matching is sufficient:
+1. Use `cruxible_find_candidates` with `property_match` or `shared_neighbors`.
+2. Review candidates and persist with `cruxible_add_relationship` — include
+   `source`, `confidence`, and `evidence` in properties for provenance.
+3. Use `cruxible_feedback` to approve or reject edges after review.
 
-| Score     | Meaning                                                      |
-|-----------|--------------------------------------------------------------|
-| ≥ 0.9     | Unambiguous match — no plausible alternatives exist          |
-| 0.7 – 0.9 | Inspected and reasonable, but alternatives exist             |
-| 0.5 – 0.7 | Ambiguous — decent guess, other candidates similarly plausible |
-| < 0.5     | Speculative — likely needs human review before trusting      |
+This path works when matching logic is simple enough that `find_candidates`
+can express it directly.
 
-Be honest with yourself — if multiple candidates could fit, that is not 0.9.
-Edges below 0.7 will be surfaced for review by `cruxible_evaluate`.
-
-`cruxible_find_candidates` only does exact/iequals matching. If the domain needs
-fuzzy matching, transliteration, abbreviation handling, or other logic it can't
-express — use your own approach. Write and run custom scripts (Python, Polars,
-etc.) for bulk comparison, or manually inspect entities and use your judgment.
-Regardless of method, persist matches with `cruxible_add_relationship` and include
-`source`, `confidence`, and `evidence` in properties for provenance.
+**Manual / LLM-assisted** — for entities from free text or external sources
+where no CSV or structured matching applies:
+- Use `cruxible_add_entity` to create entities that don't come from files.
+- Use your own tools or judgment to identify matches.
+- Persist with `cruxible_add_relationship` with provenance properties.
 
 ## Step 7 — Design Named Queries
 
@@ -401,49 +400,57 @@ instance '{instance_id}'.
 
 ## Steps
 
-1. Call cruxible_list with resource_type="feedback" to get recent feedback \
-records.
-   NOTE: cruxible_list returns ALL feedback (approve, reject, correct, \
-flag) with no
-   action or relationship filter. You must filter client-side:
-   - Keep only records where action == "reject"
-   - Keep only records where target.relationship == "{relationship_type}"
-2. For each rejected edge:
-   - Use cruxible_get_relationship (pass from_type, from_id, \
-relationship_type,
-     to_type, to_id, and edge_key if present in the feedback target) to \
-see the edge
-     properties (confidence, source, review_status).
-   - Use cruxible_get_entity to look up source and target entity properties.
-   Feedback records only contain entity IDs — you need to cross-reference.
-3. Compare the properties of rejected edges: look for shared property \
-mismatches
-   (e.g. "most rejected edges have different Category values on source vs \
-target")
-   and shared edge property patterns (e.g. "all rejected edges had \
-source=property_match").
-4. For each pattern you find:
-   - Count how many rejections share this pattern
-   - Check if a constraint already exists for it (call cruxible_schema)
-   - Only propose a constraint if it checks a **different property** than \
-the one
-     used to create the edge. If edges were created by matching on a \
-property via
-     `find_candidates`, adding a constraint on that same property is \
-redundant —
-     alter the matching rule instead.
-   - The pattern should be strong (5+ rejections)
-5. For each proposed constraint:
-   - Use the rule format: RELATIONSHIP.FROM.property == \
-RELATIONSHIP.TO.property
-   - Call cruxible_add_constraint to add it
-   - Use severity "warning" unless the rejection rate is very high (>80%), \
-then "error"
-6. After adding constraints, call cruxible_evaluate to verify the new \
-constraints
-   flag the expected edges.
+1. Call cruxible_get_feedback_profile for '{relationship_type}' to inspect the
+   structured reason codes and scope keys first.
+2. Call cruxible_analyze_feedback for '{relationship_type}'.
+   - Review `constraint_suggestions`
+   - Review `decision_policy_suggestions`
+   - Review `quality_check_candidates` and `provider_fix_candidates`
+   - Treat `uncoded_examples` as advisory only; they are not machine-grouped
+3. If a suggestion is appropriate:
+   - Add state-side invariants with `cruxible_add_constraint`
+   - Add action-side behavior changes with `cruxible_add_decision_policy`
+4. After adding a constraint, call `cruxible_evaluate` and confirm the new
+   `constraint_summary` reflects the expected pattern.
+5. If the repeated issue is data-quality or provider-shaped instead of rule-shaped,
+   do not force it into a constraint. Capture it as a quality/provider follow-up.
 
-Keep it focused: only propose constraints backed by concrete rejection data.
+Keep the distinction clean:
+- constraints = suspicious/invalid graph state
+- decision policies = query/workflow behavior changes
+"""
+
+
+def _analyze_outcomes(instance_id: str, anchor_type: str) -> str:
+    return f"""\
+Review recorded outcomes for anchor type '{anchor_type}' in instance '{instance_id}'.
+
+## Steps
+
+1. Resolve the applicable outcome profile first.
+   - For resolution-anchored proposal outcomes, call `cruxible_get_outcome_profile`
+     with `anchor_type="resolution"` and the relevant `relationship_type` and
+     `workflow_name`.
+   - For receipt-anchored outcomes, call `cruxible_get_outcome_profile` with
+     `anchor_type="receipt"` and the relevant `surface_type` and `surface_name`.
+2. Call `cruxible_analyze_outcomes` for `anchor_type="{anchor_type}"`.
+   - Review `trust_adjustment_suggestions`
+   - Review `workflow_review_policy_suggestions`
+   - Review `query_policy_suggestions`
+   - Review `provider_fix_candidates`
+   - Review `debug_packages` / `workflow_debug_packages`
+3. Keep the loop-2 boundary clean:
+   - outcomes calibrate process trust
+   - outcomes do not directly mutate graph state
+   - if a bad outcome localizes to a specific wrong edge, route that correction through loop 1
+4. If a proposal-resolution pattern is real, use:
+   - `cruxible_update_trust_status` to demote trust explicitly
+   - `cruxible_add_decision_policy` if a workflow should now require review
+5. If the bad outcome is actually a graph-state problem, route it through loop 1
+   and re-run `cruxible_evaluate` after adding any state-side control.
+6. If a receipt-anchored pattern is real but blame is uncertain:
+   - treat the result as a debugging package
+   - inspect traces/receipts and open a provider or workflow follow-up
 """
 
 
@@ -579,7 +586,12 @@ PROMPT_REGISTRY: dict[str, tuple[Callable[..., str], str]] = {
     ),
     "analyze_feedback": (
         _analyze_feedback,
-        "Analyze recent feedback to discover patterns worth encoding as constraints.",
+        "Analyze structured feedback to suggest constraints, decision policies, "
+        "and follow-up fixes.",
+    ),
+    "analyze_outcomes": (
+        _analyze_outcomes,
+        "Analyze structured outcomes to calibrate proposal trust and assemble debugging packages.",
     ),
     "user_review": (
         _user_review,

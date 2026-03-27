@@ -11,11 +11,12 @@ Traversal model:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cruxible_core.errors import (
     EntityNotFoundError,
@@ -24,6 +25,7 @@ from cruxible_core.errors import (
     RelationshipNotFoundError,
 )
 from cruxible_core.graph.types import REJECTED_STATUSES, EntityInstance
+from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 
@@ -41,10 +43,16 @@ class QueryResult(BaseModel):
     steps_executed: int
     total_results: int | None = None
     receipt: Receipt | None = None
+    policy_summary: dict[str, int] = Field(default_factory=dict)
 
     def model_post_init(self, _context: Any) -> None:
         if self.total_results is None:
             self.total_results = len(self.results)
+
+
+def _matches_filter(entity_props: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
+    """Backward-compatible alias for the shared exact-match helper."""
+    return matches_exact_filter(entity_props, filter_spec)
 
 
 def execute_query(
@@ -85,6 +93,7 @@ def execute_query(
     current_entities = [entry_entity]
     current_parent_ids: list[str] | None = None
     steps_executed = 0
+    policy_summary: dict[str, int] = {}
 
     for step in query_schema.traversal:
         current_entities, current_parent_ids = _execute_step(
@@ -93,6 +102,8 @@ def execute_query(
             step,
             current_entities,
             params,
+            query_name=query_name,
+            policy_summary=policy_summary,
             builder=builder,
         )
         steps_executed += 1
@@ -107,6 +118,7 @@ def execute_query(
         results=current_entities,
         steps_executed=steps_executed,
         receipt=receipt,
+        policy_summary=policy_summary,
     )
 
 
@@ -153,6 +165,8 @@ def _execute_step(
     step: TraversalStep,
     current_entities: list[EntityInstance],
     params: dict[str, Any],
+    query_name: str,
+    policy_summary: dict[str, int],
     *,
     builder: ReceiptBuilder | None = None,
 ) -> tuple[list[EntityInstance], list[str] | None]:
@@ -169,6 +183,10 @@ def _execute_step(
     for rel_name in rel_types:
         if config.get_relationship(rel_name) is None:
             raise RelationshipNotFoundError(rel_name)
+    step_policies = {
+        rel_name: _active_query_policies(config, query_name, rel_name)
+        for rel_name in rel_types
+    }
 
     direction = step.direction
     next_entities: list[EntityInstance] = []
@@ -194,6 +212,7 @@ def _execute_step(
             continue
 
         for rel_type in rel_types:
+            rel_policies = step_policies.get(rel_type, [])
             neighbors = graph.get_neighbors_with_edge_refs(
                 entity.entity_type,
                 entity.entity_id,
@@ -223,7 +242,7 @@ def _execute_step(
 
                 # Apply filter (blocks subtree on failure)
                 if step.filter:
-                    passed = _matches_filter(edge_props, step.filter)
+                    passed = matches_exact_filter(edge_props, step.filter)
                     if builder is not None and traversal_id is not None:
                         builder.record_filter(
                             filter_spec=step.filter,
@@ -251,6 +270,29 @@ def _execute_step(
                     if not passed:
                         continue
 
+                if direction == "outgoing":
+                    policy_from_entity = entity
+                    policy_to_entity = neighbor
+                else:
+                    policy_from_entity = neighbor
+                    policy_to_entity = entity
+
+                if rel_policies and _policy_should_suppress(
+                    policies=rel_policies,
+                    from_entity=policy_from_entity,
+                    to_entity=policy_to_entity,
+                    edge_props=edge_props,
+                    context={
+                        "query_name": query_name,
+                        "relationship_type": rel_type,
+                        "direction": direction,
+                    },
+                    policy_summary=policy_summary,
+                    builder=builder,
+                    parent_id=traversal_id,
+                ):
+                    continue
+
                 # Result dedup: first path owns the lineage
                 if nid not in seen_results:
                     seen_results.add(nid)
@@ -266,24 +308,70 @@ def _execute_step(
     return next_entities, next_parent_ids or None
 
 
-def _matches_filter(
-    edge_props: dict[str, Any],
-    filter_spec: dict[str, Any],
-) -> bool:
-    """Check if edge properties match a filter specification.
+def _active_query_policies(
+    config: CoreConfig,
+    query_name: str,
+    relationship_type: str,
+) -> list[Any]:
+    """Return non-expired query policies applicable to one traversal relationship."""
+    return [
+        policy
+        for policy in config.decision_policies
+        if policy.applies_to == "query"
+        and policy.query_name == query_name
+        and policy.relationship_type == relationship_type
+        and not _policy_expired(policy.expires_at)
+    ]
 
-    Filter values can be:
-    - A scalar: edge property must equal it
-    - A list: edge property must be in the list
-    """
-    for key, expected in filter_spec.items():
-        actual = edge_props.get(key)
-        if isinstance(expected, list):
-            if actual not in expected:
-                return False
-        elif actual != expected:
-            return False
-    return True
+
+def _policy_expired(expires_at: str | None) -> bool:
+    """Return True when a policy should no longer apply."""
+    if not expires_at:
+        return False
+    try:
+        normalized = expires_at.replace("Z", "+00:00")
+        expiry = datetime.fromisoformat(normalized)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return expiry < datetime.now(timezone.utc)
+    except ValueError:
+        return False
+
+
+def _policy_should_suppress(
+    *,
+    policies: list[Any],
+    from_entity: EntityInstance,
+    to_entity: EntityInstance,
+    edge_props: dict[str, Any],
+    context: dict[str, Any],
+    policy_summary: dict[str, int],
+    builder: ReceiptBuilder | None,
+    parent_id: str | None,
+) -> bool:
+    """Apply query-side suppress policies to one traversed edge."""
+    for policy in policies:
+        if not matches_exact_filter(from_entity.properties, policy.match.from_match):
+            continue
+        if not matches_exact_filter(to_entity.properties, policy.match.to):
+            continue
+        if not matches_exact_filter(edge_props, policy.match.edge):
+            continue
+        if not matches_exact_filter(context, policy.match.context):
+            continue
+        policy_summary[policy.name] = policy_summary.get(policy.name, 0) + 1
+        if builder is not None and parent_id is not None:
+            builder.record_validation(
+                passed=True,
+                detail={
+                    "policy_name": policy.name,
+                    "policy_effect": policy.effect,
+                    "applies_to": "query",
+                },
+                parent_id=parent_id,
+            )
+        return True
+    return False
 
 
 _CONSTRAINT_RE = re.compile(r"^(target|source)\.(\w+)\s*(==|!=)\s*(.+)$")

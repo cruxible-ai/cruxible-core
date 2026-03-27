@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -11,6 +12,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.store import GroupStore
 
 
 class TestInit:
@@ -239,3 +241,68 @@ class TestStores:
         assert store is not None
         store.close()
         assert (initialized_project.instance_dir / "feedback.db").exists()
+
+    def test_group_store(self, initialized_project: CruxibleInstance) -> None:
+        store = initialized_project.get_group_store()
+        assert isinstance(store, GroupStore)
+        store.close()
+        # Uses same feedback.db
+        assert (initialized_project.instance_dir / "feedback.db").exists()
+
+
+class TestAtomicSaveGraph:
+    def test_graph_json_intact_after_simulated_failure(
+        self, initialized_project: CruxibleInstance
+    ) -> None:
+        """Original graph.json preserved when save_graph fails mid-write."""
+        # Save initial graph
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P-1", properties={"name": "original"})
+        )
+        initialized_project.save_graph(graph)
+        original_content = (initialized_project.instance_dir / "graph.json").read_text()
+
+        # Mutate in-memory graph
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P-2", properties={"name": "new"})
+        )
+
+        # Simulate failure during write
+        with patch("cruxible_core.cli.instance.json.dump", side_effect=OSError("disk full")):
+            with pytest.raises(OSError, match="disk full"):
+                initialized_project.save_graph(graph)
+
+        # Original graph.json should be intact
+        current = (initialized_project.instance_dir / "graph.json").read_text()
+        assert current == original_content
+
+    def test_cache_invalidated_on_exception(self, initialized_project: CruxibleInstance) -> None:
+        """After failed save_graph, load_graph re-reads from disk (no phantom edges)."""
+        # Save initial graph
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
+        initialized_project.save_graph(graph)
+
+        # Mutate in-memory graph
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-2", properties={}))
+
+        # Fail the save
+        with patch("cruxible_core.cli.instance.json.dump", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
+                initialized_project.save_graph(graph)
+
+        # Cache was invalidated — next load_graph reads from disk
+        reloaded = initialized_project.load_graph()
+        assert reloaded.entity_count() == 1  # Only P-1, not P-2
+
+    def test_invalidate_graph_cache_forces_reread(
+        self, initialized_project: CruxibleInstance
+    ) -> None:
+        """Mutate in-memory graph, invalidate cache, reload → mutations gone."""
+        graph = initialized_project.load_graph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
+        # Don't save — just invalidate
+        initialized_project.invalidate_graph_cache()
+        reloaded = initialized_project.load_graph()
+        assert reloaded.entity_count() == 0  # Back to empty

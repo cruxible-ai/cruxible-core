@@ -1,0 +1,629 @@
+version: "1.0"
+name: kev_triage
+kind: world_model
+# extends: cruxible/kev-reference  # future: config composition
+description: >
+  Fork of the KEV reference world model for internal vulnerability triage.
+  The reference layer (Vendor, Product, Vulnerability) comes from public
+  feeds and is read-only. This fork adds internal assets, services,
+  controls, and the accepted judgment relationships that link public
+  vulnerabilities to internal operational impact.
+
+# ─── Reference layer (from kev-reference.yaml) ───────────────────────
+
+entity_types:
+  Vendor:
+    description: Vendor or software publisher.
+    properties:
+      vendor_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      website:
+        type: string
+        optional: true
+
+  Product:
+    description: Product, package, platform, or service affected by vulnerabilities.
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+      vendor_name:
+        type: string
+        optional: true
+      product_name:
+        type: string
+        indexed: true
+      cpe:
+        type: string
+        optional: true
+      product_family:
+        type: string
+        optional: true
+
+  Vulnerability:
+    description: Public vulnerability record such as a CVE entry.
+    properties:
+      cve_id:
+        type: string
+        primary_key: true
+      description:
+        type: string
+        optional: true
+      cvss_score:
+        type: number
+        optional: true
+      epss_score:
+        type: number
+        optional: true
+      kev_due_date:
+        type: string
+        optional: true
+      known_ransomware_use:
+        type: string
+        optional: true
+      published_at:
+        type: string
+        optional: true
+
+# ─── Fork: internal entity types ─────────────────────────────────────
+
+  Asset:
+    description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
+    properties:
+      asset_id:
+        type: string
+        primary_key: true
+      hostname:
+        type: string
+        indexed: true
+      asset_type:
+        type: string
+        optional: true
+      criticality:
+        type: string
+        optional: true
+      environment:
+        type: string
+        optional: true
+      internet_exposed:
+        type: bool
+        optional: true
+
+  BusinessService:
+    description: Internal business or technical service depending on assets.
+    properties:
+      service_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      tier:
+        type: string
+        optional: true
+
+  Owner:
+    description: Team or person responsible for an asset or service.
+    properties:
+      owner_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      team:
+        type: string
+        optional: true
+      email:
+        type: string
+        optional: true
+
+  ScannerFinding:
+    description: Scanner or detection-system finding tied to an asset and vulnerability.
+    properties:
+      finding_id:
+        type: string
+        primary_key: true
+      source:
+        type: string
+        optional: true
+      severity:
+        type: string
+        optional: true
+      observed_at:
+        type: string
+        optional: true
+      status:
+        type: string
+        optional: true
+
+  CompensatingControl:
+    description: Control that can reduce or block exploitability.
+    properties:
+      control_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      control_type:
+        type: string
+        optional: true
+      status:
+        type: string
+        optional: true
+
+  Exception:
+    description: Approved patch or remediation exception.
+    properties:
+      exception_id:
+        type: string
+        primary_key: true
+      reason:
+        type: string
+        optional: true
+      review_due_at:
+        type: string
+        optional: true
+      status:
+        type: string
+        optional: true
+
+  PatchWindow:
+    description: Operational patching schedule or change window.
+    properties:
+      patch_window_id:
+        type: string
+        primary_key: true
+      cadence:
+        type: string
+        optional: true
+      next_window_at:
+        type: string
+        optional: true
+      freeze_status:
+        type: string
+        optional: true
+
+# ─── Reference layer relationships ───────────────────────────────────
+
+relationships:
+  - name: product_from_vendor
+    description: Deterministic product-to-vendor mapping.
+    from: Product
+    to: Vendor
+
+  - name: vulnerability_affects_product
+    description: Public reference mapping from vulnerability to affected product.
+    from: Vulnerability
+    to: Product
+    properties:
+      affected_version_range:
+        type: string
+        optional: true
+      fixed_version:
+        type: string
+        optional: true
+
+# ─── Fork: deterministic internal mappings ────────────────────────────
+
+  - name: asset_runs_product
+    description: Deterministic mapping from internal asset inventory to installed products.
+    from: Asset
+    to: Product
+    properties:
+      installed_version:
+        type: string
+        optional: true
+      evidence_source:
+        type: string
+        optional: true
+
+  - name: service_depends_on_asset
+    description: Internal dependency mapping from services to assets.
+    from: BusinessService
+    to: Asset
+
+  - name: asset_owned_by
+    description: Ownership or routing mapping for assets.
+    from: Asset
+    to: Owner
+
+  - name: asset_has_finding
+    description: Deterministic mapping from assets to scanner findings.
+    from: Asset
+    to: ScannerFinding
+
+  - name: finding_for_vulnerability
+    description: Deterministic mapping from a scanner finding to a vulnerability.
+    from: ScannerFinding
+    to: Vulnerability
+
+  - name: asset_has_control
+    description: Internal mapping from assets to compensating controls.
+    from: Asset
+    to: CompensatingControl
+
+  - name: asset_has_exception
+    description: Internal mapping from assets to approved exceptions.
+    from: Asset
+    to: Exception
+
+  - name: asset_patch_window
+    description: Internal patching schedule mapping.
+    from: Asset
+    to: PatchWindow
+
+# ─── Fork: accepted judgment relationships ────────────────────────────
+
+  - name: asset_affected_by_vulnerability
+    description: Accepted judgment that an internal asset is actually affected by a vulnerability.
+    from: Asset
+    to: Vulnerability
+    properties:
+      installed_version:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+      source:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        product_version_evidence:
+          role: required
+          always_review_on_unsure: true
+        scanner_evidence:
+          role: advisory
+
+  - name: asset_exposed_to_vulnerability
+    description: Accepted judgment that the asset is materially exposed and should drive action.
+    from: Asset
+    to: Vulnerability
+    properties:
+      priority:
+        type: string
+        optional: true
+      due_by:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        exploitability_signal:
+          role: required
+          always_review_on_unsure: true
+        control_effectiveness:
+          role: required
+          always_review_on_unsure: true
+
+  - name: service_impacted_by_vulnerability
+    description: Accepted judgment that a business service is impacted through its asset dependencies.
+    from: BusinessService
+    to: Vulnerability
+    properties:
+      blast_radius:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        dependency_context:
+          role: required
+
+  - name: asset_patch_exception_for
+    description: Accepted judgment that an exception currently waives remediation for a vulnerability on an asset.
+    from: Asset
+    to: Vulnerability
+    properties:
+      exception_id:
+        type: string
+        optional: true
+      review_due_at:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        policy_review:
+          role: required
+
+  - name: control_reduces_exposure_to
+    description: Accepted judgment that a compensating control materially reduces exploitability for a vulnerability class.
+    from: CompensatingControl
+    to: Vulnerability
+    properties:
+      validation_basis:
+        type: string
+        optional: true
+      expires_at:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        control_effectiveness:
+          role: required
+          always_review_on_unsure: true
+
+# ─── Named queries (fork-specific, traverse across both layers) ──────
+
+named_queries:
+  kev_assets:
+    description: >
+      Starting from a vulnerability, find internal assets that are currently
+      accepted as affected.
+    entry_point: Vulnerability
+    returns: Asset
+    traversal:
+      - relationship: asset_affected_by_vulnerability
+        direction: incoming
+
+  service_blast_radius:
+    description: >
+      Starting from a vulnerability, find impacted business services.
+    entry_point: Vulnerability
+    returns: BusinessService
+    traversal:
+      - relationship: service_impacted_by_vulnerability
+        direction: incoming
+
+  owner_patch_queue:
+    description: >
+      Starting from an owner, find exposed vulnerabilities across the owner's
+      assets.
+    entry_point: Owner
+    returns: Vulnerability
+    traversal:
+      - relationship: asset_owned_by
+        direction: incoming
+      - relationship: asset_exposed_to_vulnerability
+        direction: outgoing
+
+  product_kev_exposure:
+    description: >
+      Starting from a product, find KEV or CVE records known to affect it and
+      the assets that are currently accepted as affected.
+    entry_point: Product
+    returns: Asset
+    traversal:
+      - relationship: vulnerability_affects_product
+        direction: incoming
+      - relationship: asset_affected_by_vulnerability
+        direction: incoming
+
+  asset_exception_context:
+    description: >
+      Starting from an asset, find exception records currently attached to it.
+    entry_point: Asset
+    returns: Exception
+    traversal:
+      - relationship: asset_has_exception
+        direction: outgoing
+
+  asset_control_context:
+    description: >
+      Starting from an asset, find compensating controls currently attached to it.
+    entry_point: Asset
+    returns: CompensatingControl
+    traversal:
+      - relationship: asset_has_control
+        direction: outgoing
+
+# ─── Reference layer ingestion ────────────────────────────────────────
+
+ingestion:
+  vendors:
+    description: Vendor reference import built from public product metadata.
+    entity_type: Vendor
+    id_column: vendor_id
+    column_map:
+      vendor_id: vendor_id
+      name: name
+      website: website
+
+  products:
+    description: Product reference import from public product and CPE mappings.
+    entity_type: Product
+    id_column: product_id
+    column_map:
+      product_id: product_id
+      vendor_name: vendor_name
+      product_name: product_name
+      cpe: cpe
+      product_family: product_family
+
+  vulnerabilities:
+    description: Vulnerability reference import from KEV, NVD, or equivalent feeds.
+    entity_type: Vulnerability
+    id_column: cve_id
+    column_map:
+      cve_id: cve_id
+      description: description
+      cvss_score: cvss_score
+      epss_score: epss_score
+      kev_due_date: kev_due_date
+      known_ransomware_use: known_ransomware_use
+      published_at: published_at
+
+  product_from_vendor_edges:
+    description: Public vendor/product mapping import.
+    relationship_type: product_from_vendor
+    from_column: product_id
+    to_column: vendor_id
+
+  vulnerability_affects_product_edges:
+    description: Public vulnerability-to-product mapping import.
+    relationship_type: vulnerability_affects_product
+    from_column: cve_id
+    to_column: product_id
+    column_map:
+      affected_version_range: affected_version_range
+      fixed_version: fixed_version
+
+# ─── Fork: internal ingestion mappings ────────────────────────────────
+
+  assets:
+    description: Internal asset inventory import from CMDB, cloud inventory, or EDR.
+    entity_type: Asset
+    id_column: asset_id
+    column_map:
+      asset_id: asset_id
+      hostname: hostname
+      asset_type: asset_type
+      criticality: criticality
+      environment: environment
+      internet_exposed: internet_exposed
+
+  business_services:
+    description: Internal service inventory import.
+    entity_type: BusinessService
+    id_column: service_id
+    column_map:
+      service_id: service_id
+      name: name
+      tier: tier
+
+  owners:
+    description: Owner or team roster import.
+    entity_type: Owner
+    id_column: owner_id
+    column_map:
+      owner_id: owner_id
+      name: name
+      team: team
+      email: email
+
+  scanner_findings:
+    description: Scanner or exposure-management findings import.
+    entity_type: ScannerFinding
+    id_column: finding_id
+    column_map:
+      finding_id: finding_id
+      source: source
+      severity: severity
+      observed_at: observed_at
+      status: status
+
+  compensating_controls:
+    description: Internal compensating controls import.
+    entity_type: CompensatingControl
+    id_column: control_id
+    column_map:
+      control_id: control_id
+      name: name
+      control_type: control_type
+      status: status
+
+  exceptions:
+    description: Patch or remediation exception import.
+    entity_type: Exception
+    id_column: exception_id
+    column_map:
+      exception_id: exception_id
+      reason: reason
+      review_due_at: review_due_at
+      status: status
+
+  patch_windows:
+    description: Asset patching schedule import.
+    entity_type: PatchWindow
+    id_column: patch_window_id
+    column_map:
+      patch_window_id: patch_window_id
+      cadence: cadence
+      next_window_at: next_window_at
+      freeze_status: freeze_status
+
+  asset_runs_product_edges:
+    description: Internal product install mapping import.
+    relationship_type: asset_runs_product
+    from_column: asset_id
+    to_column: product_id
+    column_map:
+      installed_version: installed_version
+      evidence_source: evidence_source
+
+  service_depends_on_asset_edges:
+    description: Internal service dependency import.
+    relationship_type: service_depends_on_asset
+    from_column: service_id
+    to_column: asset_id
+
+  asset_owned_by_edges:
+    description: Asset ownership mapping import.
+    relationship_type: asset_owned_by
+    from_column: asset_id
+    to_column: owner_id
+
+  asset_has_finding_edges:
+    description: Asset-to-finding mapping import.
+    relationship_type: asset_has_finding
+    from_column: asset_id
+    to_column: finding_id
+
+  finding_for_vulnerability_edges:
+    description: Finding-to-vulnerability mapping import.
+    relationship_type: finding_for_vulnerability
+    from_column: finding_id
+    to_column: cve_id
+
+  asset_has_control_edges:
+    description: Asset-to-control mapping import.
+    relationship_type: asset_has_control
+    from_column: asset_id
+    to_column: control_id
+
+  asset_has_exception_edges:
+    description: Asset-to-exception mapping import.
+    relationship_type: asset_has_exception
+    from_column: asset_id
+    to_column: exception_id
+
+  asset_patch_window_edges:
+    description: Asset-to-patch-window mapping import.
+    relationship_type: asset_patch_window
+    from_column: asset_id
+    to_column: patch_window_id
+
+# ─── Fork: integrations for judgment relationships ────────────────────
+
+integrations:
+  product_version_evidence:
+    kind: product_version_match
+    contract:
+      output: support|unsure|contradict
+
+  scanner_evidence:
+    kind: scanner_presence
+    contract:
+      output: support|unsure|contradict
+
+  exploitability_signal:
+    kind: exploitability_assessment
+    contract:
+      output: support|unsure|contradict
+
+  control_effectiveness:
+    kind: compensating_control_review
+    contract:
+      output: support|unsure|contradict
+
+  dependency_context:
+    kind: service_dependency_context
+    contract:
+      output: support|unsure|contradict
+
+  policy_review:
+    kind: remediation_policy_review
+    contract:
+      output: support|unsure|contradict

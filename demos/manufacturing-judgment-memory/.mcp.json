@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "cruxible": {
+      "command": "cruxible-mcp",
+      "env": {
+        "CRUXIBLE_MODE": "admin"
+      }
+    }
+  }
+}

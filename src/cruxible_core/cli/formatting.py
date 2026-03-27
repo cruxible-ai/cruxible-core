@@ -9,6 +9,7 @@ from rich.table import Table
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.query.candidates import CandidateMatch
 
 
@@ -29,14 +30,18 @@ def receipts_table(receipts: list[dict[str, Any]]) -> Table:
     """Build a Rich table for receipt summaries."""
     table = Table(title="Receipts")
     table.add_column("ID", style="cyan")
+    table.add_column("Type")
     table.add_column("Query")
     table.add_column("Created At")
     table.add_column("Duration (ms)", justify="right")
 
     for r in receipts:
+        op_type = r.get("operation_type", "query")
+        query_col = r["query_name"] if r["query_name"] else op_type
         table.add_row(
             r["receipt_id"],
-            r["query_name"],
+            op_type,
+            query_col,
             r["created_at"],
             f"{r['duration_ms']:.1f}",
         )
@@ -92,15 +97,20 @@ def outcomes_table(records: list[OutcomeRecord]) -> Table:
     """Build a Rich table for outcome records."""
     table = Table(title="Outcomes")
     table.add_column("ID", style="cyan")
-    table.add_column("Receipt")
+    table.add_column("Anchor")
     table.add_column("Outcome")
+    table.add_column("Code")
+    table.add_column("Source")
     table.add_column("Created At")
 
     for r in records:
+        anchor = f"{r.anchor_type}:{r.anchor_id or r.receipt_id}"
         table.add_row(
             r.outcome_id,
-            r.receipt_id,
+            anchor,
             r.outcome,
+            r.outcome_code or "",
+            r.source,
             str(r.created_at),
         )
 
@@ -149,6 +159,121 @@ def edges_table(edges: list[dict[str, Any]]) -> Table:
     return table
 
 
+def inspect_neighbors_table(neighbors: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for entity-neighbor inspection results."""
+    table = Table(title="Neighbors")
+    table.add_column("Direction")
+    table.add_column("Relationship")
+    table.add_column("Neighbor", style="cyan")
+    table.add_column("Edge Key", justify="right")
+    table.add_column("Properties")
+
+    for neighbor in neighbors:
+        entity = neighbor.get("entity", {})
+        label = f"{entity.get('entity_type', '')}:{entity.get('entity_id', '')}"
+        props = neighbor.get("properties", {})
+        props_str = ", ".join(f"{k}={v}" for k, v in props.items() if k != "_provenance")
+        table.add_row(
+            str(neighbor.get("direction", "")),
+            str(neighbor.get("relationship_type", "")),
+            label,
+            str(neighbor.get("edge_key", "")),
+            props_str,
+        )
+
+    return table
+
+
+def stats_table(
+    entity_counts: dict[str, int],
+    relationship_counts: dict[str, int],
+) -> Table:
+    """Build a Rich table for graph counts by type."""
+    table = Table(title="Graph Stats")
+    table.add_column("Section", style="cyan")
+    table.add_column("Name")
+    table.add_column("Count", justify="right")
+
+    for name, count in sorted(entity_counts.items()):
+        table.add_row("Entity", name, str(count))
+    for name, count in sorted(relationship_counts.items()):
+        table.add_row("Relationship", name, str(count))
+    return table
+
+
+def groups_table(groups: list[CandidateGroup]) -> Table:
+    """Build a Rich table for a list of candidate groups."""
+    table = Table(title="Candidate Groups")
+    table.add_column("Group ID", style="cyan")
+    table.add_column("Relationship")
+    table.add_column("Status")
+    table.add_column("Priority")
+    table.add_column("Members", justify="right")
+    table.add_column("Thesis")
+
+    for g in groups:
+        table.add_row(
+            g.group_id,
+            g.relationship_type,
+            g.status,
+            g.review_priority,
+            str(g.member_count),
+            g.thesis_text[:50] if g.thesis_text else "",
+        )
+
+    return table
+
+
+def group_detail_table(group: CandidateGroup, members: list[CandidateMember]) -> Table:
+    """Build a Rich table showing group details and members."""
+    table = Table(title=f"Group {group.group_id}")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("Group ID", group.group_id)
+    table.add_row("Relationship", group.relationship_type)
+    table.add_row("Status", group.status)
+    table.add_row("Priority", group.review_priority)
+    table.add_row("Signature", group.signature[:16] + "...")
+    table.add_row("Members", str(group.member_count))
+    if group.thesis_text:
+        table.add_row("Thesis", group.thesis_text)
+    if group.resolution:
+        res = group.resolution
+        table.add_row("Resolution", res.get("action", ""))
+        table.add_row("Trust Status", res.get("trust_status", ""))
+
+    for m in members:
+        edge = f"{m.from_type}:{m.from_id} → {m.to_type}:{m.to_id}"
+        signals_str = ", ".join(f"{s.integration}={s.signal}" for s in m.signals)
+        table.add_row("  Member", f"{edge}  [{signals_str}]")
+
+    return table
+
+
+def resolutions_table(resolutions: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for group resolutions."""
+    table = Table(title="Group Resolutions")
+    table.add_column("Resolution ID", style="cyan")
+    table.add_column("Relationship")
+    table.add_column("Action")
+    table.add_column("Trust Status")
+    table.add_column("Resolved By")
+    table.add_column("Resolved At")
+
+    for r in resolutions:
+        table.add_row(
+            r.get("resolution_id", ""),
+            r.get("relationship_type", ""),
+            r.get("action", ""),
+            r.get("trust_status", ""),
+            r.get("resolved_by", ""),
+            r.get("resolved_at", ""),
+        )
+
+    return table
+
+
 def schema_table(config: CoreConfig) -> Table:
     """Build a Rich table showing the config schema."""
     table = Table(title=f"Schema: {config.name}")
@@ -158,19 +283,36 @@ def schema_table(config: CoreConfig) -> Table:
 
     for name, et in config.entity_types.items():
         pk = et.get_primary_key() or "-"
-        props = ", ".join(et.properties.keys())
+        props = ", ".join(
+            _format_property_name(prop_name, prop)
+            for prop_name, prop in et.properties.items()
+        )
         table.add_row("Entity", name, f"pk={pk}  props=[{props}]")
 
     for rel in config.relationships:
+        prop_names = ", ".join(
+            _format_property_name(prop_name, prop)
+            for prop_name, prop in rel.properties.items()
+        )
+        details = f"{rel.from_entity} -> {rel.to_entity}  ({rel.cardinality})"
+        if prop_names:
+            details = f"{details}  props=[{prop_names}]"
         table.add_row(
             "Relationship",
             rel.name,
-            f"{rel.from_entity} -> {rel.to_entity}  ({rel.cardinality})",
+            details,
         )
 
     for name, q in config.named_queries.items():
         steps = len(q.traversal)
         table.add_row("Query", name, f"entry={q.entry_point}  steps={steps}")
+
+    for name, contract in config.contracts.items():
+        fields = ", ".join(
+            _format_property_name(field_name, field_schema)
+            for field_name, field_schema in contract.fields.items()
+        )
+        table.add_row("Contract", name, f"fields=[{fields}]")
 
     for name, m in config.ingestion.items():
         if m.is_entity:
@@ -179,3 +321,9 @@ def schema_table(config: CoreConfig) -> Table:
             table.add_row("Ingestion", name, f"relationship={m.relationship_type}")
 
     return table
+
+
+def _format_property_name(name: str, schema: Any) -> str:
+    if getattr(schema, "json_schema", None) is not None:
+        return f"{name}{{json}}"
+    return name

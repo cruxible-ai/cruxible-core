@@ -7,13 +7,27 @@ from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import (
+    ConstraintSchema,
+    ContractSchema,
     CoreConfig,
+    DecisionPolicyMatch,
+    DecisionPolicySchema,
     EntityTypeSchema,
+    FeedbackProfileSchema,
+    FeedbackReasonCodeSchema,
     IngestionMapping,
+    IntegrationSpec,
     NamedQuerySchema,
+    OutcomeCodeSchema,
+    OutcomeProfileSchema,
     PropertySchema,
+    ProviderArtifactSchema,
+    ProviderSchema,
     RelationshipSchema,
     TraversalStep,
+    WorkflowSchema,
+    WorkflowStepSchema,
+    WorkflowTestSchema,
 )
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -117,6 +131,155 @@ class TestValidateNamedQueries:
         assert any("nonexistent" in e for e in exc_info.value.errors)
 
 
+class TestValidateLoopOneControls:
+    def test_supported_constraint_invalid_reference_errors(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(
+                    name="bad_constraint",
+                    rule="links.FROM.missing == links.TO.id",
+                )
+            ]
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("bad_constraint" in e and "missing" in e for e in exc_info.value.errors)
+
+    def test_feedback_profile_rejects_unknown_scope_property(self):
+        config = _minimal_config(
+            feedback_profiles={
+                "links": FeedbackProfileSchema(
+                    reason_codes={
+                        "mismatch": FeedbackReasonCodeSchema(
+                            description="Mismatch",
+                            remediation_hint="constraint",
+                        )
+                    },
+                    scope_keys={"bad_key": "FROM.missing"},
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("bad_key" in e and "missing" in e for e in exc_info.value.errors)
+
+    def test_decision_policies_require_unique_names(self):
+        config = _minimal_config(
+            named_queries={
+                "find_b": NamedQuerySchema(
+                    entry_point="A",
+                    traversal=[TraversalStep(relationship="links")],
+                    returns="list[B]",
+                )
+            },
+            decision_policies=[
+                DecisionPolicySchema(
+                    name="dup_policy",
+                    applies_to="query",
+                    query_name="find_b",
+                    relationship_type="links",
+                    effect="suppress",
+                    match=DecisionPolicyMatch(),
+                ),
+                DecisionPolicySchema(
+                    name="dup_policy",
+                    applies_to="query",
+                    query_name="find_b",
+                    relationship_type="links",
+                    effect="suppress",
+                    match=DecisionPolicyMatch(),
+                ),
+            ],
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("Duplicate decision policy name" in e for e in exc_info.value.errors)
+
+    def test_workflow_policy_requires_proposal_bearing_workflow(self):
+        config = _minimal_config(
+            contracts={
+                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
+            },
+            artifacts={
+                "artifact": ProviderArtifactSchema(
+                    kind="model", uri="file:///tmp/model", sha256="abc"
+                )
+            },
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                    artifact="artifact",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+            decision_policies=[
+                DecisionPolicySchema(
+                    name="bad_workflow_policy",
+                    applies_to="workflow",
+                    workflow_name="wf",
+                    relationship_type="links",
+                    effect="suppress",
+                    match=DecisionPolicyMatch(),
+                )
+            ],
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("proposal-bearing alias" in e for e in exc_info.value.errors)
+
+    def test_receipt_outcome_profile_requires_known_query_surface(self):
+        config = _minimal_config(
+            outcome_profiles={
+                "query_quality": OutcomeProfileSchema(
+                    anchor_type="receipt",
+                    surface_type="query",
+                    surface_name="missing_query",
+                    outcome_codes={
+                        "bad_result": OutcomeCodeSchema(
+                            description="Bad result",
+                            remediation_hint="provider_fix",
+                        )
+                    },
+                    scope_keys={"surface": "SURFACE.name"},
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("missing_query" in e for e in exc_info.value.errors)
+
+    def test_resolution_outcome_profile_rejects_unsupported_path(self):
+        with pytest.raises(ValidationError):
+            OutcomeProfileSchema(
+                anchor_type="resolution",
+                relationship_type="links",
+                outcome_codes={
+                    "bad_link": OutcomeCodeSchema(
+                        description="Bad approved link",
+                        remediation_hint="trust_adjustment",
+                    )
+                },
+                scope_keys={"bad": "RECEIPT.operation_type"},
+            )
+
+
 class TestValidateMultiRelationshipStep:
     def test_multi_relationship_all_valid(self):
         config = _minimal_config(
@@ -208,6 +371,266 @@ class TestValidatePrimaryKeys:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any("primary_key" in e for e in exc_info.value.errors)
+
+
+class TestValidateWorkflowExecution:
+    def _workflow_config(self, **overrides) -> CoreConfig:
+        defaults = dict(
+            contracts={
+                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
+            },
+            integrations={
+                "catalog": IntegrationSpec(kind="heuristic"),
+            },
+            artifacts={
+                "artifact": ProviderArtifactSchema(
+                    kind="model", uri="file:///tmp/model", sha256="abc"
+                )
+            },
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                    artifact="artifact",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+            tests=[WorkflowTestSchema(name="smoke", workflow="wf", input={"id": "1"})],
+        )
+        defaults.update(overrides)
+        return _minimal_config(**defaults)
+
+    def test_missing_provider_contract(self):
+        config = self._workflow_config(contracts={})
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("contract_in" in error for error in exc_info.value.errors)
+
+    def test_missing_provider_artifact(self):
+        config = self._workflow_config(
+            artifacts={},
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                    artifact="artifact",
+                )
+            },
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("artifact 'artifact'" in error for error in exc_info.value.errors)
+
+    def test_invalid_workflow_returns_alias(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="missing",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("returns alias" in error for error in exc_info.value.errors)
+
+    def test_invalid_workflow_reference_future_alias(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$steps.missing.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("unknown or future step alias" in error for error in exc_info.value.errors)
+
+    def test_missing_test_workflow(self):
+        config = self._workflow_config(tests=[WorkflowTestSchema(name="smoke", workflow="nope")])
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("workflow 'nope'" in error for error in exc_info.value.errors)
+
+    def test_make_candidates_rejects_unknown_relationship(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="candidates",
+                            make_candidates={
+                                "relationship_type": "missing",
+                                "items": [],
+                                "from_type": "A",
+                                "from_id": "$input.id",
+                                "to_type": "B",
+                                "to_id": "$input.id",
+                            },
+                            **{"as": "candidates"},
+                        )
+                    ],
+                    returns="candidates",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "make_candidates relationship_type 'missing'" in error
+            for error in exc_info.value.errors
+        )
+
+    def test_map_signals_rejects_unknown_integration(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="signals",
+                            map_signals={
+                                "integration": "missing",
+                                "items": [],
+                                "from_id": "$input.id",
+                                "to_id": "$input.id",
+                                "enum": {
+                                    "path": "verdict",
+                                    "map": {"support": "support"},
+                                },
+                            },
+                            **{"as": "signals"},
+                        )
+                    ],
+                    returns="signals",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("map_signals integration 'missing'" in error for error in exc_info.value.errors)
+
+    def test_propose_relationship_group_rejects_unknown_aliases(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="proposal",
+                            propose_relationship_group={
+                                "relationship_type": "links",
+                                "candidates_from": "missing_candidates",
+                                "signals_from": ["missing_signals"],
+                            },
+                            **{"as": "proposal"},
+                        )
+                    ],
+                    returns="proposal",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("candidates_from alias 'missing_candidates'" in e for e in exc_info.value.errors)
+        assert any("signals_from alias 'missing_signals'" in e for e in exc_info.value.errors)
+
+    def test_item_reference_outside_builtin_steps_is_rejected(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$item.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("unsupported reference '$item.id'" in e for e in exc_info.value.errors)
+
+
+class TestValidateKinds:
+    def test_ontology_rejects_world_model_execution_blocks(self):
+        config = _minimal_config(
+            kind="ontology",
+            contracts={
+                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
+            },
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "kind 'ontology' may not define workflows" in error for error in exc_info.value.errors
+        )
 
 
 class TestConfigErrorStr:

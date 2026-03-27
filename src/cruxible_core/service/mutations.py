@@ -1,0 +1,337 @@
+"""Mutation service functions — add_entities, add_relationships, ingest."""
+
+from __future__ import annotations
+
+import json as _json
+from collections.abc import Sequence
+from typing import Any
+
+from cruxible_core.errors import ConfigError, CoreError, DataValidationError, MutationError
+from cruxible_core.graph.operations import (
+    apply_entity,
+    apply_relationship,
+    validate_entity,
+    validate_relationship,
+)
+from cruxible_core.ingest import ingest_file, ingest_from_mapping, load_data_from_string
+from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.service._helpers import _config_digest, _persist_receipt, _save_graph
+from cruxible_core.service.types import (
+    AddEntityResult,
+    AddRelationshipResult,
+    EntityUpsertInput,
+    IngestResult,
+    RelationshipUpsertInput,
+)
+
+
+def service_add_entities(
+    instance: InstanceProtocol,
+    entities: Sequence[EntityUpsertInput],
+    *,
+    _create_receipt: bool = True,
+) -> AddEntityResult:
+    """Add or update entities in the graph (batch upsert).
+
+    Validates all entities first, then applies atomically.
+    Raises DataValidationError on duplicates within the batch or schema violations.
+    """
+    config = instance.load_config()
+    graph = instance.load_graph()
+
+    builder = (
+        ReceiptBuilder(operation_type="add_entity", parameters={"count": len(entities)})
+        if _create_receipt
+        else None
+    )
+
+    result: AddEntityResult | None = None
+    _exc: CoreError | None = None
+    try:
+        errors: list[str] = []
+        batch_seen: set[tuple[str, str]] = set()
+        pending = []
+
+        for i, ent in enumerate(entities, start=1):
+            key = (ent.entity_type, ent.entity_id)
+            if key in batch_seen:
+                errors.append(f"Entity {i}: duplicate in batch {ent.entity_type}:{ent.entity_id}")
+                if builder:
+                    builder.record_validation(
+                        passed=False,
+                        detail={"entity": i, "error": "duplicate in batch"},
+                    )
+                continue
+
+            try:
+                validated = validate_entity(
+                    config,
+                    graph,
+                    ent.entity_type,
+                    ent.entity_id,
+                    ent.properties,
+                )
+            except DataValidationError as exc:
+                errors.append(f"Entity {i}: {exc}")
+                if builder:
+                    builder.record_validation(passed=False, detail={"entity": i, "error": str(exc)})
+                continue
+
+            batch_seen.add(key)
+            pending.append(validated)
+            if builder:
+                builder.record_validation(
+                    passed=True,
+                    detail={"entity_type": ent.entity_type, "entity_id": ent.entity_id},
+                )
+
+        if errors:
+            raise DataValidationError(
+                f"Entity validation failed with {len(errors)} error(s)",
+                errors=errors,
+            )
+
+        added = 0
+        updated = 0
+        for validated in pending:
+            apply_entity(graph, validated)
+            if builder:
+                builder.record_entity_write(
+                    validated.entity.entity_type,
+                    validated.entity.entity_id,
+                    is_update=validated.is_update,
+                )
+            if validated.is_update:
+                updated += 1
+            else:
+                added += 1
+
+        _save_graph(instance, graph)
+        if builder:
+            builder.mark_committed()
+        result = AddEntityResult(added=added, updated=updated)
+    except CoreError as e:
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
+    finally:
+        if builder:
+            receipt = builder.build()
+            if _persist_receipt(instance, receipt):
+                if _exc is not None:
+                    _exc.mutation_receipt_id = receipt.receipt_id
+                elif result is not None:
+                    result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]
+
+
+def service_add_relationships(
+    instance: InstanceProtocol,
+    relationships: Sequence[RelationshipUpsertInput],
+    source: str,
+    source_ref: str,
+    *,
+    _create_receipt: bool = True,
+) -> AddRelationshipResult:
+    """Add or update relationships in the graph (batch upsert).
+
+    Validates all relationships first, then applies atomically.
+    New edges get provenance stamped. Updated edges preserve existing provenance.
+    Raises DataValidationError on duplicates within the batch or schema violations.
+    """
+    config = instance.load_config()
+    graph = instance.load_graph()
+
+    builder = (
+        ReceiptBuilder(
+            operation_type="add_relationship",
+            parameters={"count": len(relationships), "source": source},
+        )
+        if _create_receipt
+        else None
+    )
+
+    result: AddRelationshipResult | None = None
+    _exc: CoreError | None = None
+    try:
+        errors: list[str] = []
+        batch_seen: set[tuple[str, str, str, str, str]] = set()
+        pending = []
+
+        for i, edge in enumerate(relationships, start=1):
+            key = (
+                edge.from_type,
+                edge.from_id,
+                edge.to_type,
+                edge.to_id,
+                edge.relationship,
+            )
+            if key in batch_seen:
+                errors.append(
+                    f"Edge {i}: duplicate in batch "
+                    f"{edge.from_type}:{edge.from_id} "
+                    f"-[{edge.relationship}]-> "
+                    f"{edge.to_type}:{edge.to_id}"
+                )
+                if builder:
+                    builder.record_validation(
+                        passed=False, detail={"edge": i, "error": "duplicate in batch"}
+                    )
+                continue
+
+            try:
+                validated = validate_relationship(
+                    config,
+                    graph,
+                    edge.from_type,
+                    edge.from_id,
+                    edge.relationship,
+                    edge.to_type,
+                    edge.to_id,
+                    edge.properties,
+                )
+            except DataValidationError as exc:
+                errors.append(f"Edge {i}: {exc}")
+                if builder:
+                    builder.record_validation(passed=False, detail={"edge": i, "error": str(exc)})
+                continue
+
+            batch_seen.add(key)
+            pending.append((validated, edge))
+            if builder:
+                builder.record_validation(
+                    passed=True,
+                    detail={
+                        "from": f"{edge.from_type}:{edge.from_id}",
+                        "to": f"{edge.to_type}:{edge.to_id}",
+                        "relationship": edge.relationship,
+                    },
+                )
+
+        if errors:
+            raise DataValidationError(
+                f"Relationship validation failed with {len(errors)} error(s)",
+                errors=errors,
+            )
+
+        added = 0
+        updated = 0
+        for validated, edge in pending:
+            apply_relationship(graph, validated, source, source_ref)
+            if builder:
+                builder.record_relationship_write(
+                    edge.from_type,
+                    edge.from_id,
+                    edge.to_type,
+                    edge.to_id,
+                    edge.relationship,
+                    is_update=validated.is_update,
+                )
+            if validated.is_update:
+                updated += 1
+            else:
+                added += 1
+
+        _save_graph(instance, graph)
+        if builder:
+            builder.mark_committed()
+        result = AddRelationshipResult(added=added, updated=updated)
+    except CoreError as e:
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
+    finally:
+        if builder:
+            receipt = builder.build()
+            if _persist_receipt(instance, receipt):
+                if _exc is not None:
+                    _exc.mutation_receipt_id = receipt.receipt_id
+                elif result is not None:
+                    result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]
+
+
+def service_ingest(
+    instance: InstanceProtocol,
+    mapping_name: str,
+    file_path: str | None = None,
+    data_csv: str | None = None,
+    data_json: str | list[dict[str, Any]] | None = None,
+    data_ndjson: str | None = None,
+    upload_id: str | None = None,
+) -> IngestResult:
+    """Ingest data through an ingestion mapping.
+
+    Accepts exactly one data source. Raises ConfigError on source violations.
+    """
+    # Input validation — no receipt for these
+    sources = sum(x is not None for x in (file_path, data_csv, data_json, data_ndjson, upload_id))
+    if sources == 0:
+        raise ConfigError(
+            "Provide exactly one of file_path, data_csv, data_json, data_ndjson, or upload_id"
+        )
+    if sources > 1:
+        raise ConfigError(
+            "Provide exactly one of file_path, data_csv, data_json, data_ndjson, or upload_id"
+        )
+
+    if upload_id is not None:
+        raise ConfigError("upload_id is not supported in local mode")
+
+    config = instance.load_config()
+    graph = instance.load_graph()
+
+    builder = ReceiptBuilder(
+        operation_type="ingest",
+        parameters={"mapping": mapping_name, "config_digest": _config_digest(config)},
+    )
+
+    result: IngestResult | None = None
+    _exc: CoreError | None = None
+    try:
+        if file_path is not None:
+            added, updated = ingest_file(config, graph, mapping_name, file_path)
+        elif data_csv is not None:
+            df = load_data_from_string(data_csv, "csv")
+            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+        elif data_ndjson is not None:
+            df = load_data_from_string(data_ndjson, "ndjson")
+            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+        else:
+            assert data_json is not None
+            if not isinstance(data_json, str):
+                data_json = _json.dumps(data_json)
+            df = load_data_from_string(data_json, "json")
+            added, updated = ingest_from_mapping(config, graph, mapping_name, df)
+
+        builder.record_ingest_batch(mapping_name, added, updated)
+        _save_graph(instance, graph)
+        builder.mark_committed()
+        mapping = config.ingestion[mapping_name]
+        result = IngestResult(
+            records_ingested=added,
+            records_updated=updated,
+            mapping=mapping_name,
+            entity_type=mapping.entity_type,
+            relationship_type=mapping.relationship_type,
+        )
+    except CoreError as e:
+        builder.record_validation(passed=False, detail={"error": str(e)})
+        _exc = e
+        raise
+    except Exception as exc:
+        _exc = MutationError(f"Unexpected failure: {exc}")
+        raise _exc from exc
+    finally:
+        receipt = builder.build()
+        if _persist_receipt(instance, receipt):
+            if _exc is not None:
+                _exc.mutation_receipt_id = receipt.receipt_id
+            elif result is not None:
+                result.receipt_id = receipt.receipt_id
+    return result  # type: ignore[return-value]

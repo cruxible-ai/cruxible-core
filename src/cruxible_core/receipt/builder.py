@@ -11,24 +11,53 @@ from typing import Any, Literal
 
 from cruxible_core.receipt.types import EvidenceEdge, Receipt, ReceiptNode
 
-_EdgeType = Literal["consulted", "traversed", "filtered", "evaluated", "produced"]
+_EdgeType = Literal[
+    "consulted",
+    "traversed",
+    "filtered",
+    "evaluated",
+    "produced",
+    "validated",
+    "mutated",
+    "applied",
+]
 
 
 class ReceiptBuilder:
     """Collects evidence nodes and edges during query execution."""
 
-    def __init__(self, query_name: str, parameters: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        query_name: str = "",
+        parameters: dict[str, Any] | None = None,
+        operation_type: str = "query",
+    ) -> None:
         self._query_name = query_name
-        self._parameters = parameters
+        self._parameters = parameters or {}
+        self._operation_type = operation_type
         self._nodes: list[ReceiptNode] = []
         self._edges: list[EvidenceEdge] = []
         self._counter = 0
         self._start_ns = time.monotonic_ns()
 
-        self._root_id = self._add_node(
-            node_type="query",
-            detail={"query_name": query_name, "parameters": parameters},
-        )
+        if operation_type == "query":
+            self._root_id = self._add_node(
+                node_type="query",
+                detail={"query_name": query_name, "parameters": self._parameters},
+            )
+            self._committed = True
+        elif operation_type == "workflow":
+            self._root_id = self._add_node(
+                node_type="workflow",
+                detail={"workflow_name": query_name, "parameters": self._parameters},
+            )
+            self._committed = True
+        else:
+            self._root_id = self._add_node(
+                node_type="mutation",
+                detail={"operation_type": operation_type, "parameters": self._parameters},
+            )
+            self._committed = False
 
     def _next_id(self) -> str:
         self._counter += 1
@@ -137,7 +166,112 @@ class ReceiptBuilder:
             self._add_edge(pid, node_id, "produced")
         return node_id
 
-    def build(self, results: list[dict[str, Any]]) -> Receipt:
+    def record_plan_step(
+        self,
+        step_id: str,
+        kind: str,
+        detail: dict[str, Any] | None = None,
+        parent_id: str | None = None,
+    ) -> str:
+        """Record a workflow plan step with step-specific detail."""
+        node_id = self._add_node(
+            node_type="plan_step",
+            detail={"step_id": step_id, "kind": kind, **(detail or {})},
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "produced")
+        return node_id
+
+    def mark_committed(self) -> None:
+        """Mark the mutation as having completed all durable writes."""
+        self._committed = True
+
+    def record_validation(
+        self,
+        passed: bool,
+        detail: dict[str, Any] | None = None,
+        parent_id: str | None = None,
+    ) -> str:
+        """Record a validation check result."""
+        node_id = self._add_node(
+            node_type="validation",
+            detail={"passed": passed, **(detail or {})},
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "validated")
+        return node_id
+
+    def record_entity_write(
+        self,
+        entity_type: str,
+        entity_id: str,
+        is_update: bool,
+        parent_id: str | None = None,
+    ) -> str:
+        """Record that an entity was written to the graph."""
+        node_id = self._add_node(
+            node_type="entity_write",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            detail={"is_update": is_update},
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "mutated")
+        return node_id
+
+    def record_relationship_write(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship: str,
+        is_update: bool,
+        parent_id: str | None = None,
+    ) -> str:
+        """Record that a relationship was written to the graph."""
+        node_id = self._add_node(
+            node_type="relationship_write",
+            detail={
+                "from_type": from_type,
+                "from_id": from_id,
+                "to_type": to_type,
+                "to_id": to_id,
+                "relationship": relationship,
+                "is_update": is_update,
+            },
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "mutated")
+        return node_id
+
+    def record_feedback_applied(
+        self,
+        target_str: str,
+        action: str,
+        applied: bool,
+        parent_id: str | None = None,
+    ) -> str:
+        """Record that feedback was applied (or not) to an edge."""
+        node_id = self._add_node(
+            node_type="feedback_applied",
+            detail={"target": target_str, "action": action, "applied": applied},
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "applied")
+        return node_id
+
+    def record_ingest_batch(
+        self,
+        mapping: str,
+        added: int,
+        updated: int,
+        parent_id: str | None = None,
+    ) -> str:
+        """Record an ingest batch result."""
+        node_id = self._add_node(
+            node_type="ingest_batch",
+            detail={"mapping": mapping, "added": added, "updated": updated},
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "mutated")
+        return node_id
+
+    def build(self, results: list[dict[str, Any]] | None = None) -> Receipt:
         """Finalize and return the receipt."""
         elapsed_ms = (time.monotonic_ns() - self._start_ns) / 1_000_000
         return Receipt(
@@ -145,6 +279,8 @@ class ReceiptBuilder:
             parameters=self._parameters,
             nodes=list(self._nodes),
             edges=list(self._edges),
-            results=results,
+            results=results or [],
             duration_ms=round(elapsed_ms, 3),
+            operation_type=self._operation_type,
+            committed=self._committed,
         )

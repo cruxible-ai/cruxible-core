@@ -6,17 +6,23 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.mcp.handlers import _manager
+from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
+from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_core.server.registry import reset_registry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
 @pytest.fixture(autouse=True)
 def clear_instances():
     """Clear the instance manager between tests."""
-    _manager.clear()
+    get_manager().clear()
+    reset_client_cache()
+    reset_registry()
     yield
-    _manager.clear()
+    get_manager().clear()
+    reset_client_cache()
+    reset_registry()
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +30,12 @@ def reset_permission_mode(monkeypatch):
     """Reset permission mode cache between tests."""
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
     monkeypatch.delenv("CRUXIBLE_ALLOWED_ROOTS", raising=False)
+    monkeypatch.delenv("CRUXIBLE_REQUIRE_SERVER", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_STATE_DIR", raising=False)
     reset_permissions()
     yield
     reset_permissions()

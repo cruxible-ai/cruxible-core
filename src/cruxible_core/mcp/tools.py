@@ -196,7 +196,10 @@ def register_tools(server: FastMCP) -> list[str]:
         to_id: str,
         edge_key: int | None = None,
         reason: str = "",
+        reason_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
+        group_override: bool = False,
     ) -> contracts.FeedbackResult:
         """Record edge-level feedback tied to a receipt.
 
@@ -210,6 +213,10 @@ def register_tools(server: FastMCP) -> list[str]:
         Use `corrections` with `action="correct"` and set `edge_key` only
         when disambiguation is needed. `applied=False` means the record was
         saved but the graph edge was not updated.
+
+        Set `group_override=True` to stamp the edge with a group_override
+        property, marking it as pre-approved for group resolve. The edge
+        must already exist in the graph.
         """
         return handlers.handle_feedback(
             instance_id,
@@ -223,18 +230,47 @@ def register_tools(server: FastMCP) -> list[str]:
             to_id,
             edge_key,
             reason,
+            reason_code,
+            scope_hints,
             corrections,
+            group_override,
         )
+
+    @_tool
+    def cruxible_feedback_batch(
+        instance_id: str,
+        items: list[contracts.FeedbackBatchItemInput],
+        source: contracts.FeedbackSource = "human",
+    ) -> contracts.FeedbackBatchResult:
+        """Record batch edge feedback under one top-level mutation receipt."""
+        return handlers.handle_feedback_batch(instance_id, items, source=source)
 
     @_tool
     def cruxible_outcome(
         instance_id: str,
-        receipt_id: str,
         outcome: contracts.OutcomeValue,
+        receipt_id: str | None = None,
+        anchor_type: contracts.OutcomeAnchorType = "receipt",
+        anchor_id: str | None = None,
+        source: contracts.FeedbackSource = "human",
+        outcome_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
+        outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> contracts.OutcomeResult:
-        """Record outcome for a receipt."""
-        return handlers.handle_outcome(instance_id, receipt_id, outcome, detail)
+        """Record a structured outcome for a receipt or proposal resolution."""
+        return handlers.handle_outcome(
+            instance_id,
+            outcome,
+            receipt_id=receipt_id,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            source=source,
+            outcome_code=outcome_code,
+            scope_hints=scope_hints,
+            outcome_profile_key=outcome_profile_key,
+            detail=detail,
+        )
 
     @_tool
     def cruxible_list(
@@ -246,6 +282,7 @@ def register_tools(server: FastMCP) -> list[str]:
         receipt_id: str | None = None,
         limit: int = 50,
         property_filter: dict[str, Any] | None = None,
+        operation_type: str | None = None,
     ) -> contracts.ListResult:
         """List `entities|edges|receipts|feedback|outcomes` with optional filters.
 
@@ -253,6 +290,7 @@ def register_tools(server: FastMCP) -> list[str]:
         `relationship_type` filters edges by type for `resource_type="edges"`.
         `property_filter` filters by exact property matches (AND semantics).
         Applies to `resource_type="entities"` and `resource_type="edges"`.
+        `operation_type` filters receipts (e.g. "query", "add_entity", "ingest").
 
         Edge items include `edge_key` for use with `cruxible_feedback` when
         multiple edges exist between the same endpoints.
@@ -266,6 +304,7 @@ def register_tools(server: FastMCP) -> list[str]:
             receipt_id=receipt_id,
             limit=limit,
             property_filter=property_filter,
+            operation_type=operation_type,
         )
 
     @_tool
@@ -324,6 +363,79 @@ def register_tools(server: FastMCP) -> list[str]:
             confidence_threshold=confidence_threshold,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
+        )
+
+    @_tool
+    def cruxible_get_feedback_profile(
+        instance_id: str,
+        relationship_type: str,
+    ) -> contracts.FeedbackProfileResult:
+        """Return the configured feedback profile for one relationship type."""
+        return handlers.handle_get_feedback_profile(instance_id, relationship_type)
+
+    @_tool
+    def cruxible_analyze_feedback(
+        instance_id: str,
+        relationship_type: str,
+        limit: int = 200,
+        min_support: int = 5,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+        property_pairs: list[contracts.PropertyPairInput] | None = None,
+    ) -> contracts.AnalyzeFeedbackResult:
+        """Analyze structured feedback into deterministic remediation suggestions."""
+        return handlers.handle_analyze_feedback(
+            instance_id,
+            relationship_type,
+            limit=limit,
+            min_support=min_support,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+            property_pairs=property_pairs,
+        )
+
+    @_tool
+    def cruxible_get_outcome_profile(
+        instance_id: str,
+        anchor_type: contracts.OutcomeAnchorType,
+        relationship_type: str | None = None,
+        workflow_name: str | None = None,
+        surface_type: str | None = None,
+        surface_name: str | None = None,
+    ) -> contracts.OutcomeProfileResult:
+        """Return the configured outcome profile for one anchor context."""
+        return handlers.handle_get_outcome_profile(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+        )
+
+    @_tool
+    def cruxible_analyze_outcomes(
+        instance_id: str,
+        anchor_type: contracts.OutcomeAnchorType,
+        relationship_type: str | None = None,
+        workflow_name: str | None = None,
+        query_name: str | None = None,
+        surface_type: str | None = None,
+        surface_name: str | None = None,
+        limit: int = 200,
+        min_support: int = 5,
+    ) -> contracts.AnalyzeOutcomesResult:
+        """Analyze structured outcomes into trust and debugging suggestions."""
+        return handlers.handle_analyze_outcomes(
+            instance_id,
+            anchor_type=anchor_type,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            query_name=query_name,
+            surface_type=surface_type,
+            surface_name=surface_name,
+            limit=limit,
+            min_support=min_support,
         )
 
     @_tool
@@ -401,6 +513,245 @@ def register_tools(server: FastMCP) -> list[str]:
         Example: classified_as.FROM.Category == classified_as.TO.CategoryName
         """
         return handlers.handle_add_constraint(instance_id, name, rule, severity, description)
+
+    @_tool
+    def cruxible_add_decision_policy(
+        instance_id: str,
+        name: str,
+        applies_to: contracts.DecisionPolicyAppliesTo,
+        relationship_type: str,
+        effect: contracts.DecisionPolicyEffect,
+        match: contracts.DecisionPolicyMatchInput | None = None,
+        description: str | None = None,
+        rationale: str = "",
+        query_name: str | None = None,
+        workflow_name: str | None = None,
+        expires_at: str | None = None,
+    ) -> contracts.AddDecisionPolicyResult:
+        """Add a decision policy to the config for query/workflow execution."""
+        return handlers.handle_add_decision_policy(
+            instance_id,
+            name,
+            applies_to,
+            relationship_type,
+            effect,
+            match=match,
+            description=description,
+            rationale=rationale,
+            query_name=query_name,
+            workflow_name=workflow_name,
+            expires_at=expires_at,
+        )
+
+    @_tool
+    def cruxible_propose_workflow(
+        instance_id: str,
+        workflow_name: str,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowProposeResult:
+        """Execute a configured workflow and bridge its output into a governed relationship group.
+
+        Use this when a repeated decision procedure should propose relationship state
+        through Cruxible's proposal/review/trust boundary instead of writing edges directly.
+        The workflow must return a relationship proposal artifact from a
+        `propose_relationship_group` step.
+        """
+        return handlers.handle_propose_workflow(
+            instance_id,
+            workflow_name,
+            input_payload=input_payload,
+        )
+
+    @_tool
+    def cruxible_propose_group(
+        instance_id: str,
+        relationship_type: str,
+        members: list[contracts.MemberInput],
+        thesis_text: str = "",
+        thesis_facts: dict[str, Any] | None = None,
+        analysis_state: dict[str, Any] | None = None,
+        integrations_used: list[str] | None = None,
+        proposed_by: contracts.GroupProposedBy = "ai_review",
+        suggested_priority: str | None = None,
+    ) -> contracts.ProposeGroupToolResult:
+        """Propose a candidate group of edges for batch review.
+
+        Each member carries tri-state signals (support/contradict/unsure) from
+        declared integrations. The group carries a thesis (structured facts that
+        get hashed into a deterministic signature) and optional analysis_state
+        (opaque agent data, NOT hashed).
+
+        If a prior trusted resolution exists for the same thesis signature and
+        all signals meet the auto-resolve policy, the group is auto-resolved.
+        Otherwise it enters pending_review with a Cruxible-derived review_priority.
+        """
+        return handlers.handle_propose_group(
+            instance_id,
+            relationship_type,
+            members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            integrations_used=integrations_used,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+        )
+
+    @_tool
+    def cruxible_resolve_group(
+        instance_id: str,
+        group_id: str,
+        action: contracts.GroupAction,
+        rationale: str = "",
+        resolved_by: contracts.GroupResolvedBy = "human",
+    ) -> contracts.ResolveGroupToolResult:
+        """Resolve a candidate group by approving or rejecting it.
+
+        Approve creates edges in the graph for valid members (skipping members
+        whose edges already exist). Reject records the resolution without
+        graph mutation. Both persist the resolution for audit and future
+        auto-resolve precedent.
+        """
+        return handlers.handle_resolve_group(
+            instance_id, group_id, action, rationale=rationale, resolved_by=resolved_by
+        )
+
+    @_tool
+    def cruxible_update_trust_status(
+        instance_id: str,
+        resolution_id: str,
+        trust_status: contracts.GroupTrustStatus,
+        reason: str = "",
+    ) -> contracts.UpdateTrustStatusToolResult:
+        """Update the trust status on a confirmed approved resolution.
+
+        Trust is thesis-scoped: the latest confirmed approval for a signature
+        governs auto-resolve eligibility. Promote ``watch`` to ``trusted`` to
+        enable auto-resolve. Set ``invalidated`` to block auto-resolve and
+        escalate future proposals to critical priority.
+        """
+        return handlers.handle_update_trust_status(
+            instance_id, resolution_id, trust_status, reason=reason
+        )
+
+    @_tool
+    def cruxible_get_group(
+        instance_id: str,
+        group_id: str,
+    ) -> contracts.GetGroupToolResult:
+        """Get a candidate group by ID, including its members and resolution.
+
+        Returns the group metadata (thesis, status, review_priority) and
+        the full list of members with their signals. If the group has been
+        resolved, includes the resolution details (action, trust_status,
+        rationale).
+        """
+        return handlers.handle_get_group(instance_id, group_id)
+
+    @_tool
+    def cruxible_list_groups(
+        instance_id: str,
+        relationship_type: str | None = None,
+        status: contracts.GroupStatus | None = None,
+        limit: int = 50,
+    ) -> contracts.ListGroupsToolResult:
+        """List candidate groups with optional filters.
+
+        Results are sorted by review_priority descending (critical first).
+        Use ``status`` to filter by lifecycle state (pending_review,
+        auto_resolved, applying, resolved). Use ``relationship_type``
+        to filter by edge type.
+        """
+        return handlers.handle_list_groups(
+            instance_id,
+            relationship_type=relationship_type,
+            status=status,
+            limit=limit,
+        )
+
+    @_tool
+    def cruxible_list_resolutions(
+        instance_id: str,
+        relationship_type: str | None = None,
+        action: contracts.GroupAction | None = None,
+        limit: int = 50,
+    ) -> contracts.ListResolutionsToolResult:
+        """List group resolutions with optional filters.
+
+        Returns stored resolutions including analysis_state (for agent reuse),
+        thesis_facts, trust_status, and trust_reason. Use ``action`` to filter
+        by approve/reject. Use ``relationship_type`` to scope to a specific
+        edge type.
+        """
+        return handlers.handle_list_resolutions(
+            instance_id,
+            relationship_type=relationship_type,
+            action=action,
+            limit=limit,
+        )
+
+    @_tool
+    def cruxible_propose_entity_changes(
+        instance_id: str,
+        members: list[contracts.EntityChangeInput],
+        thesis_text: str = "",
+        thesis_facts: dict[str, Any] | None = None,
+        analysis_state: dict[str, Any] | None = None,
+        proposed_by: contracts.GroupProposedBy = "ai_review",
+        suggested_priority: str | None = None,
+        source_workflow_name: str | None = None,
+        source_workflow_receipt_id: str | None = None,
+        source_trace_ids: list[str] | None = None,
+        source_step_ids: list[str] | None = None,
+    ) -> contracts.ProposeEntityChangesToolResult:
+        """Propose a governed batch of entity creates or property patches."""
+        return handlers.handle_propose_entity_changes(
+            instance_id,
+            members,
+            thesis_text=thesis_text,
+            thesis_facts=thesis_facts,
+            analysis_state=analysis_state,
+            proposed_by=proposed_by,
+            suggested_priority=suggested_priority,
+            source_workflow_name=source_workflow_name,
+            source_workflow_receipt_id=source_workflow_receipt_id,
+            source_trace_ids=source_trace_ids,
+            source_step_ids=source_step_ids,
+        )
+
+    @_tool
+    def cruxible_get_entity_proposal(
+        instance_id: str,
+        proposal_id: str,
+    ) -> contracts.GetEntityProposalToolResult:
+        """Fetch one governed entity proposal with its members."""
+        return handlers.handle_get_entity_proposal(instance_id, proposal_id)
+
+    @_tool
+    def cruxible_list_entity_proposals(
+        instance_id: str,
+        status: contracts.EntityProposalStatus | None = None,
+        limit: int = 50,
+    ) -> contracts.ListEntityProposalsToolResult:
+        """List governed entity proposals."""
+        return handlers.handle_list_entity_proposals(instance_id, status=status, limit=limit)
+
+    @_tool
+    def cruxible_resolve_entity_proposal(
+        instance_id: str,
+        proposal_id: str,
+        action: contracts.GroupAction,
+        rationale: str = "",
+        resolved_by: contracts.GroupResolvedBy = "human",
+    ) -> contracts.ResolveEntityProposalToolResult:
+        """Resolve an entity proposal. Approve applies graph changes."""
+        return handlers.handle_resolve_entity_proposal(
+            instance_id,
+            proposal_id,
+            action,
+            rationale=rationale,
+            resolved_by=resolved_by,
+        )
 
     @_tool
     def cruxible_get_entity(

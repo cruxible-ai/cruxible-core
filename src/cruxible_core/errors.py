@@ -16,6 +16,7 @@ errors (runtime data), making it easy to catch by category.
     │   └── ConstraintViolationError
     ├── ExecutionError (operation failures)
     │   ├── IngestionError
+    │   ├── MutationError
     │   └── QueryExecutionError
     └── PermissionDeniedError (MCP permission mode)
 """
@@ -26,7 +27,17 @@ from __future__ import annotations
 class CoreError(Exception):
     """Base exception for all Cruxible Core errors."""
 
-    pass
+    def __init__(self, message: str, *, mutation_receipt_id: str | None = None) -> None:
+        self.mutation_receipt_id = mutation_receipt_id
+        super().__init__(message)
+
+    def _receipt_suffix(self) -> str:
+        if self.mutation_receipt_id:
+            return f" (receipt: {self.mutation_receipt_id})"
+        return ""
+
+    def __str__(self) -> str:
+        return super().__str__() + self._receipt_suffix()
 
 
 # ---------------------------------------------------------------------------
@@ -49,20 +60,26 @@ class ConfigError(SchemaError):
     Raised when config fails schema validation or cross-reference checks.
     """
 
-    def __init__(self, message: str, errors: list[str] | None = None):
+    def __init__(
+        self,
+        message: str,
+        errors: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message)
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary
+            return self.summary + self._receipt_suffix()
         shown = self.errors[:_MAX_DISPLAY_ERRORS]
         detail = "; ".join(shown)
         suffix = ""
         if len(self.errors) > _MAX_DISPLAY_ERRORS:
             suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}"
+        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
 
 
 class EntityTypeNotFoundError(SchemaError):
@@ -116,20 +133,26 @@ class DataValidationError(GraphError):
     property definitions in the config (wrong columns, bad types, etc.).
     """
 
-    def __init__(self, message: str, errors: list[str] | None = None):
+    def __init__(
+        self,
+        message: str,
+        errors: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message)
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary
+            return self.summary + self._receipt_suffix()
         shown = self.errors[:_MAX_DISPLAY_ERRORS]
         detail = "; ".join(shown)
         suffix = ""
         if len(self.errors) > _MAX_DISPLAY_ERRORS:
             suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}"
+        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
 
 
 class EdgeAmbiguityError(GraphError):
@@ -143,6 +166,11 @@ class EdgeAmbiguityError(GraphError):
         to_id: str,
         relationship: str,
     ):
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        self.relationship = relationship
         super().__init__(
             "Ambiguous edge target for "
             f"{from_type}:{from_id}:{relationship}:{to_type}:{to_id}; "
@@ -153,16 +181,22 @@ class EdgeAmbiguityError(GraphError):
 class ConstraintViolationError(GraphError):
     """Constraint rule was violated."""
 
-    def __init__(self, message: str, violations: list[str] | None = None):
+    def __init__(
+        self,
+        message: str,
+        violations: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ):
         self.summary = message
         self.violations = violations or []
-        super().__init__(message)
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
 
     def __str__(self) -> str:
         if not self.violations:
-            return self.summary
+            return self.summary + self._receipt_suffix()
         detail = "; ".join(self.violations)
-        return f"{self.summary}: {detail}"
+        return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +214,16 @@ class IngestionError(ExecutionError):
     """Error during data ingestion.
 
     Raised when CSV parsing, column mapping, or data normalization fails.
+    """
+
+    pass
+
+
+class MutationError(ExecutionError):
+    """Unexpected failure during a graph mutation.
+
+    Raised when durable writes (save_graph, store writes) fail for reasons
+    other than data validation (OSError, sqlite3 errors, etc.).
     """
 
     pass
@@ -224,6 +268,22 @@ class InstanceNotFoundError(CoreError):
     def __init__(self, instance_id: str):
         self.instance_id = instance_id
         super().__init__(f"Instance '{instance_id}' not found")
+
+
+class GroupNotFoundError(CoreError):
+    """Group ID not found in store."""
+
+    def __init__(self, group_id: str):
+        self.group_id = group_id
+        super().__init__(f"Group '{group_id}' not found")
+
+
+class EntityProposalNotFoundError(CoreError):
+    """Entity proposal ID not found in store."""
+
+    def __init__(self, proposal_id: str):
+        self.proposal_id = proposal_id
+        super().__init__(f"Entity proposal '{proposal_id}' not found")
 
 
 # ---------------------------------------------------------------------------

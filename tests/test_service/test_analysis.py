@@ -1,0 +1,727 @@
+"""Tests for service layer validate, find_candidates, and evaluate functions."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.schema import (
+    ConstraintSchema,
+    FeedbackProfileSchema,
+    FeedbackReasonCodeSchema,
+    OutcomeCodeSchema,
+    OutcomeProfileSchema,
+)
+from cruxible_core.errors import ConfigError
+from cruxible_core.feedback.types import EdgeTarget
+from cruxible_core.graph.types import EntityInstance
+from cruxible_core.group.types import CandidateMember
+from cruxible_core.query.candidates import MatchRule
+from cruxible_core.receipt.types import Receipt
+from cruxible_core.service import (
+    service_analyze_feedback,
+    service_analyze_outcomes,
+    service_evaluate,
+    service_feedback,
+    service_find_candidates,
+    service_outcome,
+    service_propose_group,
+    service_query,
+    service_resolve_group,
+    service_validate,
+)
+from tests.test_cli.conftest import CAR_PARTS_YAML
+
+# ---------------------------------------------------------------------------
+# service_validate
+# ---------------------------------------------------------------------------
+
+
+class TestValidate:
+    def test_file(self, tmp_project: Path) -> None:
+        result = service_validate(config_path=str(tmp_project / "config.yaml"))
+        assert result.config is not None
+        assert result.config.name == "car_parts_compatibility"
+
+    def test_yaml_string(self) -> None:
+        result = service_validate(config_yaml=CAR_PARTS_YAML)
+        assert result.config is not None
+        assert "Vehicle" in result.config.entity_types
+
+    def test_semantic_errors(self, tmp_path: Path) -> None:
+        bad_yaml = """\
+version: "1.0"
+name: broken
+entity_types:
+  Thing:
+    properties:
+      id:
+        type: string
+        primary_key: true
+relationships:
+  - name: links
+    from: Thing
+    to: Nonexistent
+"""
+        config_file = tmp_path / "bad.yaml"
+        config_file.write_text(bad_yaml)
+        with pytest.raises(ConfigError, match="cross-reference"):
+            service_validate(config_path=str(config_file))
+
+    def test_no_source_error(self) -> None:
+        with pytest.raises(ConfigError, match="Provide exactly one"):
+            service_validate()
+
+    def test_returns_warnings(self, tmp_path: Path) -> None:
+        """Config with unverifiable constraint rule produces a warning."""
+        yaml_with_constraint = """\
+version: "1.0"
+name: with_constraints
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+constraints:
+  - name: weird_rule
+    rule: "some_unparseable_thing"
+    severity: warning
+ingestion: {}
+"""
+        config_file = tmp_path / "constraints.yaml"
+        config_file.write_text(yaml_with_constraint)
+        result = service_validate(config_path=str(config_file))
+        assert len(result.warnings) >= 1
+        assert any("could not verify" in w for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# service_find_candidates
+# ---------------------------------------------------------------------------
+
+
+class TestFindCandidates:
+    def test_property_match(self, populated_instance: CruxibleInstance) -> None:
+        candidates = service_find_candidates(
+            populated_instance,
+            relationship_type="replaces",
+            strategy="property_match",
+            match_rules=[MatchRule(from_property="category", to_property="category")],
+            min_confidence=0.5,
+        )
+        # Both parts have category=brakes, and BP-1002->BP-1001 replaces exists,
+        # so we may or may not get candidates depending on existing edges
+        assert isinstance(candidates, list)
+
+    def test_shared_neighbors(self, populated_instance: CruxibleInstance) -> None:
+        candidates = service_find_candidates(
+            populated_instance,
+            relationship_type="replaces",
+            strategy="shared_neighbors",
+            via_relationship="fits",
+            min_overlap=0.1,
+            min_distinct_neighbors=1,
+        )
+        assert isinstance(candidates, list)
+
+    def test_bad_relationship(self, populated_instance: CruxibleInstance) -> None:
+        with pytest.raises(Exception):  # RelationshipNotFoundError
+            service_find_candidates(
+                populated_instance,
+                relationship_type="nonexistent",
+                strategy="property_match",
+                match_rules=[MatchRule(from_property="name", to_property="name")],
+            )
+
+    def test_invalid_strategy(self, populated_instance: CruxibleInstance) -> None:
+        with pytest.raises(ConfigError, match="Invalid strategy"):
+            service_find_candidates(
+                populated_instance,
+                relationship_type="replaces",
+                strategy="bogus",  # type: ignore[arg-type]
+            )
+
+    def test_invalid_min_neighbors(self, populated_instance: CruxibleInstance) -> None:
+        with pytest.raises(ConfigError, match="min_distinct_neighbors"):
+            service_find_candidates(
+                populated_instance,
+                relationship_type="replaces",
+                strategy="shared_neighbors",
+                via_relationship="fits",
+                min_distinct_neighbors=0,
+            )
+
+
+# ---------------------------------------------------------------------------
+# service_evaluate
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluate:
+    def test_basic(self, populated_instance: CruxibleInstance) -> None:
+        report = service_evaluate(populated_instance)
+        assert report.entity_count >= 4
+        assert report.edge_count >= 3
+        assert isinstance(report.findings, list)
+        assert isinstance(report.summary, dict)
+        assert isinstance(report.quality_summary, dict)
+
+    def test_constraint_summary_includes_zero_count_constraints(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.constraints.append(
+            ConstraintSchema(
+                name="replaces_category_match",
+                rule="replaces.FROM.category == replaces.TO.category",
+            )
+        )
+        populated_instance.save_config(config)
+
+        report = service_evaluate(populated_instance)
+        assert report.constraint_summary["replaces_category_match"] == 0
+
+    def test_with_threshold(self, populated_instance: CruxibleInstance) -> None:
+        report = service_evaluate(populated_instance, confidence_threshold=0.99)
+        # With a very high threshold, the replaces edge (0.95) should be flagged
+        low_conf = [f for f in report.findings if f.category == "low_confidence_edge"]
+        assert len(low_conf) >= 1
+
+    def test_exclude_orphan_types(self, populated_instance: CruxibleInstance) -> None:
+        report_all = service_evaluate(populated_instance)
+        report_excl = service_evaluate(populated_instance, exclude_orphan_types=["Vehicle", "Part"])
+        orphans_all = sum(1 for f in report_all.findings if f.category == "orphan_entity")
+        orphans_excl = sum(1 for f in report_excl.findings if f.category == "orphan_entity")
+        assert orphans_excl <= orphans_all
+
+
+class TestAnalyzeFeedback:
+    def test_decision_policy_suggestion_and_uncoded_feedback(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=2,
+            reason_codes={
+                "legacy_unsupported": FeedbackReasonCodeSchema(
+                    description="Legacy environment is unsupported",
+                    remediation_hint="decision_policy",
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={
+                "category": "FROM.category",
+                "make": "TO.make",
+            },
+        )
+        populated_instance.save_config(config)
+
+        query_one = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        query_two = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query_one.receipt_id is not None
+        assert query_two.receipt_id is not None
+
+        service_feedback(
+            populated_instance,
+            receipt_id=query_one.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1001"),
+            reason="Legacy unsupported",
+            reason_code="legacy_unsupported",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+        service_feedback(
+            populated_instance,
+            receipt_id=query_two.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1002"),
+            reason="Legacy unsupported",
+            reason_code="legacy_unsupported",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+        service_feedback(
+            populated_instance,
+            receipt_id=query_two.receipt_id,
+            action="reject",
+            source="human",
+            target=_feedback_target("BP-1002"),
+            reason="freeform uncoded reason",
+        )
+
+        result = service_analyze_feedback(
+            populated_instance,
+            "fits",
+            min_support=2,
+            decision_surface_type="query",
+            decision_surface_name="parts_for_vehicle",
+        )
+
+        assert result.feedback_count == 3
+        assert result.uncoded_feedback_count == 1
+        assert len(result.coded_groups) == 1
+        assert result.coded_groups[0].reason_code == "legacy_unsupported"
+        assert len(result.decision_policy_suggestions) == 1
+        suggestion = result.decision_policy_suggestions[0]
+        assert suggestion.applies_to == "query"
+        assert suggestion.effect == "suppress"
+        assert suggestion.query_name == "parts_for_vehicle"
+        assert suggestion.match["from"] == {"category": "brakes"}
+        assert suggestion.match["to"] == {"make": "Honda"}
+        assert result.constraint_suggestions == []
+
+    def test_analysis_uses_stored_remediation_hint_across_profile_versions(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "legacy_unsupported": FeedbackReasonCodeSchema(
+                    description="Legacy environment is unsupported",
+                    remediation_hint="decision_policy",
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={
+                "category": "FROM.category",
+                "make": "TO.make",
+            },
+        )
+        populated_instance.save_config(config)
+
+        query_one = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        query_two = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query_one.receipt_id is not None
+        assert query_two.receipt_id is not None
+
+        service_feedback(
+            populated_instance,
+            receipt_id=query_one.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1001"),
+            reason="Legacy unsupported",
+            reason_code="legacy_unsupported",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+        service_feedback(
+            populated_instance,
+            receipt_id=query_two.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1002"),
+            reason="Legacy unsupported",
+            reason_code="legacy_unsupported",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=2,
+            reason_codes={
+                "legacy_unsupported": FeedbackReasonCodeSchema(
+                    description="Legacy environment is unsupported",
+                    remediation_hint="constraint",
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={
+                "category": "FROM.category",
+                "make": "TO.make",
+            },
+        )
+        populated_instance.save_config(config)
+
+        result = service_analyze_feedback(
+            populated_instance,
+            "fits",
+            min_support=2,
+            decision_surface_type="query",
+            decision_surface_name="parts_for_vehicle",
+        )
+
+        assert len(result.decision_policy_suggestions) == 1
+        assert result.constraint_suggestions == []
+        assert any("using stored remediation hints" in warning for warning in result.warnings)
+
+    def test_constraint_suggestions_use_feedback_snapshot_not_current_graph(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "fitment_mismatch": FeedbackReasonCodeSchema(
+                    description="Part category mismatches vehicle make",
+                    remediation_hint="constraint",
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={
+                "category": "FROM.category",
+                "make": "TO.make",
+            },
+        )
+        populated_instance.save_config(config)
+
+        query_one = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        query_two = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query_one.receipt_id is not None
+        assert query_two.receipt_id is not None
+
+        service_feedback(
+            populated_instance,
+            receipt_id=query_one.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1001"),
+            reason="Mismatch",
+            reason_code="fitment_mismatch",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+        service_feedback(
+            populated_instance,
+            receipt_id=query_two.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1002"),
+            reason="Mismatch",
+            reason_code="fitment_mismatch",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+
+        graph = populated_instance.load_graph()
+        part = graph.get_entity("Part", "BP-1001")
+        vehicle = graph.get_entity("Vehicle", "V-2024-CIVIC-EX")
+        assert part is not None
+        assert vehicle is not None
+        part.properties["category"] = "Honda"
+        vehicle.properties["make"] = "Honda"
+        populated_instance.save_graph(graph)
+
+        result = service_analyze_feedback(
+            populated_instance,
+            "fits",
+            min_support=2,
+            decision_surface_type="query",
+            decision_surface_name="parts_for_vehicle",
+            property_pairs=[("category", "make")],
+        )
+
+        assert len(result.constraint_suggestions) == 1
+        assert result.constraint_suggestions[0].rule == "fits.FROM.category == fits.TO.make"
+
+
+class TestAnalyzeOutcomes:
+    def test_receipt_outcomes_produce_provider_fix_candidates(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            version=1,
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad query result",
+                    remediation_hint="provider_fix",
+                    required_scope_keys=["surface"],
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        query = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        service_outcome(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            outcome="incorrect",
+            source="system",
+            outcome_code="bad_result",
+            scope_hints={"surface": "parts_for_vehicle"},
+        )
+        service_outcome(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            outcome="incorrect",
+            source="system",
+            outcome_code="bad_result",
+            scope_hints={"surface": "parts_for_vehicle"},
+        )
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="receipt",
+            query_name="parts_for_vehicle",
+            min_support=2,
+        )
+
+        assert result.outcome_count == 2
+        assert result.outcome_code_counts["bad_result"] == 2
+        assert len(result.provider_fix_candidates) == 1
+        assert result.provider_fix_candidates[0].surface_name == "parts_for_vehicle"
+        assert len(result.workflow_debug_packages) == 1
+
+    def test_outcome_analysis_uses_stored_hint_across_profile_versions(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            version=1,
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad query result",
+                    remediation_hint="provider_fix",
+                    required_scope_keys=["surface"],
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        query = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        for _ in range(2):
+            service_outcome(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                outcome="incorrect",
+                source="system",
+                outcome_code="bad_result",
+                scope_hints={"surface": "parts_for_vehicle"},
+            )
+
+        config = populated_instance.load_config()
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            version=2,
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad query result",
+                    remediation_hint="decision_policy",
+                    required_scope_keys=["surface"],
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="receipt",
+            query_name="parts_for_vehicle",
+            min_support=2,
+        )
+
+        assert len(result.provider_fix_candidates) == 1
+        assert result.query_policy_suggestions == []
+        assert any("using stored remediation hints" in warning for warning in result.warnings)
+
+    def test_resolution_outcomes_produce_trust_adjustment_suggestions(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["resolution_quality"] = OutcomeProfileSchema(
+            anchor_type="resolution",
+            version=1,
+            relationship_type="fits",
+            outcome_codes={
+                "false_positive": OutcomeCodeSchema(
+                    description="Approved link was wrong",
+                    remediation_hint="trust_adjustment",
+                    required_scope_keys=["vendor"],
+                )
+            },
+            scope_keys={"vendor": "THESIS.vendor"},
+        )
+        populated_instance.save_config(config)
+
+        resolution_id = _create_resolution_anchor(populated_instance)
+        for _ in range(2):
+            service_outcome(
+                populated_instance,
+                outcome="incorrect",
+                anchor_type="resolution",
+                anchor_id=resolution_id,
+                source="system",
+                outcome_code="false_positive",
+                scope_hints={"vendor": "Honda"},
+            )
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="resolution",
+            relationship_type="fits",
+            min_support=2,
+        )
+
+        assert len(result.trust_adjustment_suggestions) == 1
+        suggestion = result.trust_adjustment_suggestions[0]
+        assert suggestion.resolution_id == resolution_id
+        assert suggestion.suggested_trust_status in {"watch", "invalidated"}
+
+    def test_resolution_outcomes_produce_workflow_review_suggestions(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.outcome_profiles["resolution_review"] = OutcomeProfileSchema(
+            anchor_type="resolution",
+            version=1,
+            relationship_type="fits",
+            outcome_codes={
+                "needs_review": OutcomeCodeSchema(
+                    description="Needs future review",
+                    remediation_hint="require_review",
+                    required_scope_keys=["vendor"],
+                )
+            },
+            scope_keys={"vendor": "THESIS.vendor"},
+        )
+        populated_instance.save_config(config)
+
+        resolution_id = _create_resolution_anchor(populated_instance)
+        for _ in range(2):
+            service_outcome(
+                populated_instance,
+                outcome="incorrect",
+                anchor_type="resolution",
+                anchor_id=resolution_id,
+                source="system",
+                outcome_code="needs_review",
+                scope_hints={"vendor": "Honda"},
+            )
+
+        result = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="resolution",
+            relationship_type="fits",
+            min_support=2,
+        )
+
+        assert len(result.workflow_review_policy_suggestions) == 1
+        suggestion = result.workflow_review_policy_suggestions[0]
+        assert suggestion.workflow_name == "propose_kev_product_links"
+        assert suggestion.match["context"]["vendor"] == "Honda"
+
+
+def _feedback_target(part_id: str) -> EdgeTarget:
+    return EdgeTarget(
+        from_type="Part",
+        from_id=part_id,
+        relationship="fits",
+        to_type="Vehicle",
+        to_id="V-2024-CIVIC-EX",
+    )
+
+
+def _save_workflow_receipt(instance: CruxibleInstance, workflow_name: str) -> str:
+    receipt = Receipt(
+        query_name=workflow_name,
+        parameters={"vehicle_id": "V-2024-CIVIC-EX"},
+        nodes=[],
+        edges=[],
+        operation_type="workflow",
+    )
+    store = instance.get_receipt_store()
+    try:
+        store.save_receipt(receipt)
+    finally:
+        store.close()
+    return receipt.receipt_id
+
+
+def _create_resolution_anchor(instance: CruxibleInstance) -> str:
+    workflow_receipt_id = _save_workflow_receipt(instance, "propose_kev_product_links")
+    graph = instance.load_graph()
+    if graph.get_entity("Vehicle", "V-OUTCOME-1") is None:
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-OUTCOME-1",
+                properties={"vehicle_id": "V-OUTCOME-1", "make": "Honda"},
+            )
+        )
+        instance.save_graph(graph)
+    propose_result = service_propose_group(
+        instance,
+        "fits",
+        members=[
+            CandidateMember(
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-OUTCOME-1",
+                relationship_type="fits",
+            )
+        ],
+        thesis_text="KEV suggests this part affects the vehicle",
+        thesis_facts={"vendor": "Honda"},
+        source_workflow_name="propose_kev_product_links",
+        source_workflow_receipt_id=workflow_receipt_id,
+    )
+    assert propose_result.group_id is not None
+    resolve_result = service_resolve_group(
+        instance,
+        propose_result.group_id,
+        action="approve",
+        rationale="accepted",
+        resolved_by="human",
+    )
+    assert resolve_result.resolution_id is not None
+    return resolve_result.resolution_id

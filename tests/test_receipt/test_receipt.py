@@ -136,6 +136,41 @@ def graph() -> EntityGraph:
 # ---------------------------------------------------------------------------
 
 
+class TestReceiptTypes:
+    def test_receipt_defaults_operation_type_query(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.operation_type == "query"
+        assert receipt.committed is True
+
+    def test_receipt_accepts_mutation_operation_type(self):
+        receipt = Receipt(nodes=[], edges=[], operation_type="add_entity", committed=False)
+        assert receipt.operation_type == "add_entity"
+        assert receipt.committed is False
+
+    def test_receipt_backward_compat_deserialization(self):
+        """Old JSON without operation_type/committed deserializes with defaults."""
+        old_json = (
+            '{"receipt_id":"RCP-old","query_name":"q","parameters":{},'
+            '"nodes":[],"edges":[],"results":[],"created_at":"2025-01-01T00:00:00Z",'
+            '"duration_ms":1.0}'
+        )
+        receipt = Receipt.model_validate_json(old_json)
+        assert receipt.operation_type == "query"
+        assert receipt.committed is True
+
+    def test_receipt_query_name_optional(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.query_name == ""
+
+    def test_receipt_parameters_optional(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.parameters == {}
+
+    def test_receipt_results_optional(self):
+        receipt = Receipt(nodes=[], edges=[])
+        assert receipt.results == []
+
+
 class TestReceiptBuilder:
     def test_root_node_created(self):
         builder = ReceiptBuilder(query_name="test_q", parameters={"a": 1})
@@ -178,6 +213,27 @@ class TestReceiptBuilder:
         assert receipt.edges[0].from_node == builder.root_id
         assert receipt.edges[0].to_node == node_id
         assert receipt.edges[0].edge_type == "consulted"
+
+    def test_workflow_root_and_plan_step(self):
+        builder = ReceiptBuilder(
+            query_name="evaluate_promo",
+            parameters={"sku": "SKU-123"},
+            operation_type="workflow",
+        )
+        step_id = builder.record_plan_step(
+            "lift",
+            "provider",
+            detail={"provider_name": "lift_predictor", "trace_id": "TRC-123"},
+        )
+        receipt = builder.build(results=[{"output": {"decision": "approve"}}])
+
+        assert receipt.operation_type == "workflow"
+        assert receipt.nodes[0].node_type == "workflow"
+        assert receipt.nodes[0].detail["workflow_name"] == "evaluate_promo"
+        plan_step = next(node for node in receipt.nodes if node.node_id == step_id)
+        assert plan_step.node_type == "plan_step"
+        assert plan_step.detail["kind"] == "provider"
+        assert plan_step.detail["trace_id"] == "TRC-123"
 
     def test_record_traversal(self):
         builder = ReceiptBuilder(query_name="q", parameters={})
@@ -277,6 +333,95 @@ class TestReceiptBuilder:
         produced_edges = [e for e in receipt.edges if e.to_node == node_id]
         assert len(produced_edges) == 1
         assert produced_edges[0].from_node == builder.root_id
+
+    def test_mutation_builder_creates_mutation_root(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={"count": 2})
+        receipt = builder.build()
+        root = receipt.nodes[0]
+        assert root.node_type == "mutation"
+        assert root.detail["operation_type"] == "add_entity"
+        assert receipt.operation_type == "add_entity"
+
+    def test_default_builder_creates_query_root(self):
+        builder = ReceiptBuilder(query_name="q", parameters={"a": 1})
+        receipt = builder.build(results=[])
+        root = receipt.nodes[0]
+        assert root.node_type == "query"
+        assert receipt.operation_type == "query"
+
+    def test_mutation_committed_default_false(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        receipt = builder.build()
+        assert receipt.committed is False
+
+    def test_query_committed_default_true(self):
+        builder = ReceiptBuilder(query_name="q", parameters={})
+        receipt = builder.build(results=[])
+        assert receipt.committed is True
+
+    def test_mark_committed(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        builder.mark_committed()
+        receipt = builder.build()
+        assert receipt.committed is True
+
+    def test_record_validation(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        nid = builder.record_validation(passed=True, detail={"entity": "test"})
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "validation"
+        assert node.detail["passed"] is True
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "validated"
+
+    def test_record_entity_write(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        nid = builder.record_entity_write("Vehicle", "V-1", is_update=False)
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "entity_write"
+        assert node.entity_type == "Vehicle"
+        assert node.entity_id == "V-1"
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "mutated"
+
+    def test_record_relationship_write(self):
+        builder = ReceiptBuilder(operation_type="add_relationship")
+        nid = builder.record_relationship_write(
+            "Part", "P-1", "Vehicle", "V-1", "fits", is_update=False
+        )
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "relationship_write"
+        assert node.detail["relationship"] == "fits"
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "mutated"
+
+    def test_record_feedback_applied(self):
+        builder = ReceiptBuilder(operation_type="feedback")
+        nid = builder.record_feedback_applied("P:1:fits:V:1", "approve", True)
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "feedback_applied"
+        assert node.detail["applied"] is True
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "applied"
+
+    def test_record_ingest_batch(self):
+        builder = ReceiptBuilder(operation_type="ingest")
+        nid = builder.record_ingest_batch("parts_csv", added=10, updated=2)
+        receipt = builder.build()
+        node = [n for n in receipt.nodes if n.node_id == nid][0]
+        assert node.node_type == "ingest_batch"
+        assert node.detail["added"] == 10
+        edge = [e for e in receipt.edges if e.to_node == nid][0]
+        assert edge.edge_type == "mutated"
+
+    def test_build_no_args_returns_empty_results(self):
+        builder = ReceiptBuilder(operation_type="add_entity")
+        receipt = builder.build()
+        assert receipt.results == []
 
 
 # ---------------------------------------------------------------------------
@@ -474,3 +619,85 @@ class TestSerializer:
         assert "Query: parts_for_vehicle" in mermaid
         assert "Lookup: Vehicle:V-1" in mermaid
         assert "Filter: PASS" in mermaid
+
+    def test_to_markdown_mutation_header(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})
+        builder.record_entity_write("Vehicle", "V-1", is_update=False)
+        builder.mark_committed()
+        receipt = builder.build()
+        md = to_markdown(receipt)
+        assert "(add_entity)" in md
+        assert "**Operation:** add_entity" in md
+
+    def test_to_markdown_mutation_writes_section(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})
+        builder.record_entity_write("Vehicle", "V-1", is_update=False)
+        builder.mark_committed()
+        receipt = builder.build()
+        md = to_markdown(receipt)
+        assert "## Writes" in md
+        assert "Vehicle:V-1" in md
+
+    def test_to_mermaid_mutation_label(self):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={})
+        receipt = builder.build()
+        mermaid = to_mermaid(receipt)
+        assert "Mutation: add_entity" in mermaid
+
+    def test_node_label_validation(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(node_id="n1", node_type="validation", detail={"passed": True})
+        assert _node_label(node) == "Validation: PASS"
+
+    def test_node_label_entity_write(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1",
+            node_type="entity_write",
+            entity_type="Vehicle",
+            entity_id="V-1",
+            detail={"is_update": False},
+        )
+        assert _node_label(node) == "Write: Vehicle:V-1 (add)"
+
+    def test_node_label_relationship_write(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1",
+            node_type="relationship_write",
+            detail={
+                "from_id": "P-1",
+                "to_id": "V-1",
+                "relationship": "fits",
+                "is_update": True,
+            },
+        )
+        assert _node_label(node) == "Write: P-1 --fits--> V-1 (update)"
+
+    def test_node_label_feedback_applied(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1",
+            node_type="feedback_applied",
+            detail={"action": "approve", "applied": True},
+        )
+        assert _node_label(node) == "Feedback: approve (applied)"
+
+    def test_node_label_ingest_batch(self):
+        from cruxible_core.receipt.serializer import _node_label
+        from cruxible_core.receipt.types import ReceiptNode
+
+        node = ReceiptNode(
+            node_id="n1",
+            node_type="ingest_batch",
+            detail={"mapping": "parts_csv", "added": 10, "updated": 2},
+        )
+        assert _node_label(node) == "Ingest: parts_csv (10 added, 2 updated)"

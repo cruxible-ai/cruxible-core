@@ -1,8 +1,8 @@
 """Pydantic models for Cruxible Core config YAML validation.
 
 The config defines a decision domain: entity types, relationships,
-named queries, constraints, and ingestion mappings. AI agents generate
-these configs; Core validates and executes against them.
+named queries, constraints, ingestion mappings, and optional execution
+artifacts such as contracts, providers, workflows, and workflow tests.
 
 Hierarchy:
     CoreConfig
@@ -13,14 +13,30 @@ Hierarchy:
     ├── named_queries: dict[str, NamedQuerySchema]
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
-    └── ingestion: dict[str, IngestionMapping]
+    ├── feedback_profiles: dict[str, FeedbackProfileSchema]
+    ├── outcome_profiles: dict[str, OutcomeProfileSchema]
+    ├── quality_checks: list[QualityCheckSchema]
+    ├── decision_policies: list[DecisionPolicySchema]
+    ├── ingestion: dict[str, IngestionMapping]
+    ├── contracts: dict[str, ContractSchema]
+    ├── artifacts: dict[str, ProviderArtifactSchema]
+    ├── providers: dict[str, ProviderSchema]
+    ├── workflows: dict[str, WorkflowSchema]
+    └── tests: list[WorkflowTestSchema]
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import json as _json
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+_PATH_TOKEN = r"[\w-]+"
+_FEEDBACK_PATH_PATTERN = rf"^(FROM|TO|EDGE)\.({_PATH_TOKEN})$"
+_OUTCOME_PATH_PATTERN = (
+    rf"^(RESOLUTION|GROUP|WORKFLOW|THESIS|RECEIPT|SURFACE|TRACESET)\.({_PATH_TOKEN})$"
+)
 
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
@@ -37,6 +53,21 @@ class PropertySchema(BaseModel):
     default: Any | None = None
     enum: list[str] | None = None
     description: str | None = None
+    json_schema: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_json_schema_usage(self) -> PropertySchema:
+        if self.json_schema is None:
+            return self
+        if self.type != "json":
+            msg = "json_schema is only allowed on properties with type 'json'"
+            raise ValueError(msg)
+        try:
+            _json.dumps(self.json_schema, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            msg = f"json_schema must be JSON-serializable: {exc}"
+            raise ValueError(msg) from exc
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +91,52 @@ class EntityTypeSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Integration & Matching Config (for candidate group resolve)
+# ---------------------------------------------------------------------------
+
+
+class IntegrationSpec(BaseModel):
+    """Global integration definition. Identity + stable contract.
+
+    Integration specs are immutable by convention: any semantic change
+    (different model, different fields, different metric) requires a new key
+    (e.g. cosine_similarity_v2). Not enforced at runtime in v0.2.0.
+    """
+
+    kind: str
+    contract: dict[str, Any] = Field(default_factory=dict)
+    notes: str = ""
+
+    @field_validator("contract")
+    @classmethod
+    def validate_contract_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Ensure contract is JSON-serializable."""
+        try:
+            _json.dumps(v, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            msg = f"contract must be JSON-serializable: {exc}"
+            raise ValueError(msg) from exc
+        return v
+
+
+class IntegrationConfig(BaseModel):
+    """Per-integration guardrails for candidate group proposals."""
+
+    role: Literal["blocking", "required", "advisory"] = "required"
+    always_review_on_unsure: bool = False
+    note: str = ""
+
+
+class MatchingConfig(BaseModel):
+    """Guardrails for candidate group proposals on a relationship type."""
+
+    integrations: dict[str, IntegrationConfig] = Field(default_factory=dict)
+    auto_resolve_when: Literal["all_support", "no_contradict"] = "all_support"
+    auto_resolve_requires_prior_trust: Literal["trusted_only", "trusted_or_watch"] = "trusted_only"
+    max_group_size: int = 1000
+
+
+# ---------------------------------------------------------------------------
 # Relationship Schema
 # ---------------------------------------------------------------------------
 
@@ -75,6 +152,7 @@ class RelationshipSchema(BaseModel):
     description: str | None = None
     inverse: str | None = None
     is_hierarchy: bool = False
+    matching: MatchingConfig | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -152,6 +230,719 @@ class ConstraintSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Feedback Profile Schema
+# ---------------------------------------------------------------------------
+
+
+FeedbackPathRef = Annotated[str, Field(pattern=_FEEDBACK_PATH_PATTERN)]
+OutcomePathRef = Annotated[str, Field(pattern=_OUTCOME_PATH_PATTERN)]
+
+
+class FeedbackReasonCodeSchema(BaseModel):
+    """Structured feedback code used by agents and analysis."""
+
+    description: str
+    remediation_hint: Literal[
+        "constraint",
+        "decision_policy",
+        "quality_check",
+        "provider_fix",
+        "unknown",
+    ] = "unknown"
+    required_scope_keys: list[str] = Field(default_factory=list)
+
+
+class FeedbackProfileSchema(BaseModel):
+    """Relationship-scoped feedback vocabulary and grouping metadata."""
+
+    version: int = 1
+    reason_codes: dict[str, FeedbackReasonCodeSchema] = Field(default_factory=dict)
+    scope_keys: dict[str, FeedbackPathRef] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_required_scope_keys(self) -> FeedbackProfileSchema:
+        declared = set(self.scope_keys.keys())
+        for code, schema in self.reason_codes.items():
+            missing = [key for key in schema.required_scope_keys if key not in declared]
+            if missing:
+                missing_str = ", ".join(sorted(missing))
+                msg = (
+                    f"Feedback reason code '{code}' references undeclared "
+                    f"required_scope_keys: {missing_str}"
+                )
+                raise ValueError(msg)
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Outcome Profile Schema
+# ---------------------------------------------------------------------------
+
+
+class OutcomeCodeSchema(BaseModel):
+    """Structured outcome code used by agents and outcome analysis."""
+
+    description: str
+    remediation_hint: Literal[
+        "trust_adjustment",
+        "require_review",
+        "decision_policy",
+        "provider_fix",
+        "workflow_fix",
+        "graph_fix",
+        "unknown",
+    ] = "unknown"
+    required_scope_keys: list[str] = Field(default_factory=list)
+
+
+class OutcomeProfileSchema(BaseModel):
+    """Anchor-scoped outcome vocabulary and grouping metadata."""
+
+    anchor_type: Literal["resolution", "receipt"]
+    version: int = 1
+    relationship_type: str | None = None
+    workflow_name: str | None = None
+    surface_type: Literal["query", "workflow", "operation"] | None = None
+    surface_name: str | None = None
+    outcome_codes: dict[str, OutcomeCodeSchema] = Field(default_factory=dict)
+    scope_keys: dict[str, OutcomePathRef] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> OutcomeProfileSchema:
+        declared = set(self.scope_keys.keys())
+        for code, schema in self.outcome_codes.items():
+            missing = [key for key in schema.required_scope_keys if key not in declared]
+            if missing:
+                missing_str = ", ".join(sorted(missing))
+                msg = (
+                    f"Outcome code '{code}' references undeclared required_scope_keys: "
+                    f"{missing_str}"
+                )
+                raise ValueError(msg)
+
+        if self.anchor_type == "resolution":
+            if self.relationship_type is None:
+                msg = "Resolution outcome profiles require relationship_type"
+                raise ValueError(msg)
+            if self.surface_type is not None or self.surface_name is not None:
+                msg = (
+                    "Resolution outcome profiles may not define surface_type or surface_name"
+                )
+                raise ValueError(msg)
+            allowed_prefixes = {"RESOLUTION", "GROUP", "WORKFLOW", "THESIS"}
+        else:
+            if self.surface_type is None or self.surface_name is None:
+                msg = "Receipt outcome profiles require surface_type and surface_name"
+                raise ValueError(msg)
+            if self.relationship_type is not None or self.workflow_name is not None:
+                msg = (
+                    "Receipt outcome profiles may not define relationship_type or workflow_name"
+                )
+                raise ValueError(msg)
+            allowed_prefixes = {"RECEIPT", "SURFACE", "TRACESET"}
+
+        for scope_key, path in self.scope_keys.items():
+            prefix, _, _ = path.partition(".")
+            if prefix not in allowed_prefixes:
+                allowed_str = ", ".join(sorted(allowed_prefixes))
+                msg = (
+                    f"Outcome profile scope key '{scope_key}' uses unsupported path '{path}'. "
+                    f"Allowed prefixes: {allowed_str}"
+                )
+                raise ValueError(msg)
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Decision Policy Schema
+# ---------------------------------------------------------------------------
+
+
+class DecisionPolicyMatch(BaseModel):
+    """Structured exact-match selectors for action-side decision policies."""
+
+    from_match: dict[str, Any] = Field(default_factory=dict, alias="from")
+    to: dict[str, Any] = Field(default_factory=dict)
+    edge: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"populate_by_name": True}
+
+
+class DecisionPolicySchema(BaseModel):
+    """Consumer-specific action rule applied during query or proposal execution."""
+
+    name: str
+    description: str | None = None
+    rationale: str = ""
+    applies_to: Literal["query", "workflow"]
+    query_name: str | None = None
+    workflow_name: str | None = None
+    relationship_type: str
+    effect: Literal["suppress", "require_review"]
+    match: DecisionPolicyMatch = Field(default_factory=DecisionPolicyMatch)
+    expires_at: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> DecisionPolicySchema:
+        if self.applies_to == "query":
+            if self.query_name is None or self.workflow_name is not None:
+                msg = "Query decision policies require query_name only"
+                raise ValueError(msg)
+            if self.effect != "suppress":
+                msg = "Query decision policies only support effect 'suppress'"
+                raise ValueError(msg)
+        else:
+            if self.workflow_name is None or self.query_name is not None:
+                msg = "Workflow decision policies require workflow_name only"
+                raise ValueError(msg)
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Quality Check Schema
+# ---------------------------------------------------------------------------
+
+
+class QualityCheckBase(BaseModel):
+    """Base schema for evaluate-time graph quality checks."""
+
+    name: str
+    description: str | None = None
+    severity: Literal["warning", "error"] = "warning"
+
+    model_config = {"extra": "forbid"}
+
+
+class PropertyQualityCheck(QualityCheckBase):
+    """Check a top-level property on entities or relationships."""
+
+    kind: Literal["property"] = "property"
+    target: Literal["entity", "relationship"]
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    property: str
+    rule: Literal["required", "non_empty", "type", "pattern"]
+    expected_type: str | None = None
+    pattern: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> PropertyQualityCheck:
+        if self.target == "entity":
+            if self.entity_type is None or self.relationship_type is not None:
+                msg = "Property quality checks targeting entities require entity_type only"
+                raise ValueError(msg)
+        else:
+            if self.relationship_type is None or self.entity_type is not None:
+                msg = (
+                    "Property quality checks targeting relationships require "
+                    "relationship_type only"
+                )
+                raise ValueError(msg)
+
+        if self.rule == "type" and not self.expected_type:
+            msg = "Property quality checks with rule 'type' require expected_type"
+            raise ValueError(msg)
+        if self.rule != "type" and self.expected_type is not None:
+            msg = "expected_type is only allowed when rule is 'type'"
+            raise ValueError(msg)
+
+        if self.rule == "pattern" and not self.pattern:
+            msg = "Property quality checks with rule 'pattern' require pattern"
+            raise ValueError(msg)
+        if self.rule != "pattern" and self.pattern is not None:
+            msg = "pattern is only allowed when rule is 'pattern'"
+            raise ValueError(msg)
+
+        return self
+
+
+class JsonContentQualityCheck(QualityCheckBase):
+    """Check JSON array-of-object content on entities or relationships."""
+
+    kind: Literal["json_content"] = "json_content"
+    target: Literal["entity", "relationship"]
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    property: str
+    rule: Literal["no_empty_objects_in_array", "required_nested_keys"]
+    keys: list[str] = Field(default_factory=list)
+    match: Literal["any", "all"] | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> JsonContentQualityCheck:
+        if self.target == "entity":
+            if self.entity_type is None or self.relationship_type is not None:
+                msg = "JSON content checks targeting entities require entity_type only"
+                raise ValueError(msg)
+        else:
+            if self.relationship_type is None or self.entity_type is not None:
+                msg = (
+                    "JSON content checks targeting relationships require "
+                    "relationship_type only"
+                )
+                raise ValueError(msg)
+
+        if self.rule == "required_nested_keys":
+            if not self.keys:
+                msg = "JSON content checks with rule 'required_nested_keys' require keys"
+                raise ValueError(msg)
+            if self.match is None:
+                msg = "JSON content checks with rule 'required_nested_keys' require match"
+                raise ValueError(msg)
+        else:
+            if self.keys:
+                msg = "keys is only allowed when rule is 'required_nested_keys'"
+                raise ValueError(msg)
+            if self.match is not None:
+                msg = "match is only allowed when rule is 'required_nested_keys'"
+                raise ValueError(msg)
+
+        return self
+
+
+class UniquenessQualityCheck(QualityCheckBase):
+    """Check entity-property uniqueness, optionally across compound keys."""
+
+    kind: Literal["uniqueness"] = "uniqueness"
+    entity_type: str
+    properties: list[str]
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> UniquenessQualityCheck:
+        if not self.properties:
+            msg = "Uniqueness quality checks require at least one property"
+            raise ValueError(msg)
+        return self
+
+
+class BoundsQualityCheck(QualityCheckBase):
+    """Check entity or relationship counts against a numeric range."""
+
+    kind: Literal["bounds"] = "bounds"
+    target: Literal["entity_count", "relationship_count"]
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    min_count: int | None = None
+    max_count: int | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> BoundsQualityCheck:
+        if self.target == "entity_count":
+            if self.entity_type is None or self.relationship_type is not None:
+                msg = "Bounds checks on entity_count require entity_type only"
+                raise ValueError(msg)
+        else:
+            if self.relationship_type is None or self.entity_type is not None:
+                msg = "Bounds checks on relationship_count require relationship_type only"
+                raise ValueError(msg)
+
+        if self.min_count is None and self.max_count is None:
+            msg = "Bounds quality checks require min_count, max_count, or both"
+            raise ValueError(msg)
+        return self
+
+
+class CardinalityQualityCheck(QualityCheckBase):
+    """Check per-entity relationship counts in one direction."""
+
+    kind: Literal["cardinality"] = "cardinality"
+    entity_type: str
+    relationship_type: str
+    direction: Literal["incoming", "outgoing"]
+    min_count: int | None = None
+    max_count: int | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> CardinalityQualityCheck:
+        if self.min_count is None and self.max_count is None:
+            msg = "Cardinality quality checks require min_count, max_count, or both"
+            raise ValueError(msg)
+        return self
+
+
+QualityCheckSchema = Annotated[
+    (
+        PropertyQualityCheck
+        | JsonContentQualityCheck
+        | UniquenessQualityCheck
+        | BoundsQualityCheck
+        | CardinalityQualityCheck
+    ),
+    Field(discriminator="kind"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Workflow / Provider Contracts
+# ---------------------------------------------------------------------------
+
+
+class ContractSchema(BaseModel):
+    """Typed payload contract for provider or workflow inputs."""
+
+    description: str | None = None
+    fields: dict[str, PropertySchema]
+
+
+class ProviderArtifactSchema(BaseModel):
+    """Pinned external artifact referenced by a provider."""
+
+    kind: str
+    uri: str
+    sha256: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProviderSchema(BaseModel):
+    """Versioned executable leaf used by workflow provider steps."""
+
+    kind: Literal["function", "model", "tool"]
+    description: str | None = None
+    contract_in: str
+    contract_out: str
+    ref: str
+    version: str
+    deterministic: bool = True
+    artifact: str | None = None
+    runtime: str = "python"
+    side_effects: bool = False
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssertSpec(BaseModel):
+    """Structured workflow guard condition."""
+
+    left: Any
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte"]
+    right: Any
+    message: str
+
+
+class MakeCandidatesSpec(BaseModel):
+    """Build a relationship candidate set from list-shaped workflow data."""
+
+    relationship_type: str
+    items: Any
+    from_type: Any
+    from_id: Any
+    to_type: Any
+    to_id: Any
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class ScoreSignalMappingSpec(BaseModel):
+    """Map numeric scores to tri-state candidate signals."""
+
+    path: str
+    support_gte: float
+    unsure_gte: float
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> ScoreSignalMappingSpec:
+        if self.support_gte < self.unsure_gte:
+            msg = "score.support_gte must be greater than or equal to score.unsure_gte"
+            raise ValueError(msg)
+        return self
+
+
+class EnumSignalMappingSpec(BaseModel):
+    """Map enum-like values to tri-state candidate signals."""
+
+    path: str
+    map: dict[str, Literal["support", "unsure", "contradict"]]
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_non_empty_map(self) -> EnumSignalMappingSpec:
+        if not self.map:
+            msg = "enum.map must not be empty"
+            raise ValueError(msg)
+        return self
+
+
+class MapSignalsSpec(BaseModel):
+    """Convert raw provider output into a governed signal batch."""
+
+    integration: str
+    items: Any
+    from_id: Any
+    to_id: Any
+    evidence: Any | None = None
+    score: ScoreSignalMappingSpec | None = None
+    enum: EnumSignalMappingSpec | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_mapping_mode(self) -> MapSignalsSpec:
+        mapping_modes = sum(mode is not None for mode in (self.score, self.enum))
+        if mapping_modes != 1:
+            msg = "map_signals must define exactly one of 'score' or 'enum'"
+            raise ValueError(msg)
+        return self
+
+
+class ProposeRelationshipGroupSpec(BaseModel):
+    """Assemble a governed relationship-group proposal from built-in artifacts."""
+
+    relationship_type: str
+    candidates_from: str
+    signals_from: list[str]
+    thesis_text: Any = ""
+    thesis_facts: dict[str, Any] = Field(default_factory=dict)
+    analysis_state: dict[str, Any] = Field(default_factory=dict)
+    suggested_priority: Any | None = None
+    proposed_by: Literal["human", "ai_review"] = "ai_review"
+
+    model_config = {"extra": "forbid"}
+
+
+class MakeEntitiesSpec(BaseModel):
+    """Build an entity set from list-shaped workflow data."""
+
+    entity_type: str
+    items: Any
+    entity_id: Any
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class MakeRelationshipsSpec(BaseModel):
+    """Build a relationship set from list-shaped workflow data."""
+
+    relationship_type: str
+    items: Any
+    from_type: Any
+    from_id: Any
+    to_type: Any
+    to_id: Any
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class ApplyEntitiesSpec(BaseModel):
+    """Apply an entity set to staged canonical state."""
+
+    entities_from: str
+
+    model_config = {"extra": "forbid"}
+
+
+class ApplyRelationshipsSpec(BaseModel):
+    """Apply a relationship set to staged canonical state."""
+
+    relationships_from: str
+
+    model_config = {"extra": "forbid"}
+
+
+class WorkflowStepSchema(BaseModel):
+    """Single step in a declarative workflow."""
+
+    id: str
+    query: str | None = None
+    provider: str | None = None
+    assert_spec: AssertSpec | None = Field(alias="assert", default=None)
+    make_candidates: MakeCandidatesSpec | None = None
+    map_signals: MapSignalsSpec | None = None
+    propose_relationship_group: ProposeRelationshipGroupSpec | None = None
+    make_entities: MakeEntitiesSpec | None = None
+    make_relationships: MakeRelationshipsSpec | None = None
+    apply_entities: ApplyEntitiesSpec | None = None
+    apply_relationships: ApplyRelationshipsSpec | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    input: dict[str, Any] = Field(default_factory=dict)
+    as_: str | None = Field(alias="as", default=None)
+
+    model_config = {"populate_by_name": True, "extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_step_shape(self) -> WorkflowStepSchema:
+        kinds = sum(
+            candidate is not None
+            for candidate in (
+                self.query,
+                self.provider,
+                self.assert_spec,
+                self.make_candidates,
+                self.map_signals,
+                self.propose_relationship_group,
+                self.make_entities,
+                self.make_relationships,
+                self.apply_entities,
+                self.apply_relationships,
+            )
+        )
+        if kinds != 1:
+            msg = (
+                "Workflow step must define exactly one of 'query', 'provider', 'assert', "
+                "'make_candidates', 'map_signals', 'propose_relationship_group', "
+                "'make_entities', 'make_relationships', 'apply_entities', "
+                "or 'apply_relationships'"
+            )
+            raise ValueError(msg)
+
+        if self.query is not None:
+            if self.as_ is None:
+                msg = "Query workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "Query workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.provider is not None:
+            if self.as_ is None:
+                msg = "Provider workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "Provider workflow steps may not define 'params'"
+                raise ValueError(msg)
+            return self
+
+        if self.make_candidates is not None:
+            if self.as_ is None:
+                msg = "make_candidates workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "make_candidates workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "make_candidates workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.map_signals is not None:
+            if self.as_ is None:
+                msg = "map_signals workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "map_signals workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "map_signals workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.propose_relationship_group is not None:
+            if self.as_ is None:
+                msg = "propose_relationship_group workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "propose_relationship_group workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "propose_relationship_group workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.make_entities is not None:
+            if self.as_ is None:
+                msg = "make_entities workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "make_entities workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "make_entities workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.make_relationships is not None:
+            if self.as_ is None:
+                msg = "make_relationships workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "make_relationships workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "make_relationships workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.apply_entities is not None:
+            if self.as_ is None:
+                msg = "apply_entities workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "apply_entities workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "apply_entities workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.apply_relationships is not None:
+            if self.as_ is None:
+                msg = "apply_relationships workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "apply_relationships workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "apply_relationships workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.as_ is not None:
+            msg = "Assert workflow steps may not define 'as'"
+            raise ValueError(msg)
+        if self.params:
+            msg = "Assert workflow steps may not define 'params'"
+            raise ValueError(msg)
+        if self.input:
+            msg = "Assert workflow steps may not define 'input'"
+            raise ValueError(msg)
+        return self
+
+
+class WorkflowSchema(BaseModel):
+    """Declarative composition of query and provider steps."""
+
+    description: str | None = None
+    canonical: bool = False
+    contract_in: str
+    steps: list[WorkflowStepSchema]
+    returns: str
+
+    model_config = {"extra": "forbid"}
+
+
+class WorkflowTestExpectSchema(BaseModel):
+    """Minimal assertions for config-defined workflow tests."""
+
+    output_equals: Any | None = None
+    output_contains: dict[str, Any] | None = None
+    receipt_contains_provider: str | list[str] | None = None
+    error_contains: str | None = None
+
+    @property
+    def required_providers(self) -> list[str]:
+        if self.receipt_contains_provider is None:
+            return []
+        if isinstance(self.receipt_contains_provider, str):
+            return [self.receipt_contains_provider]
+        return self.receipt_contains_provider
+
+
+class WorkflowTestSchema(BaseModel):
+    """Fixture for exercising a workflow with expected outputs/evidence."""
+
+    name: str
+    workflow: str
+    input: dict[str, Any] = Field(default_factory=dict)
+    expect: WorkflowTestExpectSchema = Field(default_factory=WorkflowTestExpectSchema)
+
+
+# ---------------------------------------------------------------------------
 # Ingestion Mapping
 # ---------------------------------------------------------------------------
 
@@ -219,12 +1010,23 @@ class CoreConfig(BaseModel):
     name: str
     description: str | None = None
     cruxible_version: str | None = None
+    kind: Literal["ontology", "world_model"] = "world_model"
 
     entity_types: dict[str, EntityTypeSchema]
     relationships: list[RelationshipSchema]
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
+    feedback_profiles: dict[str, FeedbackProfileSchema] = Field(default_factory=dict)
+    outcome_profiles: dict[str, OutcomeProfileSchema] = Field(default_factory=dict)
+    quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
+    decision_policies: list[DecisionPolicySchema] = Field(default_factory=list)
     ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
+    integrations: dict[str, IntegrationSpec] = Field(default_factory=dict)
+    contracts: dict[str, ContractSchema] = Field(default_factory=dict)
+    artifacts: dict[str, ProviderArtifactSchema] = Field(default_factory=dict)
+    providers: dict[str, ProviderSchema] = Field(default_factory=dict)
+    workflows: dict[str, WorkflowSchema] = Field(default_factory=dict)
+    tests: list[WorkflowTestSchema] = Field(default_factory=list)
 
     def get_relationship(self, name: str) -> RelationshipSchema | None:
         """Find a relationship schema by name."""
@@ -236,6 +1038,14 @@ class CoreConfig(BaseModel):
     def get_entity_type(self, name: str) -> EntityTypeSchema | None:
         """Find an entity type schema by name."""
         return self.entity_types.get(name)
+
+    def get_feedback_profile(self, relationship_type: str) -> FeedbackProfileSchema | None:
+        """Find a feedback profile by relationship type."""
+        return self.feedback_profiles.get(relationship_type)
+
+    def get_outcome_profile(self, profile_key: str) -> OutcomeProfileSchema | None:
+        """Find an outcome profile by key."""
+        return self.outcome_profiles.get(profile_key)
 
     def get_hierarchy_relationships(self) -> list[RelationshipSchema]:
         """Return relationship schemas marked as hierarchy."""

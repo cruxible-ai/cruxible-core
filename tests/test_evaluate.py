@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from cruxible_core.config.schema import (
+    BoundsQualityCheck,
+    CardinalityQualityCheck,
     ConstraintSchema,
     CoreConfig,
     EntityTypeSchema,
+    JsonContentQualityCheck,
+    PropertyQualityCheck,
     PropertySchema,
     RelationshipSchema,
+    UniquenessQualityCheck,
 )
 from cruxible_core.evaluate import evaluate_graph
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -583,6 +588,150 @@ class TestUnreviewedCoMembers:
         report = evaluate_graph(config, graph)
         co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
         assert len(co_members) == 0
+
+
+class TestQualityChecks:
+    def test_property_check_reports_non_empty_failures_and_zero_counts(self):
+        config = _minimal_config(
+            quality_checks=[
+                PropertyQualityCheck(
+                    name="part_category_non_empty",
+                    target="entity",
+                    entity_type="Part",
+                    property="category",
+                    rule="non_empty",
+                    severity="error",
+                ),
+                BoundsQualityCheck(
+                    name="vehicle_count_ok",
+                    target="entity_count",
+                    entity_type="Vehicle",
+                    min_count=0,
+                    max_count=10,
+                ),
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": ""})
+        )
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].severity == "error"
+        assert quality[0].detail["check_name"] == "part_category_non_empty"
+        assert report.quality_summary["part_category_non_empty"] == 1
+        assert report.quality_summary["vehicle_count_ok"] == 0
+
+    def test_json_content_check_flags_empty_objects(self):
+        config = _minimal_config(
+            relationships=[
+                RelationshipSchema(
+                    name="affects",
+                    from_entity="Part",
+                    to_entity="Vehicle",
+                    properties={"affected_versions": PropertySchema(type="json", optional=True)},
+                ),
+            ],
+            quality_checks=[
+                JsonContentQualityCheck(
+                    name="no_empty_ranges",
+                    target="relationship",
+                    relationship_type="affects",
+                    property="affected_versions",
+                    rule="no_empty_objects_in_array",
+                )
+            ],
+        )
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="affects",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Vehicle",
+                to_entity_id="V1",
+                properties={"affected_versions": [{}]},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].detail["check_kind"] == "json_content"
+        assert quality[0].detail["reason"] == "empty_object"
+        assert report.quality_summary["no_empty_ranges"] == 1
+
+    def test_uniqueness_check_groups_collisions(self):
+        config = _minimal_config(
+            quality_checks=[
+                UniquenessQualityCheck(
+                    name="part_categories_unique",
+                    entity_type="Part",
+                    properties=["category"],
+                )
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": "brakes"})
+        )
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P2", properties={"category": "brakes"})
+        )
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].detail["entity_ids"] == ["P1", "P2"]
+        assert report.quality_summary["part_categories_unique"] == 1
+
+    def test_bounds_check_reports_count_out_of_range(self):
+        config = _minimal_config(
+            quality_checks=[
+                BoundsQualityCheck(
+                    name="fits_edge_bounds",
+                    target="relationship_count",
+                    relationship_type="fits",
+                    min_count=1,
+                    max_count=1,
+                )
+            ]
+        )
+        graph = EntityGraph()
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].detail["relationship_type"] == "fits"
+        assert report.quality_summary["fits_edge_bounds"] == 1
+
+    def test_cardinality_check_reports_per_entity_failures(self):
+        config = _minimal_config(
+            quality_checks=[
+                CardinalityQualityCheck(
+                    name="parts_need_fitment",
+                    entity_type="Part",
+                    relationship_type="fits",
+                    direction="outgoing",
+                    min_count=1,
+                )
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].detail["entity_id"] == "P1"
+        assert report.quality_summary["parts_need_fitment"] == 1
 
     def test_no_findings_for_self_referential(self):
         """Config with only Part→Part replaces → no co-member findings."""
