@@ -20,6 +20,7 @@ from cruxible_core.feedback.types import (
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.service._helpers import MutationReceiptContext, _save_graph, mutation_receipt
+from cruxible_core.service._ownership import check_type_ownership
 from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
     FeedbackServiceResult,
@@ -129,6 +130,7 @@ def service_feedback(
     and applies to the graph. If group_override=True, stamps the edge
     with group_override property after applying feedback.
     """
+    check_type_ownership(instance, relationship_types=[target.relationship])
     graph = instance.load_graph()
     record = _normalize_feedback_record(
         graph=graph,
@@ -188,6 +190,7 @@ def service_feedback_batch(
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
         raise ConfigError("Batch feedback items must not be empty")
+    check_type_ownership(instance, relationship_types=[item.target.relationship for item in items])
 
     graph = instance.load_graph()
     _ensure_receipts_exist(instance, {item.receipt_id for item in items})
