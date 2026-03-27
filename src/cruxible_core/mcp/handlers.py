@@ -102,6 +102,17 @@ def handle_validate(
     )
 
 
+def handle_model_fork(
+    transport_ref: str,
+    root_dir: str,
+) -> contracts.ModelForkResult:
+    """Create a new local fork from a published model release."""
+    return _dispatch_remote_or_local(
+        lambda client: client.model_fork(transport_ref=transport_ref, root_dir=root_dir),
+        lambda: local_api._handle_model_fork_local(transport_ref, root_dir),
+    )
+
+
 def handle_propose_workflow(
     instance_id: str,
     workflow_name: str,
@@ -607,5 +618,64 @@ def handle_list_resolutions(
             relationship_type,
             action,
             limit,
+        ),
+    )
+
+
+def handle_model_publish(
+    instance_id: str,
+    transport_ref: str,
+    model_id: str,
+    release_id: str,
+    compatibility: contracts.ModelCompatibility,
+) -> contracts.ModelPublishResult:
+    """Publish a root world-model instance to a transport ref."""
+    return _dispatch_remote_or_local(
+        lambda client: client.model_publish(
+            instance_id,
+            transport_ref=transport_ref,
+            model_id=model_id,
+            release_id=release_id,
+            compatibility=compatibility,
+        ),
+        lambda: local_api._handle_model_publish_local(
+            instance_id,
+            transport_ref,
+            model_id,
+            release_id,
+            compatibility,
+        ),
+    )
+
+
+def handle_model_status(instance_id: str) -> contracts.ModelStatusResult:
+    """Read upstream tracking metadata for a release-backed fork."""
+    return _dispatch_remote_or_local(
+        lambda client: client.model_status(instance_id),
+        lambda: local_api._handle_model_status_local(instance_id),
+    )
+
+
+def handle_model_pull_preview(instance_id: str) -> contracts.ModelPullPreviewResult:
+    """Preview pulling a new upstream release into a local fork."""
+    return _dispatch_remote_or_local(
+        lambda client: client.model_pull_preview(instance_id),
+        lambda: local_api._handle_model_pull_preview_local(instance_id),
+    )
+
+
+def handle_model_pull_apply(
+    instance_id: str,
+    expected_apply_digest: str,
+) -> contracts.ModelPullApplyResult:
+    """Apply a previewed upstream release into a local fork."""
+    return _dispatch_remote_or_local(
+        lambda client: client.model_pull_apply(
+            instance_id,
+            expected_apply_digest=expected_apply_digest,
+        ),
+        lambda: local_api._handle_model_pull_apply_local(
+            instance_id,
+            expected_apply_digest,
         ),
     )

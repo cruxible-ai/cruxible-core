@@ -142,3 +142,19 @@ class SnapshotCreateRequest(BaseModel):
 class ForkSnapshotRequest(BaseModel):
     snapshot_id: str
     root_dir: str
+
+
+class ModelPublishRequest(BaseModel):
+    transport_ref: str
+    model_id: str
+    release_id: str
+    compatibility: contracts.ModelCompatibility
+
+
+class ModelForkRequest(BaseModel):
+    transport_ref: str
+    root_dir: str
+
+
+class ModelPullApplyRequest(BaseModel):
+    expected_apply_digest: str

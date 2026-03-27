@@ -19,6 +19,7 @@ from cruxible_core.errors import (
     InstanceNotFoundError,
     MutationError,
     OutcomeNotFoundError,
+    OwnershipError,
     PermissionDeniedError,
     QueryExecutionError,
     QueryNotFoundError,
@@ -46,7 +47,7 @@ def _message_for_error(exc: CoreError) -> str:
 def _status_for_error(exc: CoreError) -> int:
     if isinstance(exc, (ConfigError, DataValidationError, QueryExecutionError, IngestionError)):
         return 400
-    if isinstance(exc, PermissionDeniedError):
+    if isinstance(exc, (PermissionDeniedError, OwnershipError)):
         return 403
     if isinstance(
         exc,
@@ -80,6 +81,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         errors = list(exc.errors)
     if isinstance(exc, ConstraintViolationError):
         context["violations"] = list(exc.violations)
+    if isinstance(exc, OwnershipError):
+        context["blocked_types"] = exc.blocked_types
     if isinstance(exc, PermissionDeniedError):
         context["tool_name"] = exc.tool_name
         context["current_mode"] = exc.current_mode
@@ -126,6 +129,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = DataValidationError(body.message, errors=body.errors)
     elif body.error_type == "ConstraintViolationError":
         exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
+    elif body.error_type == "OwnershipError":
+        exc = OwnershipError(body.message, blocked_types=context.get("blocked_types", []))
     elif body.error_type == "PermissionDeniedError":
         exc = PermissionDeniedError(
             context.get("tool_name", "unknown"),

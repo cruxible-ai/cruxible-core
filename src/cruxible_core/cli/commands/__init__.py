@@ -12,6 +12,7 @@ from cruxible_core.cli.commands.lists import (
     export_group,
     list_group,
 )
+from cruxible_core.cli.commands.model import model_group
 from cruxible_core.cli.commands.mutations import (
     add_constraint_cmd,
     add_entity_cmd,
@@ -64,6 +65,7 @@ __all__ = [
     "inspect_group",
     "list_group",
     "lock_cmd",
+    "model_group",
     "outcome_cmd",
     "plan_cmd",
     "propose_cmd",

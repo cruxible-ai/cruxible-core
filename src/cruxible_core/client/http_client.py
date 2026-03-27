@@ -103,6 +103,18 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ValidateResult)
 
+    def model_fork(
+        self,
+        *,
+        transport_ref: str,
+        root_dir: str,
+    ) -> contracts.ModelForkResult:
+        response = self._client.post(
+            "/api/v1/models/fork",
+            json={"transport_ref": transport_ref, "root_dir": root_dir},
+        )
+        return self._parse_model(response, contracts.ModelForkResult)
+
     def ingest(
         self,
         instance_id: str,
@@ -466,6 +478,46 @@ class CruxibleClient:
             json={"snapshot_id": snapshot_id, "root_dir": root_dir},
         )
         return self._parse_model(response, contracts.ForkSnapshotResult)
+
+    def model_publish(
+        self,
+        instance_id: str,
+        *,
+        transport_ref: str,
+        model_id: str,
+        release_id: str,
+        compatibility: contracts.ModelCompatibility,
+    ) -> contracts.ModelPublishResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/model/publish",
+            json={
+                "transport_ref": transport_ref,
+                "model_id": model_id,
+                "release_id": release_id,
+                "compatibility": compatibility,
+            },
+        )
+        return self._parse_model(response, contracts.ModelPublishResult)
+
+    def model_status(self, instance_id: str) -> contracts.ModelStatusResult:
+        response = self._client.get(f"/api/v1/{instance_id}/model/status")
+        return self._parse_model(response, contracts.ModelStatusResult)
+
+    def model_pull_preview(self, instance_id: str) -> contracts.ModelPullPreviewResult:
+        response = self._client.post(f"/api/v1/{instance_id}/model/pull/preview")
+        return self._parse_model(response, contracts.ModelPullPreviewResult)
+
+    def model_pull_apply(
+        self,
+        instance_id: str,
+        *,
+        expected_apply_digest: str,
+    ) -> contracts.ModelPullApplyResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/model/pull/apply",
+            json={"expected_apply_digest": expected_apply_digest},
+        )
+        return self._parse_model(response, contracts.ModelPullApplyResult)
 
     def add_constraint(
         self,

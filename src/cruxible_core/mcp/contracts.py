@@ -24,6 +24,7 @@ GroupResolvedBy = Literal["human", "ai_review"]
 GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
 GroupProposedBy = Literal["human", "ai_review"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
+ModelCompatibility = Literal["data_only", "additive_schema", "breaking"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -320,6 +321,66 @@ class SnapshotListResult(BaseModel):
 class ForkSnapshotResult(BaseModel):
     instance_id: str
     snapshot: SnapshotMetadata
+
+
+class PublishedModelManifest(BaseModel):
+    format_version: int
+    model_id: str
+    release_id: str
+    snapshot_id: str
+    compatibility: ModelCompatibility
+    owned_entity_types: list[str] = Field(default_factory=list)
+    owned_relationship_types: list[str] = Field(default_factory=list)
+    parent_release_id: str | None = None
+
+
+class UpstreamMetadataResult(BaseModel):
+    transport_ref: str
+    model_id: str
+    release_id: str
+    snapshot_id: str
+    compatibility: ModelCompatibility
+    owned_entity_types: list[str] = Field(default_factory=list)
+    owned_relationship_types: list[str] = Field(default_factory=list)
+    overlay_config_path: str
+    active_config_path: str
+    manifest_path: str
+    graph_path: str
+    config_path: str
+    lock_path: str
+    manifest_digest: str | None = None
+    graph_digest: str | None = None
+
+
+class ModelPublishResult(BaseModel):
+    manifest: PublishedModelManifest
+
+
+class ModelForkResult(BaseModel):
+    instance_id: str
+    manifest: PublishedModelManifest
+
+
+class ModelStatusResult(BaseModel):
+    upstream: UpstreamMetadataResult | None = None
+
+
+class ModelPullPreviewResult(BaseModel):
+    current_release_id: str | None = None
+    target_release_id: str
+    compatibility: ModelCompatibility
+    apply_digest: str
+    warnings: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    lock_changed: bool = False
+    upstream_entity_delta: int = 0
+    upstream_edge_delta: int = 0
+
+
+class ModelPullApplyResult(BaseModel):
+    release_id: str
+    apply_digest: str
+    pre_pull_snapshot_id: str
 
 
 class ProposeGroupToolResult(BaseModel):
