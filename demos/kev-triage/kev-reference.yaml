@@ -176,7 +176,7 @@ artifacts:
   public_kev_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:f884e5f8fad66c6bba54face97863137833ab26035d7a4cda333063d0ab224f9
+    sha256: sha256:3992b17ebadfb9f6b5cfeec747958e52ec2c25e0d0117f20a1fa01141377b0f8
 
 providers:
   load_public_kev_rows:
@@ -188,7 +188,7 @@ providers:
       affected_versions.
     contract_in: EmptyInput
     contract_out: PublicKevRows
-    ref: providers.load_public_kev_rows
+    ref: cruxible_core.demo_providers.kev_triage.load_public_kev_rows
     version: "1.0.0"
     deterministic: true
     runtime: python

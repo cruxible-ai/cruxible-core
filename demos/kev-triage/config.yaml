@@ -62,25 +62,6 @@ entity_types:
         type: string
         optional: true
 
-  ScannerFinding:
-    description: Scanner or detection-system finding tied to an asset and vulnerability.
-    properties:
-      finding_id:
-        type: string
-        primary_key: true
-      source:
-        type: string
-        optional: true
-      severity:
-        type: string
-        optional: true
-      observed_at:
-        type: string
-        optional: true
-      status:
-        type: string
-        optional: true
-
   CompensatingControl:
     description: Control that can reduce or block exploitability.
     properties:
@@ -131,18 +112,6 @@ entity_types:
 # ─── Fork: deterministic internal mappings ────────────────────────────
 
 relationships:
-  - name: asset_runs_product
-    description: Deterministic mapping from internal asset inventory to installed products.
-    from: Asset
-    to: Product
-    properties:
-      installed_version:
-        type: string
-        optional: true
-      evidence_source:
-        type: string
-        optional: true
-
   - name: service_depends_on_asset
     description: Internal dependency mapping from services to assets.
     from: BusinessService
@@ -152,16 +121,6 @@ relationships:
     description: Ownership or routing mapping for assets.
     from: Asset
     to: Owner
-
-  - name: asset_has_finding
-    description: Deterministic mapping from assets to scanner findings.
-    from: Asset
-    to: ScannerFinding
-
-  - name: finding_for_vulnerability
-    description: Deterministic mapping from a scanner finding to a vulnerability.
-    from: ScannerFinding
-    to: Vulnerability
 
   - name: asset_has_control
     description: Internal mapping from assets to compensating controls.
@@ -178,7 +137,36 @@ relationships:
     from: Asset
     to: PatchWindow
 
-# ─── Fork: accepted judgment relationships ────────────────────────────
+# ─── Fork: governed relationships ─────────────────────────────────────
+#
+# These relationships are created through the proposal/group resolution
+# flow, not direct writes. Each has a matching block that defines which
+# integrations provide signals and how auto-resolution works.
+
+  - name: asset_runs_product
+    description: >
+      Governed mapping from an internal asset to a reference-layer product.
+      Internal systems describe software by display name and version;
+      the reference layer uses CPE-derived product IDs. Fuzzy matching
+      goes through the proposal flow.
+    from: Asset
+    to: Product
+    properties:
+      installed_version:
+        type: string
+        optional: true
+      evidence_source:
+        type: string
+        optional: true
+      match_confidence:
+        type: number
+        optional: true
+    matching:
+      integrations:
+        software_product_match:
+          role: required
+          always_review_on_unsure: true
+      auto_resolve_when: all_support
 
   - name: asset_affected_by_vulnerability
     description: Accepted judgment that an internal asset is actually affected by a vulnerability.
@@ -341,161 +329,791 @@ named_queries:
       - relationship: asset_has_control
         direction: outgoing
 
-# ─── Fork: internal ingestion mappings ────────────────────────────────
+# ─── Constraints ──────────────────────────────────────────────────────
 
-ingestion:
-  assets:
-    description: Internal asset inventory import from CMDB, cloud inventory, or EDR.
+constraints: []
+
+# ─── Quality checks ──────────────────────────────────────────────────
+
+quality_checks:
+  - name: assets_have_one_owner
+    kind: cardinality
+    description: Every asset should have exactly one owner.
+    severity: warning
     entity_type: Asset
-    id_column: asset_id
-    column_map:
-      asset_id: asset_id
-      hostname: hostname
-      asset_type: asset_type
-      criticality: criticality
-      environment: environment
-      internet_exposed: internet_exposed
-
-  business_services:
-    description: Internal service inventory import.
-    entity_type: BusinessService
-    id_column: service_id
-    column_map:
-      service_id: service_id
-      name: name
-      tier: tier
-
-  owners:
-    description: Owner or team roster import.
-    entity_type: Owner
-    id_column: owner_id
-    column_map:
-      owner_id: owner_id
-      name: name
-      team: team
-      email: email
-
-  scanner_findings:
-    description: Scanner or exposure-management findings import.
-    entity_type: ScannerFinding
-    id_column: finding_id
-    column_map:
-      finding_id: finding_id
-      source: source
-      severity: severity
-      observed_at: observed_at
-      status: status
-
-  compensating_controls:
-    description: Internal compensating controls import.
-    entity_type: CompensatingControl
-    id_column: control_id
-    column_map:
-      control_id: control_id
-      name: name
-      control_type: control_type
-      status: status
-
-  exceptions:
-    description: Patch or remediation exception import.
-    entity_type: Exception
-    id_column: exception_id
-    column_map:
-      exception_id: exception_id
-      reason: reason
-      review_due_at: review_due_at
-      status: status
-
-  patch_windows:
-    description: Asset patching schedule import.
-    entity_type: PatchWindow
-    id_column: patch_window_id
-    column_map:
-      patch_window_id: patch_window_id
-      cadence: cadence
-      next_window_at: next_window_at
-      freeze_status: freeze_status
-
-  asset_runs_product_edges:
-    description: Internal product install mapping import.
-    relationship_type: asset_runs_product
-    from_column: asset_id
-    to_column: product_id
-    column_map:
-      installed_version: installed_version
-      evidence_source: evidence_source
-
-  service_depends_on_asset_edges:
-    description: Internal service dependency import.
-    relationship_type: service_depends_on_asset
-    from_column: service_id
-    to_column: asset_id
-
-  asset_owned_by_edges:
-    description: Asset ownership mapping import.
     relationship_type: asset_owned_by
-    from_column: asset_id
-    to_column: owner_id
+    direction: outgoing
+    min_count: 1
+    max_count: 1
 
-  asset_has_finding_edges:
-    description: Asset-to-finding mapping import.
-    relationship_type: asset_has_finding
-    from_column: asset_id
-    to_column: finding_id
+  - name: minimum_assets_loaded
+    kind: bounds
+    description: Sanity check that the CMDB load produced a non-trivial asset set.
+    severity: warning
+    target: entity_count
+    entity_type: Asset
+    min_count: 5
 
-  finding_for_vulnerability_edges:
-    description: Finding-to-vulnerability mapping import.
-    relationship_type: finding_for_vulnerability
-    from_column: finding_id
-    to_column: cve_id
+  - name: assets_have_hostname
+    kind: property
+    description: Every asset should have a non-empty hostname.
+    severity: warning
+    target: entity
+    entity_type: Asset
+    property: hostname
+    rule: non_empty
 
-  asset_has_control_edges:
-    description: Asset-to-control mapping import.
-    relationship_type: asset_has_control
-    from_column: asset_id
-    to_column: control_id
-
-  asset_has_exception_edges:
-    description: Asset-to-exception mapping import.
-    relationship_type: asset_has_exception
-    from_column: asset_id
-    to_column: exception_id
-
-  asset_patch_window_edges:
-    description: Asset-to-patch-window mapping import.
-    relationship_type: asset_patch_window
-    from_column: asset_id
-    to_column: patch_window_id
-
-# ─── Fork: integrations for judgment relationships ────────────────────
+# ─── Fork: integrations for governed relationships ────────────────────
 
 integrations:
+  software_product_match:
+    kind: software_product_fuzzy_match
+    contract:
+      output: support|unsure|contradict
+    notes: >
+      Fuzzy matching between internal software inventory names
+      (e.g. "Apache HTTP Server 2.4.49") and reference-layer CPE
+      product identifiers. Runs against the software_inventory.csv
+      evidence source.
+
   product_version_evidence:
     kind: product_version_match
     contract:
       output: support|unsure|contradict
+    notes: >
+      Matches installed product version against NVD affected version
+      ranges to determine if an asset is actually affected.
 
   scanner_evidence:
     kind: scanner_presence
     contract:
       output: support|unsure|contradict
+    notes: >
+      Advisory signal from vulnerability scanner findings. Supports
+      the affected-by judgment but does not block auto-resolution.
 
   exploitability_signal:
     kind: exploitability_assessment
     contract:
       output: support|unsure|contradict
+    notes: >
+      Assesses whether a vulnerability is practically exploitable on
+      a specific asset given its environment and exposure posture.
 
   control_effectiveness:
     kind: compensating_control_review
     contract:
       output: support|unsure|contradict
+    notes: >
+      Reviews whether a compensating control materially reduces
+      exploitability for the specific vulnerability class.
 
   dependency_context:
     kind: service_dependency_context
     contract:
       output: support|unsure|contradict
+    notes: >
+      Evaluates whether a vulnerability on an asset actually impacts
+      the business service through real dependency paths.
 
   policy_review:
     kind: remediation_policy_review
     contract:
       output: support|unsure|contradict
+    notes: >
+      Reviews whether a patch exception is still valid per
+      organizational remediation policy.
+
+# ─── Contracts ────────────────────────────────────────────────────────
+
+contracts:
+  ForkSeedData:
+    description: Deterministic internal entities and edges from CMDB, service catalog, and operational systems.
+    fields:
+      assets:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              hostname: {type: string}
+              asset_type: {type: string}
+              criticality: {type: string}
+              environment: {type: string}
+              internet_exposed: {type: boolean}
+      business_services:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              service_id: {type: string}
+              name: {type: string}
+              tier: {type: string}
+      owners:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              owner_id: {type: string}
+              name: {type: string}
+              team: {type: string}
+              email: {type: string}
+      compensating_controls:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              control_id: {type: string}
+              name: {type: string}
+              control_type: {type: string}
+              status: {type: string}
+      exceptions:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              exception_id: {type: string}
+              reason: {type: string}
+              review_due_at: {type: string}
+              status: {type: string}
+      patch_windows:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              patch_window_id: {type: string}
+              cadence: {type: string}
+              next_window_at: {type: string}
+              freeze_status: {type: string}
+      service_depends_on_asset:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              service_id: {type: string}
+              asset_id: {type: string}
+      asset_owned_by:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              owner_id: {type: string}
+      asset_has_control:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              control_id: {type: string}
+      asset_has_exception:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              exception_id: {type: string}
+      asset_patch_window:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              patch_window_id: {type: string}
+
+  SoftwareInventory:
+    description: Raw software inventory from CMDB and scanners with business-friendly names.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              software_name: {type: string}
+              vendor: {type: string}
+              version: {type: string}
+              evidence_source: {type: string}
+              last_seen: {type: string}
+
+  ReferenceProductCatalog:
+    description: Canonical reference-layer products available for matching.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id: {type: string}
+              product_name: {type: string}
+              vendor_id: {type: string}
+              vendor_name: {type: string}
+              cpe_vendor: {type: string}
+              cpe_product: {type: string}
+              cpe_part: {type: string}
+
+  SoftwareMatchInput:
+    description: Software inventory rows plus canonical reference products to match against.
+    fields:
+      inventory_items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+      reference_products:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+
+  SoftwareMatchResults:
+    description: Fuzzy match results mapping software inventory rows to reference products.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              product_id: {type: string}
+              installed_version: {type: string}
+              evidence_source: {type: string}
+              match_confidence: {type: number}
+              verdict: {type: string}
+
+# ─── Artifacts ────────────────────────────────────────────────────────
+
+artifacts:
+  fork_seed_bundle:
+    kind: directory
+    uri: ./data/seed
+    sha256: sha256:b0ab4bae06d887bbed1e52f441ecedf052d99b014314c64ddb94731323b7df8d
+    metadata:
+      description: Synthetic seed data representing CMDB, service catalog, and operational system exports.
+
+# ─── Providers ────────────────────────────────────────────────────────
+
+providers:
+  load_fork_seed_data:
+    kind: function
+    description: >
+      Load all deterministic fork entities and relationship edges from
+      the seed data bundle. Returns structured arrays keyed by entity
+      and relationship type.
+    contract_in: EmptyInput
+    contract_out: ForkSeedData
+    ref: cruxible_core.demo_providers.kev_triage.load_fork_seed_data
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: fork_seed_bundle
+
+  load_software_inventory:
+    kind: function
+    description: >
+      Load raw software inventory from the seed data bundle. Returns
+      rows with business-friendly software names, versions, and
+      evidence sources.
+    contract_in: EmptyInput
+    contract_out: SoftwareInventory
+    ref: cruxible_core.demo_providers.kev_triage.load_software_inventory
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: fork_seed_bundle
+
+  load_reference_product_catalog:
+    kind: function
+    description: >
+      Load canonical reference products from the upstream public data
+      artifact so the matcher can resolve internal software names to
+      reference-layer product IDs.
+    contract_in: EmptyInput
+    contract_out: ReferenceProductCatalog
+    ref: cruxible_core.demo_providers.kev_triage.load_reference_product_catalog
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: public_kev_bundle
+
+  match_software_to_products:
+    kind: function
+    description: >
+      Fuzzy match software inventory rows against reference-layer
+      products using CPE name similarity and vendor matching. Returns
+      match results with confidence scores and verdicts.
+    contract_in: SoftwareMatchInput
+    contract_out: SoftwareMatchResults
+    ref: cruxible_core.demo_providers.kev_triage.match_software_to_products
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+# ─── Workflows ────────────────────────────────────────────────────────
+
+workflows:
+  build_fork_state:
+    canonical: true
+    description: >
+      Load deterministic internal entities and relationships from the
+      seed data bundle. This is the fork's equivalent of the reference
+      layer's build_public_kev_reference workflow.
+    contract_in: EmptyInput
+    steps:
+      - id: seed
+        provider: load_fork_seed_data
+        input: {}
+        as: seed
+
+      # --- Entities ---
+      - id: assets
+        make_entities:
+          entity_type: Asset
+          items: $steps.seed.assets
+          entity_id: $item.asset_id
+          properties:
+            asset_id: $item.asset_id
+            hostname: $item.hostname
+            asset_type: $item.asset_type
+            criticality: $item.criticality
+            environment: $item.environment
+            internet_exposed: $item.internet_exposed
+        as: assets
+      - id: services
+        make_entities:
+          entity_type: BusinessService
+          items: $steps.seed.business_services
+          entity_id: $item.service_id
+          properties:
+            service_id: $item.service_id
+            name: $item.name
+            tier: $item.tier
+        as: services
+      - id: owners
+        make_entities:
+          entity_type: Owner
+          items: $steps.seed.owners
+          entity_id: $item.owner_id
+          properties:
+            owner_id: $item.owner_id
+            name: $item.name
+            team: $item.team
+            email: $item.email
+        as: owners
+      - id: controls
+        make_entities:
+          entity_type: CompensatingControl
+          items: $steps.seed.compensating_controls
+          entity_id: $item.control_id
+          properties:
+            control_id: $item.control_id
+            name: $item.name
+            control_type: $item.control_type
+            status: $item.status
+        as: controls
+      - id: exceptions
+        make_entities:
+          entity_type: Exception
+          items: $steps.seed.exceptions
+          entity_id: $item.exception_id
+          properties:
+            exception_id: $item.exception_id
+            reason: $item.reason
+            review_due_at: $item.review_due_at
+            status: $item.status
+        as: exceptions
+      - id: patch_windows
+        make_entities:
+          entity_type: PatchWindow
+          items: $steps.seed.patch_windows
+          entity_id: $item.patch_window_id
+          properties:
+            patch_window_id: $item.patch_window_id
+            cadence: $item.cadence
+            next_window_at: $item.next_window_at
+            freeze_status: $item.freeze_status
+        as: patch_windows
+
+      # --- Relationships ---
+      - id: svc_asset_edges
+        make_relationships:
+          relationship_type: service_depends_on_asset
+          items: $steps.seed.service_depends_on_asset
+          from_type: BusinessService
+          from_id: $item.service_id
+          to_type: Asset
+          to_id: $item.asset_id
+        as: svc_asset_edges
+      - id: owned_by_edges
+        make_relationships:
+          relationship_type: asset_owned_by
+          items: $steps.seed.asset_owned_by
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Owner
+          to_id: $item.owner_id
+        as: owned_by_edges
+      - id: control_edges
+        make_relationships:
+          relationship_type: asset_has_control
+          items: $steps.seed.asset_has_control
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: CompensatingControl
+          to_id: $item.control_id
+        as: control_edges
+      - id: exception_edges
+        make_relationships:
+          relationship_type: asset_has_exception
+          items: $steps.seed.asset_has_exception
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Exception
+          to_id: $item.exception_id
+        as: exception_edges
+      - id: patch_window_edges
+        make_relationships:
+          relationship_type: asset_patch_window
+          items: $steps.seed.asset_patch_window
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: PatchWindow
+          to_id: $item.patch_window_id
+        as: patch_window_edges
+
+      # --- Apply ---
+      - id: apply_assets
+        apply_entities:
+          entities_from: assets
+        as: apply_assets
+      - id: apply_services
+        apply_entities:
+          entities_from: services
+        as: apply_services
+      - id: apply_owners
+        apply_entities:
+          entities_from: owners
+        as: apply_owners
+      - id: apply_controls
+        apply_entities:
+          entities_from: controls
+        as: apply_controls
+      - id: apply_exceptions
+        apply_entities:
+          entities_from: exceptions
+        as: apply_exceptions
+      - id: apply_patch_windows
+        apply_entities:
+          entities_from: patch_windows
+        as: apply_patch_windows
+      - id: apply_svc_asset
+        apply_relationships:
+          relationships_from: svc_asset_edges
+        as: apply_svc_asset
+      - id: apply_owned_by
+        apply_relationships:
+          relationships_from: owned_by_edges
+        as: apply_owned_by
+      - id: apply_controls_edges
+        apply_relationships:
+          relationships_from: control_edges
+        as: apply_controls_edges
+      - id: apply_exception_edges
+        apply_relationships:
+          relationships_from: exception_edges
+        as: apply_exception_edges
+      - id: apply_patch_window_edges
+        apply_relationships:
+          relationships_from: patch_window_edges
+        as: apply_patch_window_edges
+    returns: apply_patch_window_edges
+
+  propose_asset_products:
+    canonical: false
+    description: >
+      Load software inventory, fuzzy match against reference-layer
+      products, and propose asset_runs_product edges through the
+      governed group resolution flow.
+    contract_in: EmptyInput
+    steps:
+      - id: inventory
+        provider: load_software_inventory
+        input: {}
+        as: inventory
+      - id: reference_products
+        provider: load_reference_product_catalog
+        input: {}
+        as: reference_products
+      - id: matches
+        provider: match_software_to_products
+        input:
+          inventory_items: $steps.inventory.items
+          reference_products: $steps.reference_products.items
+        as: matches
+      - id: candidates
+        make_candidates:
+          relationship_type: asset_runs_product
+          items: $steps.matches.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Product
+          to_id: $item.product_id
+          properties:
+            installed_version: $item.installed_version
+            evidence_source: $item.evidence_source
+            match_confidence: $item.match_confidence
+        as: candidates
+      - id: signals
+        map_signals:
+          integration: software_product_match
+          items: $steps.matches.items
+          from_id: $item.asset_id
+          to_id: $item.product_id
+          evidence: $item.evidence_source
+          score:
+            path: match_confidence
+            support_gte: 0.8
+            unsure_gte: 0.5
+        as: signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: asset_runs_product
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            Fuzzy software-to-product matching from CMDB inventory
+          proposed_by: ai_review
+        as: proposal
+    returns: proposal
+
+# ─── Feedback profiles (Loop 1) ──────────────────────────────────────
+
+feedback_profiles:
+  asset_runs_product:
+    version: 1
+    reason_codes:
+      wrong_product_match:
+        description: Fuzzy match linked asset to the wrong reference product.
+        remediation_hint: provider_fix
+        required_scope_keys: [product, hostname]
+      version_mismatch:
+        description: Matched correct product but installed version is wrong.
+        remediation_hint: quality_check
+        required_scope_keys: [product]
+      stale_inventory:
+        description: CMDB or scanner data was outdated at match time.
+        remediation_hint: provider_fix
+        required_scope_keys: [evidence_source]
+    scope_keys:
+      product: TO.product_name
+      hostname: FROM.hostname
+      evidence_source: EDGE.evidence_source
+
+  asset_affected_by_vulnerability:
+    version: 1
+    reason_codes:
+      version_not_in_range:
+        description: Installed version is not within the NVD affected range.
+        remediation_hint: constraint
+        required_scope_keys: [cve, product]
+      scanner_false_positive:
+        description: Scanner reported vulnerability but it does not apply.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve, scanner_source]
+      product_mismatch:
+        description: Asset does not actually run this product.
+        remediation_hint: provider_fix
+        required_scope_keys: [product, hostname]
+    scope_keys:
+      cve: TO.cve_id
+      product: EDGE.installed_version
+      hostname: FROM.hostname
+      scanner_source: EDGE.source
+
+  asset_exposed_to_vulnerability:
+    version: 1
+    reason_codes:
+      control_mitigates:
+        description: A compensating control effectively blocks this exploit path.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve, criticality]
+      not_internet_reachable:
+        description: Asset is not reachable from the attack vector.
+        remediation_hint: constraint
+        required_scope_keys: [environment]
+      epss_score_stale:
+        description: EPSS score has changed since the exposure judgment.
+        remediation_hint: provider_fix
+        required_scope_keys: [cve]
+    scope_keys:
+      cve: TO.cve_id
+      criticality: FROM.criticality
+      environment: FROM.environment
+
+  service_impacted_by_vulnerability:
+    version: 1
+    reason_codes:
+      no_dependency_path:
+        description: No real runtime dependency connects the service to the affected asset.
+        remediation_hint: constraint
+        required_scope_keys: [service, cve]
+      service_decommissioned:
+        description: Service is decommissioned or no longer in use.
+        remediation_hint: quality_check
+        required_scope_keys: [service]
+    scope_keys:
+      service: FROM.name
+      cve: TO.cve_id
+
+  asset_patch_exception_for:
+    version: 1
+    reason_codes:
+      exception_expired:
+        description: Exception review date has passed without renewal.
+        remediation_hint: constraint
+        required_scope_keys: [exception_id]
+      scope_mismatch:
+        description: Exception does not cover this specific vulnerability.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve, exception_id]
+    scope_keys:
+      cve: TO.cve_id
+      exception_id: EDGE.exception_id
+
+  control_reduces_exposure_to:
+    version: 1
+    reason_codes:
+      control_not_validated:
+        description: Control effectiveness has not been tested against this vulnerability class.
+        remediation_hint: quality_check
+        required_scope_keys: [control_type]
+      wrong_vulnerability_class:
+        description: Control does not apply to this vulnerability's exploit mechanism.
+        remediation_hint: constraint
+        required_scope_keys: [control_type, cve]
+    scope_keys:
+      control_type: FROM.control_type
+      cve: TO.cve_id
+
+# ─── Outcome profiles (Loop 2) ───────────────────────────────────────
+
+outcome_profiles:
+  # Resolution-anchored: was this proposal resolution correct?
+
+  asset_runs_product_resolution:
+    anchor_type: resolution
+    relationship_type: asset_runs_product
+    version: 1
+    outcome_codes:
+      wrong_product_match:
+        description: The fuzzy match resolved to the wrong reference product.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      version_drift:
+        description: Match was correct at resolution time but the asset has since been patched.
+        remediation_hint: provider_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  asset_affected_resolution:
+    anchor_type: resolution
+    relationship_type: asset_affected_by_vulnerability
+    version: 1
+    outcome_codes:
+      wrong_affected_judgment:
+        description: Resolution concluded asset was affected but it was not.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      missed_affected_asset:
+        description: Resolution concluded asset was not affected but it was.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      version_range_error:
+        description: NVD version range data was incorrect or incomplete.
+        remediation_hint: provider_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  asset_exposed_resolution:
+    anchor_type: resolution
+    relationship_type: asset_exposed_to_vulnerability
+    version: 1
+    outcome_codes:
+      overestimated_exposure:
+        description: Control was effective but was not credited during resolution.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      underestimated_exposure:
+        description: An attack path was missed during exposure assessment.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  # Receipt-anchored: did this query surface give a good answer?
+
+  kev_assets_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: kev_assets
+    version: 1
+    outcome_codes:
+      missing_results:
+        description: A known-affected asset was not returned by the query.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      false_positive_result:
+        description: Query returned an asset that is not actually affected.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  owner_patch_queue_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: owner_patch_queue
+    version: 1
+    outcome_codes:
+      stale_priority:
+        description: Returned vulnerability that has already been patched or mitigated.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      missing_exposure:
+        description: An exposed vulnerability was not returned for this owner.
+        remediation_hint: workflow_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
