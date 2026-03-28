@@ -51,7 +51,12 @@ def service_validate(
         if not base_path.exists():
             raise ConfigError(f"Base config for extends not found: {base_path}")
         base = load_config(base_path)
-        config = compose_configs(base, config)
+        config = compose_configs(
+            base,
+            config,
+            base_config_path=base_path,
+            overlay_config_path=Path(config_path).resolve() if config_path is not None else None,
+        )
 
     warnings = validate_config(config)
     return ValidateServiceResult(config=config, warnings=warnings)

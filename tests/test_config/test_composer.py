@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from cruxible_core.config.composer import compose_configs
+from cruxible_core.config.composer import (
+    compose_config_files,
+    compose_configs,
+    write_composed_config,
+)
+from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 
@@ -134,7 +141,10 @@ class TestOutcomeProfilesComposition:
                 },
             },
         })
-        with pytest.raises(ConfigError, match="redefine upstream.*outcome_profiles.*cites_resolution"):
+        with pytest.raises(
+            ConfigError,
+            match="redefine upstream.*outcome_profiles.*cites_resolution",
+        ):
             compose_configs(base, overlay)
 
 
@@ -191,3 +201,101 @@ class TestDecisionPoliciesComposition:
         composed = compose_configs(_base(), overlay)
         assert len(composed.decision_policies) == 1
         assert composed.decision_policies[0].name == "fork_only"
+
+
+class TestArtifactUriComposition:
+    def test_compose_config_files_rebases_relative_artifacts(self, tmp_path: Path) -> None:
+        base_path = tmp_path / "base" / "config.yaml"
+        overlay_path = tmp_path / "overlay" / "config.yaml"
+        base_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+
+        (base_path.parent / "bundle").mkdir()
+        (overlay_path.parent / "seed").mkdir()
+
+        base_path.write_text(
+            """\
+version: "1.0"
+name: base
+kind: world_model
+entity_types:
+  Case:
+    properties:
+      case_id:
+        type: string
+        primary_key: true
+relationships: []
+artifacts:
+  base_bundle:
+    kind: directory
+    uri: ./bundle
+    sha256: sha256:base
+"""
+        )
+        overlay_path.write_text(
+            """\
+version: "1.0"
+name: fork
+extends: ../base/config.yaml
+entity_types: {}
+relationships: []
+artifacts:
+  seed_bundle:
+    kind: directory
+    uri: ./seed
+    sha256: sha256:seed
+"""
+        )
+
+        composed = compose_config_files(base_path=base_path, overlay_path=overlay_path)
+        assert composed.artifacts["base_bundle"].uri == str(
+            (base_path.parent / "bundle").resolve()
+        )
+        assert composed.artifacts["seed_bundle"].uri == str(
+            (overlay_path.parent / "seed").resolve()
+        )
+
+    def test_write_composed_config_persists_rebased_artifacts(self, tmp_path: Path) -> None:
+        base_path = tmp_path / "base" / "config.yaml"
+        overlay_path = tmp_path / "overlay" / "config.yaml"
+        output_path = tmp_path / "out" / "config.yaml"
+        base_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+        (base_path.parent / "bundle").mkdir()
+
+        base_path.write_text(
+            """\
+version: "1.0"
+name: base
+kind: world_model
+entity_types:
+  Case:
+    properties:
+      case_id:
+        type: string
+        primary_key: true
+relationships: []
+artifacts:
+  base_bundle:
+    kind: directory
+    uri: ./bundle
+    sha256: sha256:base
+"""
+        )
+        overlay_path.write_text(
+            """\
+version: "1.0"
+name: fork
+extends: ../base/config.yaml
+entity_types: {}
+relationships: []
+"""
+        )
+
+        write_composed_config(
+            base_path=base_path,
+            overlay_path=overlay_path,
+            output_path=output_path,
+        )
+        composed = load_config(output_path)
+        assert composed.artifacts["base_bundle"].uri == str((base_path.parent / "bundle").resolve())

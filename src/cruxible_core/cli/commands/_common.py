@@ -118,7 +118,12 @@ def _read_validation_yaml_or_error(path_str: str) -> str:
         raise ConfigError(f"Base config for extends not found: {base_path}")
 
     base = load_config(base_path)
-    composed = compose_configs(base, config)
+    composed = compose_configs(
+        base,
+        config,
+        base_config_path=base_path,
+        overlay_config_path=path.resolve(),
+    )
     composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
     return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
 
