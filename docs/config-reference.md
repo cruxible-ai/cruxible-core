@@ -42,7 +42,7 @@ tests: [ ... ]
 | `relationships` | list | no | `[]` | Relationship definitions |
 | `named_queries` | dict | no | `{}` | Declarative query definitions |
 | `constraints` | list | no | `[]` | Validation rules |
-| `ingestion` | dict | no | `{}` | Data ingestion mappings |
+| `ingestion` | dict | no | `{}` | Data ingestion mappings (deprecated — use workflows instead) |
 | `integrations` | dict | no | `{}` | Global integration definitions for governed proposals |
 | `quality_checks` | list | no | `[]` | Evaluate-time graph quality checks |
 | `feedback_profiles` | dict | no | `{}` | Structured feedback vocabularies per relationship type |
@@ -60,12 +60,12 @@ tests: [ ... ]
 
 The `extends` field enables a **fork pattern** for release-backed model publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream fork adds its own internal extensions without duplicating the base.
 
-**Important:** Composition is **not** part of the standard `load_config` / `cruxible_validate` / `cruxible_init` path. A config with `extends` cannot be loaded or validated on its own — the base and overlay are separate files that must be explicitly composed via the release-backed fork flow (`service_reload_config`, `write_composed_config`). The composed result is materialized to disk and used as the active config.
+**How it works:** `cruxible_validate` detects `extends`, resolves the base path relative to the overlay file, composes in memory, and validates the composed result. The raw `load_config()` function still parses a single file — composition happens in the service/CLI layer. For inline `config_yaml` (no file path), `extends` must use an absolute path or validation will error.
 
-If you load a config with `extends` directly, validation will fail with cross-reference errors because entity types and relationships from the base are not merged in.
+At runtime, the release-backed fork flow (`service_reload_config`) materializes the composed config to disk as the active config the instance uses.
 
 ```yaml
-# overlay config (cannot be loaded standalone — requires composition)
+# overlay config — validated by composing with the base automatically
 version: "1.0"
 name: kev_triage
 extends: kev-reference.yaml
@@ -314,7 +314,7 @@ A list of validation rules evaluated during `cruxible_evaluate`. Constraints che
 ```yaml
 constraints:
   - name: replacement_same_category
-    rule: "replaces.from.category == replaces.to.category"
+    rule: "replaces.FROM.category == replaces.TO.category"
     severity: warning
     description: "Replacement parts should be in the same category"
 ```
@@ -333,19 +333,24 @@ constraints:
 Constraints compare properties across relationship endpoints:
 
 ```
-RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property
+RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property
 ```
 
 - `RELATIONSHIP`: The relationship name (e.g., `replaces`)
 - `FROM`: The source entity's property
 - `TO`: The target entity's property
+- `<op>`: One of `==`, `!=`, `>`, `>=`, `<`, `<=`
 - Identifiers may contain letters, digits, underscores, and hyphens
 
-**Example:** `replaces.from.category == replaces.to.category` — flags any `replaces` edge where the source and target parts have different categories.
+**Examples:**
+- `replaces.FROM.category == replaces.TO.category` — flags any `replaces` edge where the source and target parts have different categories.
+- `replaces.FROM.priority > replaces.TO.priority` — flags any `replaces` edge where the source priority does not exceed the target priority.
 
 ---
 
 ## ingestion
+
+> **Deprecation notice:** The `ingestion` section is being deprecated. Workflows with `make_entities` / `make_relationships` / `apply_entities` / `apply_relationships` steps are the preferred path for loading data — they produce receipts, support canonical snapshots, and compose with the governed proposal flow. New configs should use workflows instead of ingestion mappings. Existing ingestion mappings will continue to work but will be removed in a future release.
 
 A dict of named mappings that tell Core how to load CSV/JSON data into entities and relationships.
 

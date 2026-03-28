@@ -317,7 +317,9 @@ cruxible add-constraint --name <name> --rule <rule> \
 | `--severity` | no | `warning` | `warning` or `error` |
 | `--description` | no | — | Description of the constraint |
 
-Rule syntax: `RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property`
+Rule syntax: `RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property`
+
+Supported operators: `==`, `!=`, `>`, `>=`, `<`, `<=`
 
 **Example:**
 

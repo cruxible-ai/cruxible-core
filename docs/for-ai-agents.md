@@ -257,7 +257,8 @@ When rejection patterns emerge from feedback:
 - Use `constraint` for runtime parameter binding (e.g., `target.drug_id == $drug_id`)
 
 ### Constraints
-- Rule format: `RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property`
+- Rule format: `RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property`
+- Supported operators: `==`, `!=`, `>`, `>=`, `<`, `<=`
 - Use `severity: warning` unless the violation rate is very high, then use `error`
 - Constraints are evaluated by `cruxible_evaluate`, not during ingestion
 

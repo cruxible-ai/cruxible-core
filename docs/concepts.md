@@ -129,7 +129,7 @@ Constraints are validation rules that check relationships against business logic
 ```yaml
 constraints:
   - name: replacement_same_category
-    rule: "replaces.from.category == replaces.to.category"
+    rule: "replaces.FROM.category == replaces.TO.category"
     severity: warning
     description: "Replacement parts should be in the same category"
 ```
