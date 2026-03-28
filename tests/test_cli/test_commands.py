@@ -1065,6 +1065,25 @@ class TestAddConstraint:
         names = [c.name for c in config.constraints]
         assert "brake_category_match" in names
 
+    def test_valid_not_equal_rule(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "add-constraint",
+                "--name",
+                "no_self_replacement",
+                "--rule",
+                "replaces.FROM.part_number != replaces.TO.part_number",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "added to config" in result.output
+
     def test_bad_rule(
         self,
         runner: CliRunner,

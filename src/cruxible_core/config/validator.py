@@ -109,7 +109,9 @@ def _validate_constraints(
             )
             continue
 
-        rel_name, from_prop, to_prop = parsed
+        rel_name = parsed.relationship
+        from_prop = parsed.from_property
+        to_prop = parsed.to_property
         rel = relationships.get(rel_name)
         if rel is None:
             errors.append(

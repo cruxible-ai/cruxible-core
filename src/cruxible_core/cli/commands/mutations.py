@@ -21,6 +21,7 @@ from cruxible_core.config.schema import ConstraintSchema, DecisionPolicySchema
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp import contracts
+from cruxible_core.predicate import CONSTRAINT_RULE_SYNTAX
 from cruxible_core.service import (
     EntityUpsertInput,
     RelationshipUpsertInput,
@@ -183,7 +184,7 @@ def add_constraint_cmd(
     if parsed is None:
         raise ConfigError(
             f"Rule syntax not supported: {rule!r}. "
-            "Expected: RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property"
+            f"Expected: {CONSTRAINT_RULE_SYNTAX}"
         )
 
     constraint = ConstraintSchema(

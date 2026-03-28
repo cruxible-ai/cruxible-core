@@ -515,7 +515,8 @@ def register_tools(server: FastMCP) -> list[str]:
         """Add a constraint rule to the config. Writes the updated config to YAML.
 
         Constraints are evaluated by cruxible_evaluate to flag edges that violate them.
-        Rule format: RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property
+        Rule format: RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property
+        Supported operators: ==, !=, >, >=, <, <=
         Identifiers may contain letters, digits, underscores, and hyphens.
 
         Example: classified_as.FROM.Category == classified_as.TO.CategoryName

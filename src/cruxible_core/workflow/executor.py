@@ -15,6 +15,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.predicate import evaluate_comparison
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
 from cruxible_core.query.engine import execute_query
@@ -428,19 +429,10 @@ def _build_trace(
 
 
 def _evaluate_assert(left: Any, op: str, right: Any) -> bool:
-    if op == "eq":
-        return left == right
-    if op == "ne":
-        return left != right
-    if op == "gt":
-        return left > right
-    if op == "gte":
-        return left >= right
-    if op == "lt":
-        return left < right
-    if op == "lte":
-        return left <= right
-    raise ConfigError(f"Unsupported assert op '{op}'")
+    try:
+        return evaluate_comparison(left, op, right)
+    except ValueError as exc:
+        raise ConfigError(f"Unsupported assert op '{op}'") from exc
 
 
 def _resolve_step_items(

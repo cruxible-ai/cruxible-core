@@ -18,6 +18,7 @@ from cruxible_core.mcp.permissions import (
     check_permission,
     validate_root_dir,
 )
+from cruxible_core.predicate import CONSTRAINT_RULE_SYNTAX
 from cruxible_core.query.candidates import MatchRule
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -1191,7 +1192,7 @@ def _handle_add_constraint_local(
     if parsed is None:
         raise ConfigError(
             f"Rule syntax not supported: {rule!r}. "
-            "Expected: RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property"
+            f"Expected: {CONSTRAINT_RULE_SYNTAX}"
         )
 
     constraint = ConstraintSchema(
