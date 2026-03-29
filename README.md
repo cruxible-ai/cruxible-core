@@ -10,9 +10,11 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Deterministic decision engine with DAG-based receipts.** Build entity graphs, query with MCP, get auditable proof.
+**Shared truth for humans and agents.** Cruxible is a deterministic world-model runtime with DAG-based receipts.
 
-Define entity graphs, queries, and constraints in YAML. Run them locally from CLI or MCP, and get receipts proving exactly why each result was returned.
+Define entity graphs, queries, constraints, and governed workflows in YAML. Run them locally from CLI or MCP, and get receipts proving exactly why each result was returned.
+
+LLMs do not expose a stable, shared internal state that other agents or humans can inspect or verify. Their judgments are prompt-local, frame-sensitive, and transient. Cruxible externalizes accepted facts, relationships, and judgments so work does not depend on drifting summaries or ephemeral model opinions.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -31,6 +33,25 @@ Define entity graphs, queries, and constraints in YAML. Run them locally from CL
 │  Config → Graph → Query → Receipt → Feedback                 │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+## Why This Exists
+
+Humans and agents do not naturally stay coherent with each other.
+
+- Two agents can see similar material and still come away with different facts, procedures, or recommendations.
+- A human can think something is settled while the model, under slightly different framing, behaves as if it is missing or softer than it really is.
+- Handoffs through chat history are lossy. Important state gets re-summarized, re-interpreted, and sometimes silently changed.
+
+Cruxible gives that important state a home outside the model:
+
+- shared domain facts and relationships
+- accepted judgments and review status
+- named queries and constraints
+- receipts explaining how results and proposals were produced
+
+A simple way to think about it:
+
+> LLMs can reason about truth, but they should not be the only place truth lives.
 
 ## Quick Example
 
@@ -104,11 +125,25 @@ Duration: 0.41ms | 2 traversal steps
 
 ## Get Started
 
+### Server / MCP Runtime
+
 ```bash
 pip install "cruxible-core[mcp]"
 ```
 
 > Or use `uv tool install "cruxible-core[mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
+
+### Client-Only Agent Environment
+
+```bash
+pip install cruxible-client
+```
+
+Use `cruxible-client` when the agent only needs typed HTTP/API access to a separate Cruxible daemon.
+
+Permission modes are enforced at the daemon boundary. If an agent can import `cruxible-core` or access the same runtime/filesystem directly, those modes are advisory rather than isolating. If trust levels matter, keep `cruxible-core` out of the agent environment and talk to a separate daemon through `cruxible-client`.
+
+### MCP Setup
 
 Add the MCP server to your AI agent:
 
@@ -158,28 +193,40 @@ Then try:
 
 Every query produces a receipt you can inspect.
 
-## Why Not Just Write Code?
+## Why Not Just Use Prompts, Docs, or Memory?
 
-Cruxible is useful when the same decision logic needs to be reviewed, replayed, adapted, and trusted over time. It gives you:
+Prompts, markdown playbooks, tickets, and generic memory layers are good at storing context.
 
-- A declarative spec surface in YAML
-- Deterministic execution over entity graphs
-- Receipts proving why a result was returned
-- Constraints, evaluation, and feedback without rebuilding custom infrastructure
+They are bad at storing hard state.
 
-The same way Terraform replaced hand-rolled infrastructure scripts with plans, state, and diffs, Cruxible replaces ad-hoc decision code with declarative configs, deterministic execution, and auditable receipts.
+Hard state is the part that should not change just because a different agent saw different context, summarized things differently, or framed the problem another way.
+
+Use memory for:
+
+- temporary notes
+- working context
+- recall and retrieval
+- loose guidance
+
+Use Cruxible for:
+
+- accepted facts and relationships
+- accepted judgments and review status
+- explicit operational procedure through queries, constraints, workflows, and policies
+- receipts and provenance explaining how results and proposals were produced
+
+Cruxible is for the cases where humans and agents need to coordinate around shared truth instead of around temporary summaries.
 
 ## Why Cruxible
 
-| LLM agents alone | With Cruxible |
+| Prompts, docs, or memory alone | With Cruxible |
 |---|---|
-| Relationships shift depending on how you ask | Explicit knowledge graph you can inspect |
-| No structured memory between sessions | Persistent entity store across runs |
-| Results vary between identical prompts | Deterministic execution, same input → same output |
-| No audit trail | DAG-based receipt for every decision |
-| Constraints checked by vibes | Declared constraints programmatically validated before results |
-| Discovers relationships only through LLM reasoning | Deterministic candidate detection finds missing relationships at scale — LLM assists where judgment is needed |
-| Learns nothing from outcomes | Feedback loop calibrates edge weights over time |
+| Facts and decisions get re-summarized on every handoff | Accepted facts and judgments persist as hard state |
+| Procedure lives in markdown, habits, and chat context | Queries, constraints, workflows, and policies are explicit |
+| Different framing can produce different "truth" | The same state produces the same result |
+| Review is social and informal | Review status is part of the model |
+| Provenance is scattered across chats and tools | DAG-based receipts explain every result and proposal |
+| Memory helps recall | Hard state supports coordination and trust |
 
 ## Features
 

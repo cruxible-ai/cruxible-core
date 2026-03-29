@@ -90,14 +90,21 @@ relationships:
 | Field category | Fields | Behavior |
 |----------------|--------|----------|
 | Metadata | `name`, `description` | Overlay overrides base |
-| Safe lists | `constraints`, `quality_checks`, `tests` | Overlay appends to base |
+| Safe lists | `constraints`, `quality_checks`, `tests`, `decision_policies` | Overlay appends to base |
 | Relationships | `relationships` | Overlay can only add new names; redefining an upstream relationship raises `ConfigError` |
-| Keyed maps | `entity_types`, `named_queries`, `ingestion`, `integrations`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
+| Keyed maps | `entity_types`, `named_queries`, `ingestion`, `integrations`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
 | Other fields | everything else | Overlay can only set if not in base, or if equal to base value |
 
 When `extends` is set, `entity_types` may be empty — the base provides them.
 
-**Composition limitations:** `feedback_profiles`, `outcome_profiles`, and `decision_policies` are not in the appendable or keyed-map sets in the composer. If the base config defines any of these, the overlay cannot set them to a different value — doing so raises `ConfigError`. Today these sections must live entirely in the base or entirely in the overlay, not split across both. This is a known gap; fork-specific feedback and decision policies are a natural use case for overlays.
+## kind
+
+`kind` controls whether the config is a reusable reference ontology or an operational world model.
+
+- `ontology`: reference taxonomy/model only. It may define entities, relationships, queries, constraints, and other static schema, but it may not define ingestion mappings, contracts, artifacts, providers, workflows, or workflow tests.
+- `world_model`: operational model. It can ingest local/company data, run workflows, use pinned artifacts/providers, and carry governed judgment state on top of the underlying schema.
+
+Use `ontology` for reusable reference layers. Use `world_model` when the config needs to operate on real data and support company-specific execution and review flows.
 
 ---
 
@@ -928,6 +935,8 @@ Each step must define exactly one of these operations:
 | `provider` | Call a registered provider | `provider`, `input`, `as` |
 | `query` | Run a named query | `query`, `params`, `as` |
 | `assert` | Guard condition — fail the workflow if not met | `assert: {left, op, right, message}` |
+| `list_entities` | Read entity rows from current graph state into a workflow payload | `list_entities: {entity_type, property_filter?, limit?}`, `as` |
+| `list_relationships` | Read relationship rows from current graph state into a workflow payload | `list_relationships: {relationship_type, property_filter?, limit?}`, `as` |
 | `make_entities` | Build an entity set from list data | `make_entities: {entity_type, items, entity_id, properties}`, `as` |
 | `make_relationships` | Build a relationship set from list data | `make_relationships: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
 | `apply_entities` | Apply a built entity set to graph state | `apply_entities: {entities_from}`, `as` |
@@ -947,6 +956,10 @@ Steps reference data from prior steps and the current item in list iterations:
 | `$steps.<step_id>.<field>` | A specific field from a prior step's output |
 | `$item` | Current item when iterating over a list (used inside `make_*` and `map_signals`) |
 | `$item.<field>` | A specific field on the current item |
+
+**Read-step outputs:**
+- `list_entities` returns `{items: [...], total: N}` where each item is an entity object with `entity_type`, `entity_id`, and `properties`.
+- `list_relationships` returns `{items: [...], total: N}` where each item is a relationship object with `from_id`, `to_id`, `relationship_type`, and `properties`.
 
 ### Governed Proposal Steps
 

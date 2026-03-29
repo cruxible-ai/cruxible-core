@@ -1,6 +1,48 @@
 # Concepts
 
-Cruxible Core is a deterministic decision engine with receipts. This guide explains the architecture, primitives, and workflows that make it work.
+Cruxible Core is a deterministic world-model runtime with receipts. This guide explains the architecture, primitives, and workflows that make it work.
+
+## World Model, Not Agent Scratch Memory
+
+Cruxible is for shared domain state: entities, relationships, constraints, named queries, and accepted judgments that need to persist across agents, users, and runs.
+
+It is not a scratchpad for an individual agent's temporary notes or prompt context.
+
+- **Agent memory** is agent-centric, heuristic, and useful for continuity.
+- **Cruxible state** is domain-centric, explicit, reviewable, and meant to be operationally trusted.
+- **Receipts** explain how a result or proposal was produced.
+- **Feedback and outcomes** calibrate accepted judgment over time.
+
+## Coherence and Shared Truth
+
+LLM agents do not expose a stable, inspectable internal state. What looks like "state" is really a transient encoding of the current prompt, retrieved context, and recent tool outputs.
+
+That becomes a coherence problem as soon as more than one agent or human is involved. Two capable agents can start from nearly the same material and still diverge because they:
+
+- saw different slices of context
+- summarized prior work differently
+- retrieved different evidence
+- interpreted procedure or policy differently
+- carried forward different local assumptions
+
+In practice this creates three different coherence problems:
+
+- **factual coherence**: what is true?
+- **procedural coherence**: what workflow are we following?
+- **judgment coherence**: what has already been approved, rejected, corrected, or deferred?
+
+Without an external shared substrate, each agent is effectively carrying a lossy private replica of reality. That is acceptable for lightweight tasks. It breaks down for repeated, collaborative, or high-stakes work.
+
+The same problem shows up between humans and agents. A human may think a fact, policy interpretation, or prior decision is already settled while the model, under a different framing, acts as if it is softer, different, or missing entirely. Because LLM judgments are frame-sensitive and transient, "what the model thinks" is too unstable to serve as operational truth on its own.
+
+Cruxible addresses this by externalizing the parts that should not live only in prompt-local context:
+
+- accepted facts and relationships
+- named queries and constraints
+- review status and governed judgments
+- provenance and receipts explaining how state was produced
+
+Agents can still keep private working memory, but they coordinate against the same operational state instead of against incompatible internal summaries.
 
 ## AI Outside, Determinism Inside
 
@@ -46,7 +88,7 @@ Everything in Cruxible flows through four primitives:
 
 A YAML file that defines the decision domain: entity types with typed properties, relationships between entities, declarative named queries, validation constraints, and ingestion mappings for loading data.
 
-The config is the single source of truth. AI agents write it; Core validates and executes against it. See [Config Reference](config-reference.md) for the full schema.
+The config is the single source of truth for a shared domain/world model. AI agents write it; Core validates and executes against it. See [Config Reference](config-reference.md) for the full schema.
 
 ### Ingest
 
@@ -73,6 +115,8 @@ Edge-level feedback tied to specific receipts:
 - **flag** — Edge needs review; no behavior change
 
 **Outcomes** are separate from feedback — they track whether the overall query result was correct, incorrect, partial, or unknown. Use outcomes for calibration and accuracy measurement over time.
+
+Together, feedback and outcomes let Cruxible accumulate accepted judgment state without turning the graph into an unreviewed scratch memory layer.
 
 ## The Entity Graph
 
@@ -162,6 +206,8 @@ The MCP server runs in one of three cumulative permission tiers, controlled by t
 | **ADMIN** | Everything including `init` (create), `ingest`, `add_constraint` |
 
 Default is `ADMIN`. Use `CRUXIBLE_ALLOWED_ROOTS` to restrict which directories `cruxible_init` can access.
+
+These modes are enforced at the daemon boundary. They are meaningful when agents talk to Cruxible through the daemon/API surface, not when an agent can import `cruxible-core` runtime modules directly in the same environment.
 
 ## Candidate Detection
 

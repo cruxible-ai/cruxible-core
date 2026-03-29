@@ -4,6 +4,15 @@ This guide explains how AI agents (Claude Code, Cursor, Codex, or any MCP-capabl
 
 **MCP is the recommended interface** for domain onboarding and graph building. The CLI supports prompts and all core operations, but MCP returns structured data that agents can reason over more effectively.
 
+## Install Boundary
+
+- Agent/client environment: `pip install cruxible-client`
+- Daemon/MCP runtime: `pip install "cruxible-core[mcp]"`
+
+Permission modes are enforced at the daemon boundary. If an agent can import `cruxible-core` or access the daemon's runtime/filesystem directly, those modes are advisory rather than isolating.
+
+If trust levels matter, keep the agent on `cruxible-client` only and run `cruxible-core` in a separate daemon environment.
+
 ## Role Separation
 
 **You (the AI agent):**
@@ -23,6 +32,29 @@ This guide explains how AI agents (Claude Code, Cursor, Codex, or any MCP-capabl
 - Evaluates graph quality and constraint compliance
 
 Scripts are appropriate for data cleaning and transforms, but not for inference tasks like classification or matching — use your judgment and `cruxible_add_relationship` for those.
+
+## Modeling Stance
+
+Use Cruxible to model shared domain facts, company-specific logic, and governed judgments.
+
+Do not use it as a scratchpad for temporary agent notes. Free-form working memory belongs in the agent; operational state that must be queried, reviewed, approved, and replayed belongs in Cruxible.
+
+## Multi-Agent Coherence
+
+If multiple agents are collaborating, assume they will drift unless shared truth is made explicit.
+
+LLM state is prompt-local and opaque. One agent cannot reliably inspect another agent's internal representation of the domain, procedure, or current decisions. That means handoffs based only on summaries or chat history are lossy.
+
+The same warning applies to human-agent collaboration. Do not assume the model's current framing of the problem matches the human's framing just because they have seen similar material.
+
+Use Cruxible as the shared coordination layer:
+
+- persist accepted facts and relationships instead of leaving them in chat context
+- persist approved or rejected judgments instead of relying on private agent notes
+- use named queries, constraints, and receipts as the shared procedural surface
+- treat agent-local notes as temporary working memory, not operational truth
+
+When handing work from one agent to another, update the world model first if the result should affect later reasoning.
 
 ## Start Here
 

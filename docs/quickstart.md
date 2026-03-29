@@ -9,11 +9,23 @@ Get from install to first query in 5 minutes.
 
 ## Install
 
+### Server / MCP Runtime
+
 ```bash
 pip install "cruxible-core[mcp]"
 ```
 
 > Or use `uv tool install "cruxible-core[mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
+
+### Client-Only Agent Environment
+
+```bash
+pip install cruxible-client
+```
+
+Use `cruxible-client` when the agent talks to a separate Cruxible daemon over HTTP/MCP and does not need local runtime access.
+
+If permission modes matter, do not install `cruxible-core` in that agent environment.
 
 ## MCP Setup
 
@@ -89,7 +101,7 @@ Run your named queries and inspect the receipts. Every answer comes with a proof
 
 > "Review the graph quality" or "I want to provide feedback on edges"
 
-The agent will run evaluations, surface low-confidence edges for review, and record your approve/correct/reject decisions. Domain knowledge compounds in the graph across sessions.
+The agent will run evaluations, surface low-confidence edges for review, and record your approve/correct/reject decisions. Accepted domain state compounds in the world model across sessions.
 
 ## Next Steps
 

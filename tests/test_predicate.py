@@ -3,7 +3,6 @@
 import pytest
 
 from cruxible_core.predicate import (
-    ComparisonOp,
     comparison_symbol,
     evaluate_comparison,
     normalize_comparison_op,
