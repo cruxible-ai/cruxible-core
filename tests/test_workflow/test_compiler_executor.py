@@ -14,6 +14,7 @@ from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.receipt.serializer import to_markdown
+from cruxible_core.service import service_list
 from cruxible_core.workflow import (
     build_lock,
     compile_workflow,
@@ -376,6 +377,53 @@ class TestWorkflowExecutor:
         assert products_step.detail["entity_type"] == "Product"
         assert products_step.detail["item_count"] == 1
 
+    def test_execute_workflow_list_entities_matches_service_list(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.contracts["PromoInput"].fields["category"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        config.workflows["evaluate_promo"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="products",
+                list_entities={
+                    "entity_type": "Product",
+                    "property_filter": {"category": "$input.category"},
+                    "limit": 5,
+                },
+                **{"as": "products"},
+            ),
+        )
+        workflow_instance.save_config(config)
+        _write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "category": "soda",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+        listed = service_list(
+            workflow_instance,
+            "entities",
+            entity_type="Product",
+            property_filter={"category": "soda"},
+            limit=5,
+        )
+
+        assert result.step_outputs["products"]["total"] == listed.total
+        assert result.step_outputs["products"]["items"] == [
+            item.model_dump(mode="python") for item in listed.items
+        ]
+
     def test_execute_workflow_list_relationships_step_returns_items(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:
@@ -415,6 +463,46 @@ class TestWorkflowExecutor:
         )
         assert links_step.detail["relationship_type"] == "recommended_for"
         assert links_step.detail["item_count"] == 0
+
+    def test_execute_workflow_list_relationships_matches_service_list(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.contracts["CampaignInput"].fields["status"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        config.workflows["propose_campaign_recommendations"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="existing_links",
+                list_relationships={
+                    "relationship_type": "recommended_for",
+                    "property_filter": {"review_status": "$input.status"},
+                    "limit": 10,
+                },
+                **{"as": "existing_links"},
+            ),
+        )
+        proposal_workflow_instance.save_config(config)
+        _write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1", "status": "human_approved"},
+        )
+        listed = service_list(
+            proposal_workflow_instance,
+            "edges",
+            relationship_type="recommended_for",
+            property_filter={"review_status": "human_approved"},
+            limit=10,
+        )
+
+        assert result.step_outputs["existing_links"]["total"] == listed.total
+        assert result.step_outputs["existing_links"]["items"] == listed.items
 
     def test_execute_workflow_rejects_provider_output_contract(
         self, workflow_instance: CruxibleInstance

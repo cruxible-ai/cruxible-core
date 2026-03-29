@@ -243,9 +243,31 @@ class TestList:
         assert result.total == 2
         assert len(result.items) == 2
 
+    def test_entities_property_filter(self, populated_instance: CruxibleInstance) -> None:
+        result = service_list(
+            populated_instance,
+            "entities",
+            entity_type="Vehicle",
+            property_filter={"model": "Civic"},
+        )
+        assert result.total == 1
+        assert len(result.items) == 1
+        assert result.items[0].entity_id == "V-2024-CIVIC-EX"
+
     def test_edges(self, populated_instance: CruxibleInstance) -> None:
         result = service_list(populated_instance, "edges")
         assert result.total >= 3  # 3 fits + 1 replaces in populated graph
+
+    def test_edges_property_filter(self, populated_instance: CruxibleInstance) -> None:
+        result = service_list(
+            populated_instance,
+            "edges",
+            relationship_type="fits",
+            property_filter={"source": "catalog"},
+        )
+        assert result.total == 2
+        assert len(result.items) == 2
+        assert all(edge["properties"]["source"] == "catalog" for edge in result.items)
 
     def test_receipts(self, populated_instance: CruxibleInstance) -> None:
         # Create a receipt first
