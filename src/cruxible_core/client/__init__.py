@@ -1,5 +1,5 @@
-"""Client utilities for talking to a governed Cruxible server."""
+"""Compatibility re-export for the standalone client package."""
 
-from cruxible_core.client.http_client import CruxibleClient
+from cruxible_client import CruxibleClient
 
 __all__ = ["CruxibleClient"]

@@ -1,0 +1,271 @@
+"""Client-side error hierarchy and HTTP error decoding."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+_MAX_DISPLAY_ERRORS = 10
+
+
+class CoreError(Exception):
+    """Base exception for all Cruxible client errors."""
+
+    def __init__(self, message: str, *, mutation_receipt_id: str | None = None) -> None:
+        self.mutation_receipt_id = mutation_receipt_id
+        super().__init__(message)
+
+    def _receipt_suffix(self) -> str:
+        if self.mutation_receipt_id:
+            return f" (receipt: {self.mutation_receipt_id})"
+        return ""
+
+    def __str__(self) -> str:
+        return super().__str__() + self._receipt_suffix()
+
+
+class SchemaError(CoreError):
+    """Base for errors in public schema/config definitions."""
+
+
+class ConfigError(SchemaError):
+    """Client-side config or validation error."""
+
+    def __init__(
+        self,
+        message: str,
+        errors: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ) -> None:
+        self.summary = message
+        self.errors = errors or []
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+
+    def __str__(self) -> str:
+        if not self.errors:
+            return self.summary + self._receipt_suffix()
+        shown = self.errors[:_MAX_DISPLAY_ERRORS]
+        detail = "; ".join(shown)
+        suffix = ""
+        if len(self.errors) > _MAX_DISPLAY_ERRORS:
+            suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
+        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+
+
+class EntityTypeNotFoundError(SchemaError):
+    def __init__(self, entity_type: str):
+        self.entity_type = entity_type
+        super().__init__(f"Entity type '{entity_type}' not found in schema")
+
+
+class RelationshipNotFoundError(SchemaError):
+    def __init__(self, relationship_name: str):
+        self.relationship_name = relationship_name
+        super().__init__(f"Relationship '{relationship_name}' not found in schema")
+
+
+class QueryNotFoundError(SchemaError):
+    def __init__(self, query_name: str):
+        self.query_name = query_name
+        super().__init__(f"Named query '{query_name}' not found in schema")
+
+
+class GraphError(CoreError):
+    """Base for errors in graph data visible to the client."""
+
+
+class EntityNotFoundError(GraphError):
+    def __init__(self, entity_type: str, entity_id: str):
+        self.entity_type = entity_type
+        self.entity_id = entity_id
+        super().__init__(f"{entity_type} '{entity_id}' not found in graph")
+
+
+class DataValidationError(GraphError):
+    def __init__(
+        self,
+        message: str,
+        errors: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ) -> None:
+        self.summary = message
+        self.errors = errors or []
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+
+    def __str__(self) -> str:
+        if not self.errors:
+            return self.summary + self._receipt_suffix()
+        shown = self.errors[:_MAX_DISPLAY_ERRORS]
+        detail = "; ".join(shown)
+        suffix = ""
+        if len(self.errors) > _MAX_DISPLAY_ERRORS:
+            suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
+        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+
+
+class EdgeAmbiguityError(GraphError):
+    def __init__(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship: str,
+    ) -> None:
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        self.relationship = relationship
+        super().__init__(
+            "Ambiguous edge target for "
+            f"{from_type}:{from_id}:{relationship}:{to_type}:{to_id}; "
+            "specify edge_key to target a single edge"
+        )
+
+
+class ConstraintViolationError(GraphError):
+    def __init__(
+        self,
+        message: str,
+        violations: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ) -> None:
+        self.summary = message
+        self.violations = violations or []
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+
+    def __str__(self) -> str:
+        if not self.violations:
+            return self.summary + self._receipt_suffix()
+        detail = "; ".join(self.violations)
+        return f"{self.summary}: {detail}" + self._receipt_suffix()
+
+
+class ExecutionError(CoreError):
+    """Base for operation failures visible to the client."""
+
+
+class IngestionError(ExecutionError):
+    pass
+
+
+class MutationError(ExecutionError):
+    pass
+
+
+class QueryExecutionError(ExecutionError):
+    pass
+
+
+class OwnershipError(CoreError):
+    def __init__(self, message: str, *, blocked_types: list[str] | None = None) -> None:
+        self.blocked_types = blocked_types or []
+        super().__init__(message)
+
+
+class ReceiptNotFoundError(CoreError):
+    def __init__(self, receipt_id: str):
+        self.receipt_id = receipt_id
+        super().__init__(f"Receipt '{receipt_id}' not found")
+
+
+class OutcomeNotFoundError(CoreError):
+    def __init__(self, receipt_id: str):
+        self.receipt_id = receipt_id
+        super().__init__(f"No outcome found for receipt '{receipt_id}'")
+
+
+class InstanceNotFoundError(CoreError):
+    def __init__(self, instance_id: str):
+        self.instance_id = instance_id
+        super().__init__(f"Instance '{instance_id}' not found")
+
+
+class GroupNotFoundError(CoreError):
+    def __init__(self, group_id: str):
+        self.group_id = group_id
+        super().__init__(f"Group '{group_id}' not found")
+
+
+class PermissionDeniedError(CoreError):
+    def __init__(self, tool_name: str, current_mode: str, required_mode: str):
+        self.tool_name = tool_name
+        self.current_mode = current_mode
+        self.required_mode = required_mode
+        super().__init__(
+            f"Tool '{tool_name}' requires {required_mode} mode, "
+            f"but server is running in {current_mode} mode"
+        )
+
+
+class ErrorResponse(BaseModel):
+    """Structured error payload returned by the HTTP server."""
+
+    error_type: str
+    message: str
+    errors: list[str] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
+    mutation_receipt_id: str | None = None
+
+
+def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
+    """Reconstruct a client-side error from an HTTP error response."""
+    context = body.context
+
+    if body.error_type == "ConfigError":
+        exc: CoreError = ConfigError(body.message, errors=body.errors)
+    elif body.error_type == "DataValidationError":
+        exc = DataValidationError(body.message, errors=body.errors)
+    elif body.error_type == "ConstraintViolationError":
+        exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
+    elif body.error_type == "OwnershipError":
+        exc = OwnershipError(body.message, blocked_types=context.get("blocked_types", []))
+    elif body.error_type == "PermissionDeniedError":
+        exc = PermissionDeniedError(
+            context.get("tool_name", "unknown"),
+            context.get("current_mode", "unknown"),
+            context.get("required_mode", "unknown"),
+        )
+    elif body.error_type == "EntityTypeNotFoundError":
+        exc = EntityTypeNotFoundError(context.get("entity_type", body.message))
+    elif body.error_type == "RelationshipNotFoundError":
+        exc = RelationshipNotFoundError(context.get("relationship_name", body.message))
+    elif body.error_type == "QueryNotFoundError":
+        exc = QueryNotFoundError(context.get("query_name", body.message))
+    elif body.error_type == "EntityNotFoundError":
+        exc = EntityNotFoundError(
+            context.get("entity_type", "unknown"),
+            context.get("entity_id", "unknown"),
+        )
+    elif body.error_type == "EdgeAmbiguityError":
+        exc = EdgeAmbiguityError(
+            from_type=context.get("from_type", "unknown"),
+            from_id=context.get("from_id", "unknown"),
+            to_type=context.get("to_type", "unknown"),
+            to_id=context.get("to_id", "unknown"),
+            relationship=context.get("relationship", "unknown"),
+        )
+    elif body.error_type == "ReceiptNotFoundError":
+        exc = ReceiptNotFoundError(context.get("receipt_id", "unknown"))
+    elif body.error_type == "OutcomeNotFoundError":
+        exc = OutcomeNotFoundError(context.get("receipt_id", "unknown"))
+    elif body.error_type == "InstanceNotFoundError":
+        exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
+    elif body.error_type == "GroupNotFoundError":
+        exc = GroupNotFoundError(context.get("group_id", "unknown"))
+    elif body.error_type == "QueryExecutionError":
+        exc = QueryExecutionError(body.message)
+    elif body.error_type == "IngestionError":
+        exc = IngestionError(body.message)
+    elif body.error_type == "MutationError":
+        exc = MutationError(body.message)
+    else:
+        exc = CoreError(body.message)
+
+    exc.mutation_receipt_id = body.mutation_receipt_id
+    return exc
