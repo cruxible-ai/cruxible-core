@@ -11,6 +11,8 @@ from cruxible_core.config.schema import (
     ApplyEntitiesSpec,
     ApplyRelationshipsSpec,
     AssertSpec,
+    ListEntitiesSpec,
+    ListRelationshipsSpec,
     MakeCandidatesSpec,
     MakeEntitiesSpec,
     MakeRelationshipsSpec,
@@ -63,6 +65,8 @@ class CompiledPlanStep(BaseModel):
         "query",
         "provider",
         "assert",
+        "list_entities",
+        "list_relationships",
         "make_candidates",
         "map_signals",
         "propose_relationship_group",
@@ -85,6 +89,8 @@ class CompiledPlanStep(BaseModel):
     input_template: dict[str, Any] = Field(default_factory=dict)
     input_preview: dict[str, Any] = Field(default_factory=dict)
     assert_spec: AssertSpec | None = None
+    list_entities_spec: ListEntitiesSpec | None = None
+    list_relationships_spec: ListRelationshipsSpec | None = None
     make_candidates_spec: MakeCandidatesSpec | None = None
     map_signals_spec: MapSignalsSpec | None = None
     propose_relationship_group_spec: ProposeRelationshipGroupSpec | None = None

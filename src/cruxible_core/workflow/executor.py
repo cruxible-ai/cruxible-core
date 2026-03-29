@@ -115,6 +115,54 @@ def execute_workflow(
             )
             continue
 
+        if compiled_step.kind == "list_entities":
+            assert compiled_step.list_entities_spec is not None
+            entity_list = _list_entities(
+                graph,
+                compiled_step.step_id,
+                compiled_step.list_entities_spec,
+                plan.input_payload,
+                step_outputs,
+            )
+            step_outputs[compiled_step.as_name or compiled_step.step_id] = entity_list
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+            receipt_builder.record_plan_step(
+                compiled_step.step_id,
+                "list_entities",
+                detail={
+                    "entity_type": compiled_step.list_entities_spec.entity_type,
+                    "item_count": len(entity_list["items"]),
+                    "total": entity_list["total"],
+                },
+            )
+            continue
+
+        if compiled_step.kind == "list_relationships":
+            assert compiled_step.list_relationships_spec is not None
+            relationship_list = _list_relationships(
+                graph,
+                compiled_step.step_id,
+                compiled_step.list_relationships_spec,
+                plan.input_payload,
+                step_outputs,
+            )
+            step_outputs[compiled_step.as_name or compiled_step.step_id] = relationship_list
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+            receipt_builder.record_plan_step(
+                compiled_step.step_id,
+                "list_relationships",
+                detail={
+                    "relationship_type": (
+                        compiled_step.list_relationships_spec.relationship_type
+                    ),
+                    "item_count": len(relationship_list["items"]),
+                    "total": relationship_list["total"],
+                },
+            )
+            continue
+
         if compiled_step.kind == "make_candidates":
             assert compiled_step.make_candidates_spec is not None
             candidate_set = _make_candidate_set(
@@ -444,6 +492,88 @@ def _resolve_step_items(
     if not isinstance(items, list):
         raise QueryExecutionError("Built-in workflow step 'items' must resolve to a list")
     return items
+
+
+def _resolve_limit(
+    limit_template: Any,
+    step_id: str,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> int | None:
+    if limit_template is None:
+        return None
+    limit_value = resolve_value(limit_template, input_payload, step_outputs)
+    if not isinstance(limit_value, int) or limit_value < 1:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' limit must resolve to an integer >= 1"
+        )
+    return limit_value
+
+
+def _resolve_property_filter(
+    property_filter_template: dict[str, Any],
+    step_id: str,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    property_filter = resolve_value(property_filter_template, input_payload, step_outputs)
+    if not isinstance(property_filter, dict):
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' property_filter must resolve to a mapping"
+        )
+    return property_filter
+
+
+def _list_entities(
+    graph: EntityGraph,
+    step_id: str,
+    spec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    property_filter = _resolve_property_filter(
+        spec.property_filter,
+        step_id,
+        input_payload,
+        step_outputs,
+    )
+    limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
+    entities = graph.list_entities(spec.entity_type, property_filter=property_filter or None)
+    items = [entity.model_dump(mode="python") for entity in entities]
+    if limit is not None:
+        items = items[:limit]
+    return {
+        "items": items,
+        "total": len(entities),
+    }
+
+
+def _list_relationships(
+    graph: EntityGraph,
+    step_id: str,
+    spec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    property_filter = _resolve_property_filter(
+        spec.property_filter,
+        step_id,
+        input_payload,
+        step_outputs,
+    )
+    limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
+    relationships = graph.list_edges(relationship_type=spec.relationship_type)
+    if property_filter:
+        relationships = [
+            edge
+            for edge in relationships
+            if all(edge["properties"].get(key) == value for key, value in property_filter.items())
+        ]
+    items = relationships[:limit] if limit is not None else relationships
+    return {
+        "items": items,
+        "total": len(relationships),
+    }
 
 
 def _make_candidate_set(

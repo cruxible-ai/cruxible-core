@@ -255,6 +255,31 @@ class TestWorkflowSchema:
         assert step.make_candidates is not None
         assert step.make_candidates.relationship_type == "recommended_for"
 
+    def test_list_entities_step_accepts_property_filter_refs(self):
+        step = WorkflowStepSchema(
+            id="products",
+            list_entities={
+                "entity_type": "Product",
+                "property_filter": {"category": "$input.category"},
+                "limit": 5,
+            },
+            **{"as": "products"},
+        )
+        assert step.list_entities is not None
+        assert step.list_entities.entity_type == "Product"
+
+    def test_list_relationships_step_accepts_property_filter_refs(self):
+        step = WorkflowStepSchema(
+            id="links",
+            list_relationships={
+                "relationship_type": "recommended_for",
+                "property_filter": {"review_status": "$input.status"},
+            },
+            **{"as": "links"},
+        )
+        assert step.list_relationships is not None
+        assert step.list_relationships.relationship_type == "recommended_for"
+
     def test_map_signals_requires_exactly_one_mapping_mode(self):
         with pytest.raises(ValidationError, match="exactly one of 'score' or 'enum'"):
             WorkflowStepSchema(

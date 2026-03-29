@@ -744,6 +744,26 @@ class ApplyRelationshipsSpec(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class ListEntitiesSpec(BaseModel):
+    """List entities from the current graph state inside a workflow."""
+
+    entity_type: str
+    property_filter: dict[str, Any] = Field(default_factory=dict)
+    limit: Any | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class ListRelationshipsSpec(BaseModel):
+    """List relationships from the current graph state inside a workflow."""
+
+    relationship_type: str
+    property_filter: dict[str, Any] = Field(default_factory=dict)
+    limit: Any | None = None
+
+    model_config = {"extra": "forbid"}
+
+
 class WorkflowStepSchema(BaseModel):
     """Single step in a declarative workflow."""
 
@@ -751,6 +771,8 @@ class WorkflowStepSchema(BaseModel):
     query: str | None = None
     provider: str | None = None
     assert_spec: AssertSpec | None = Field(alias="assert", default=None)
+    list_entities: ListEntitiesSpec | None = None
+    list_relationships: ListRelationshipsSpec | None = None
     make_candidates: MakeCandidatesSpec | None = None
     map_signals: MapSignalsSpec | None = None
     propose_relationship_group: ProposeRelationshipGroupSpec | None = None
@@ -772,6 +794,8 @@ class WorkflowStepSchema(BaseModel):
                 self.query,
                 self.provider,
                 self.assert_spec,
+                self.list_entities,
+                self.list_relationships,
                 self.make_candidates,
                 self.map_signals,
                 self.propose_relationship_group,
@@ -784,7 +808,8 @@ class WorkflowStepSchema(BaseModel):
         if kinds != 1:
             msg = (
                 "Workflow step must define exactly one of 'query', 'provider', 'assert', "
-                "'make_candidates', 'map_signals', 'propose_relationship_group', "
+                "'list_entities', 'list_relationships', 'make_candidates', "
+                "'map_signals', 'propose_relationship_group', "
                 "'make_entities', 'make_relationships', 'apply_entities', "
                 "or 'apply_relationships'"
             )
@@ -805,6 +830,30 @@ class WorkflowStepSchema(BaseModel):
                 raise ValueError(msg)
             if self.params:
                 msg = "Provider workflow steps may not define 'params'"
+                raise ValueError(msg)
+            return self
+
+        if self.list_entities is not None:
+            if self.as_ is None:
+                msg = "list_entities workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "list_entities workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "list_entities workflow steps may not define 'input'"
+                raise ValueError(msg)
+            return self
+
+        if self.list_relationships is not None:
+            if self.as_ is None:
+                msg = "list_relationships workflow steps require 'as'"
+                raise ValueError(msg)
+            if self.params:
+                msg = "list_relationships workflow steps may not define 'params'"
+                raise ValueError(msg)
+            if self.input:
+                msg = "list_relationships workflow steps may not define 'input'"
                 raise ValueError(msg)
             return self
 

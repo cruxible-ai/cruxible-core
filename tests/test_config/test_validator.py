@@ -518,6 +518,57 @@ class TestValidateWorkflowExecution:
             for error in exc_info.value.errors
         )
 
+    def test_list_entities_rejects_unknown_entity_type(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="entities",
+                            list_entities={
+                                "entity_type": "Missing",
+                                "property_filter": {"name": "$input.id"},
+                            },
+                            **{"as": "entities"},
+                        )
+                    ],
+                    returns="entities",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "list_entities entity_type 'Missing'" in error for error in exc_info.value.errors
+        )
+
+    def test_list_relationships_rejects_unknown_relationship(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="edges",
+                            list_relationships={
+                                "relationship_type": "missing",
+                                "property_filter": {"review_status": "$input.id"},
+                            },
+                            **{"as": "edges"},
+                        )
+                    ],
+                    returns="edges",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "list_relationships relationship_type 'missing'" in error
+            for error in exc_info.value.errors
+        )
+
     def test_map_signals_rejects_unknown_integration(self):
         config = self._workflow_config(
             workflows={

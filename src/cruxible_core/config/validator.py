@@ -675,6 +675,55 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     produced_aliases.add(step.as_)
                 continue
 
+            if step.list_entities is not None:
+                if step.list_entities.entity_type not in entity_names:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': list_entities entity_type "
+                        f"'{step.list_entities.entity_type}' not found in entity_types"
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.list_entities.property_filter,
+                        step.list_entities.limit,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.list_relationships is not None:
+                if step.list_relationships.relationship_type not in relationship_names:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': list_relationships "
+                        f"relationship_type '{step.list_relationships.relationship_type}' "
+                        "not found in relationships"
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.list_relationships.property_filter,
+                        step.list_relationships.limit,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
             if step.make_candidates is not None:
                 if step.make_candidates.relationship_type not in relationship_names:
                     errors.append(
