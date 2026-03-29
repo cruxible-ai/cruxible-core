@@ -254,6 +254,30 @@ def compile_workflow(
             )
             continue
 
+        if step.list_entities is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="list_entities",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    list_entities_spec=step.list_entities,
+                )
+            )
+            continue
+
+        if step.list_relationships is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="list_relationships",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    list_relationships_spec=step.list_relationships,
+                )
+            )
+            continue
+
         if step.make_candidates is not None:
             compiled_steps.append(
                 CompiledPlanStep(

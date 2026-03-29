@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.schema import PropertySchema, WorkflowStepSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
@@ -110,6 +111,45 @@ class TestWorkflowCompiler:
         assert plan.steps[0].params_preview["sku"] == "SKU-123"
         assert plan.steps[1].provider_version == "1.2.0"
         assert plan.steps[1].artifact_sha256 == "abc123"
+
+    def test_compile_workflow_includes_list_entities_step(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.contracts["PromoInput"].fields["category"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        config.workflows["evaluate_promo"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="products",
+                list_entities={
+                    "entity_type": "Product",
+                    "property_filter": {"category": "$input.category"},
+                    "limit": 5,
+                },
+                **{"as": "products"},
+            ),
+        )
+        workflow_instance.save_config(config)
+        _write_lock_for_instance(workflow_instance)
+
+        plan = compile_workflow(
+            workflow_instance.load_config(),
+            build_lock(workflow_instance.load_config()),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "category": "soda",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert plan.steps[1].kind == "list_entities"
+        assert plan.steps[1].list_entities_spec is not None
+        assert plan.steps[1].list_entities_spec.entity_type == "Product"
 
     def test_compile_workflow_rejects_bad_input_contract(
         self, workflow_instance: CruxibleInstance
@@ -290,6 +330,91 @@ class TestWorkflowExecutor:
         rendered = to_markdown(result.receipt)
         assert "**Workflow:** evaluate_promo" in rendered
         assert "## Plan Steps" in rendered
+
+    def test_execute_workflow_list_entities_step_returns_items(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.contracts["PromoInput"].fields["category"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        config.workflows["evaluate_promo"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="products",
+                list_entities={
+                    "entity_type": "Product",
+                    "property_filter": {"category": "$input.category"},
+                    "limit": 5,
+                },
+                **{"as": "products"},
+            ),
+        )
+        workflow_instance.save_config(config)
+        _write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "category": "soda",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert result.step_outputs["products"]["total"] == 1
+        assert len(result.step_outputs["products"]["items"]) == 1
+        products_step = next(
+            node
+            for node in result.receipt.nodes
+            if node.node_type == "plan_step" and node.detail.get("step_id") == "products"
+        )
+        assert products_step.detail["entity_type"] == "Product"
+        assert products_step.detail["item_count"] == 1
+
+    def test_execute_workflow_list_relationships_step_returns_items(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.contracts["CampaignInput"].fields["status"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        config.workflows["propose_campaign_recommendations"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="existing_links",
+                list_relationships={
+                    "relationship_type": "recommended_for",
+                    "property_filter": {"review_status": "$input.status"},
+                    "limit": 10,
+                },
+                **{"as": "existing_links"},
+            ),
+        )
+        proposal_workflow_instance.save_config(config)
+        _write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1", "status": "human_approved"},
+        )
+
+        assert result.step_outputs["existing_links"]["total"] == 0
+        assert result.step_outputs["existing_links"]["items"] == []
+        links_step = next(
+            node
+            for node in result.receipt.nodes
+            if node.node_type == "plan_step" and node.detail.get("step_id") == "existing_links"
+        )
+        assert links_step.detail["relationship_type"] == "recommended_for"
+        assert links_step.detail["item_count"] == 0
 
     def test_execute_workflow_rejects_provider_output_contract(
         self, workflow_instance: CruxibleInstance

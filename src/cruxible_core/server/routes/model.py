@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from cruxible_core.mcp import contracts
+from cruxible_client import contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     ModelForkRequest,

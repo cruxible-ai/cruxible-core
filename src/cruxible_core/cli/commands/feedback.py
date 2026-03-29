@@ -9,6 +9,7 @@ from typing import cast
 import click
 import yaml
 
+from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _get_client,
@@ -17,7 +18,6 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
-from cruxible_core.mcp import contracts
 from cruxible_core.service import (
     service_feedback,
     service_feedback_batch,

@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.11"
 
+[manifest]
+members = [
+    "cruxible-client",
+    "cruxible-core",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -247,11 +253,27 @@ toml = [
 ]
 
 [[package]]
+name = "cruxible-client"
+version = "0.2.0"
+source = { editable = "packages/cruxible-client" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.24" },
+    { name = "pydantic", specifier = ">=2.0" },
+]
+
+[[package]]
 name = "cruxible-core"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "cruxible-client" },
     { name = "httpx" },
     { name = "networkx" },
     { name = "polars" },
@@ -288,6 +310,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
+    { name = "cruxible-client", editable = "packages/cruxible-client" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.100" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100" },
     { name = "httpx", specifier = ">=0.24" },

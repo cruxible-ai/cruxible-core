@@ -74,6 +74,61 @@ relationships:
         with pytest.raises(ConfigError, match="Provide exactly one"):
             service_validate()
 
+    def test_extends_composes_and_validates(self, tmp_path: Path) -> None:
+        """Overlay config with extends is composed in memory before validation."""
+        base = tmp_path / "base.yaml"
+        base.write_text(
+            'version: "1.0"\n'
+            "name: base\n"
+            "entity_types:\n"
+            "  Case:\n"
+            "    properties:\n"
+            "      case_id: {type: string, primary_key: true}\n"
+            "relationships:\n"
+            "  - name: cites\n"
+            "    from: Case\n"
+            "    to: Case\n"
+        )
+        overlay = tmp_path / "overlay.yaml"
+        overlay.write_text(
+            'version: "1.0"\n'
+            "name: fork\n"
+            "extends: base.yaml\n"
+            "entity_types: {}\n"
+            "relationships:\n"
+            "  - name: follows\n"
+            "    from: Case\n"
+            "    to: Case\n"
+        )
+        result = service_validate(config_path=str(overlay))
+        assert result.config is not None
+        assert "Case" in result.config.entity_types
+        assert result.config.get_relationship("cites") is not None
+        assert result.config.get_relationship("follows") is not None
+
+    def test_extends_base_not_found(self, tmp_path: Path) -> None:
+        overlay = tmp_path / "overlay.yaml"
+        overlay.write_text(
+            'version: "1.0"\n'
+            "name: fork\n"
+            "extends: nonexistent.yaml\n"
+            "entity_types: {}\n"
+            "relationships: []\n"
+        )
+        with pytest.raises(ConfigError, match="Base config for extends not found"):
+            service_validate(config_path=str(overlay))
+
+    def test_extends_inline_relative_errors(self) -> None:
+        yaml_str = (
+            'version: "1.0"\n'
+            "name: fork\n"
+            "extends: base.yaml\n"
+            "entity_types: {}\n"
+            "relationships: []\n"
+        )
+        with pytest.raises(ConfigError, match="relative extends path"):
+            service_validate(config_yaml=yaml_str)
+
     def test_returns_warnings(self, tmp_path: Path) -> None:
         """Config with unverifiable constraint rule produces a warning."""
         yaml_with_constraint = """\

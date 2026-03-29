@@ -1,0 +1,367 @@
+"""Integration tests for the KEV demo providers and workflows."""
+
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+
+from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.composer import compose_config_files
+from cruxible_core.config.loader import save_config
+from cruxible_core.demo_providers.kev_triage import (
+    assess_asset_affected,
+    assess_asset_exposure,
+    assess_service_impact,
+    load_fork_seed_data,
+    load_reference_product_catalog,
+    match_software_to_products,
+)
+from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
+from cruxible_core.service import (
+    service_apply_workflow,
+    service_lock,
+    service_propose_workflow,
+    service_query,
+    service_resolve_group,
+    service_run,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+KEV_DEMO_DIR = REPO_ROOT / "demos" / "kev-triage"
+
+
+def _provider_context(artifact_path: Path | None) -> ProviderContext:
+    artifact = None
+    if artifact_path is not None:
+        artifact = ResolvedArtifact(
+            name="bundle",
+            kind="directory",
+            uri=str(artifact_path),
+            local_path=str(artifact_path),
+            sha256="sha256:test",
+        )
+    return ProviderContext(
+        workflow_name="test",
+        step_id="provider",
+        provider_name="provider",
+        provider_version="1.0.0",
+        artifact=artifact,
+    )
+
+
+def _csv_row_count(path: Path) -> int:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return sum(1 for _ in csv.DictReader(handle))
+
+
+def _composed_kev_config_path(tmp_path: Path) -> Path:
+    composed = compose_config_files(
+        base_path=KEV_DEMO_DIR / "kev-reference.yaml",
+        overlay_path=KEV_DEMO_DIR / "config.yaml",
+    )
+    config_path = tmp_path / "config.yaml"
+    save_config(composed, config_path)
+    return config_path
+
+
+def _apply_canonical_workflow(instance: CruxibleInstance, workflow_name: str) -> None:
+    preview = service_run(instance, workflow_name, {})
+    assert preview.mode == "preview"
+    assert preview.apply_digest is not None
+
+    applied = service_apply_workflow(
+        instance,
+        workflow_name,
+        {},
+        expected_apply_digest=preview.apply_digest or "",
+        expected_head_snapshot_id=preview.head_snapshot_id,
+    )
+    assert applied.committed_snapshot_id is not None
+
+
+def _approve_workflow_group(instance: CruxibleInstance, workflow_name: str) -> None:
+    proposed = service_propose_workflow(instance, workflow_name, {})
+    assert proposed.group_id is not None
+    resolved = service_resolve_group(instance, proposed.group_id, "approve")
+    assert resolved.edges_created > 0
+
+
+def test_load_fork_seed_data_reads_expected_rows() -> None:
+    payload = load_fork_seed_data({}, _provider_context(KEV_DEMO_DIR / "data" / "seed"))
+    assert set(payload) == {
+        "assets",
+        "business_services",
+        "owners",
+        "compensating_controls",
+        "exceptions",
+        "patch_windows",
+        "service_depends_on_asset",
+        "asset_owned_by",
+        "asset_has_control",
+        "asset_has_exception",
+        "asset_patch_window",
+    }
+    assert payload["assets"][0]["internet_exposed"] is True
+
+
+def test_load_reference_product_catalog_returns_unique_products() -> None:
+    payload = load_reference_product_catalog({}, _provider_context(KEV_DEMO_DIR / "data"))
+    product_ids = [item["product_id"] for item in payload["items"]]
+    assert payload["items"]
+    assert len(product_ids) == len(set(product_ids))
+    assert all(item["product_name"] for item in payload["items"])
+
+
+def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
+    payload = match_software_to_products(
+        {
+            "inventory_items": [
+                {
+                    "asset_id": "ASSET-1",
+                    "software_name": "Apache HTTP Server",
+                    "vendor": "Apache",
+                    "version": "2.4.49",
+                    "evidence_source": "scanner-a",
+                    "last_seen": "2026-03-20",
+                },
+                {
+                    "asset_id": "ASSET-1",
+                    "software_name": "Apache HTTP Server",
+                    "vendor": "Apache",
+                    "version": "2.4.49",
+                    "evidence_source": "scanner-b",
+                    "last_seen": "2026-03-21",
+                },
+            ],
+            "reference_products": [
+                {
+                    "product_id": "apache__http_server",
+                    "product_name": "Http Server",
+                    "vendor_id": "apache",
+                    "vendor_name": "Apache",
+                    "cpe_vendor": "apache",
+                    "cpe_product": "http_server",
+                    "cpe_part": "a",
+                },
+                {
+                    "product_id": "nginx__nginx",
+                    "product_name": "Nginx",
+                    "vendor_id": "nginx",
+                    "vendor_name": "Nginx",
+                    "cpe_vendor": "nginx",
+                    "cpe_product": "nginx",
+                    "cpe_part": "a",
+                },
+            ],
+        },
+        _provider_context(None),
+    )
+
+    assert payload["items"] == [
+        {
+            "asset_id": "ASSET-1",
+            "product_id": "apache__http_server",
+            "installed_version": "2.4.49",
+            "evidence_source": "scanner-b",
+            "match_confidence": payload["items"][0]["match_confidence"],
+            "verdict": "support",
+        },
+    ]
+
+
+def test_assess_asset_affected_uses_version_ranges() -> None:
+    payload = assess_asset_affected(
+        {
+            "asset_product_edges": [
+                {
+                    "from_id": "ASSET-1",
+                    "to_id": "apache__http_server",
+                    "properties": {
+                        "installed_version": "2.4.49",
+                        "evidence_source": "qualys",
+                    },
+                },
+                {
+                    "from_id": "ASSET-2",
+                    "to_id": "apache__http_server",
+                    "properties": {
+                        "installed_version": "2.4.58",
+                        "evidence_source": "qualys",
+                    },
+                },
+            ],
+            "vulnerability_product_edges": [
+                {
+                    "from_id": "CVE-2021-41773",
+                    "to_id": "apache__http_server",
+                    "properties": {
+                        "affected_versions": [
+                            {"version_start_including": "2.4.0", "version_end_excluding": "2.4.50"}
+                        ],
+                        "fixed_version": "2.4.50",
+                    },
+                }
+            ],
+        },
+        _provider_context(None),
+    )
+
+    assert payload["items"] == [
+        {
+            "asset_id": "ASSET-1",
+            "cve_id": "CVE-2021-41773",
+            "product_id": "apache__http_server",
+            "installed_version": "2.4.49",
+            "source": "qualys",
+            "rationale": payload["items"][0]["rationale"],
+            "verdict": "support",
+        }
+    ]
+
+
+def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
+    payload = assess_asset_exposure(
+        {
+            "affected_edges": [
+                {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
+                {"from_id": "ASSET-2", "to_id": "CVE-2021-0001", "properties": {}},
+            ],
+            "assets": [
+                {
+                    "entity_id": "ASSET-1",
+                    "properties": {
+                        "hostname": "prod-web-01",
+                        "criticality": "critical",
+                        "environment": "production",
+                        "internet_exposed": True,
+                    },
+                },
+                {
+                    "entity_id": "ASSET-2",
+                    "properties": {
+                        "hostname": "dev-app-01",
+                        "criticality": "low",
+                        "environment": "development",
+                        "internet_exposed": False,
+                    },
+                },
+            ],
+            "asset_control_edges": [{"from_id": "ASSET-1", "to_id": "CTRL-1", "properties": {}}],
+            "controls": [
+                {
+                    "entity_id": "CTRL-1",
+                    "properties": {"name": "WAF", "status": "active"},
+                }
+            ],
+        },
+        _provider_context(None),
+    )
+
+    assert payload["items"] == [
+        {
+            "asset_id": "ASSET-1",
+            "cve_id": "CVE-2021-0001",
+            "priority": "high",
+            "due_by": "72h",
+            "rationale": payload["items"][0]["rationale"],
+            "exploitability_verdict": "support",
+            "control_verdict": "unsure",
+        }
+    ]
+
+
+def test_assess_service_impact_aggregates_exposed_assets() -> None:
+    payload = assess_service_impact(
+        {
+            "exposure_edges": [
+                {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
+                {"from_id": "ASSET-2", "to_id": "CVE-2021-0001", "properties": {}},
+            ],
+            "service_asset_edges": [
+                {"from_id": "SVC-1", "to_id": "ASSET-1", "properties": {}},
+                {"from_id": "SVC-1", "to_id": "ASSET-2", "properties": {}},
+            ],
+            "services": [
+                {
+                    "entity_id": "SVC-1",
+                    "properties": {"name": "Billing", "tier": "tier-1"},
+                }
+            ],
+        },
+        _provider_context(None),
+    )
+
+    assert payload["items"] == [
+        {
+            "service_id": "SVC-1",
+            "cve_id": "CVE-2021-0001",
+            "blast_radius": "critical",
+            "rationale": "Service depends on 2 exposed asset(s): ASSET-1, ASSET-2",
+            "verdict": "support",
+        }
+    ]
+
+
+def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path, str(config_path))
+
+    lock_result = service_lock(instance)
+    assert lock_result.providers_locked >= 7
+
+    _apply_canonical_workflow(instance, "build_public_kev_reference")
+    _apply_canonical_workflow(instance, "build_fork_state")
+
+    _approve_workflow_group(instance, "propose_asset_products")
+    _approve_workflow_group(instance, "propose_asset_affected")
+    _approve_workflow_group(instance, "propose_asset_exposure")
+    _approve_workflow_group(instance, "propose_service_impact")
+
+    graph = instance.load_graph()
+    assert graph.entity_count("Asset") == _csv_row_count(
+        KEV_DEMO_DIR / "data" / "seed" / "assets.csv"
+    )
+    assert graph.edge_count("asset_owned_by") == _csv_row_count(
+        KEV_DEMO_DIR / "data" / "seed" / "asset_owned_by.csv"
+    )
+    assert graph.edge_count("asset_runs_product") > 0
+    assert graph.edge_count("asset_affected_by_vulnerability") > 0
+    assert graph.edge_count("asset_exposed_to_vulnerability") > 0
+    assert graph.edge_count("service_impacted_by_vulnerability") > 0
+
+    affected_edge = graph.list_edges("asset_affected_by_vulnerability")[0]
+    exposure_edge = graph.list_edges("asset_exposed_to_vulnerability")[0]
+    service_edge = graph.list_edges("service_impacted_by_vulnerability")[0]
+
+    affected_asset_id = affected_edge["from_id"]
+    affected_cve_id = affected_edge["to_id"]
+    owner_edge = next(
+        edge
+        for edge in graph.list_edges("asset_owned_by")
+        if edge["from_id"] == exposure_edge["from_id"]
+    )
+    owner_id = owner_edge["to_id"]
+    product_edge = next(
+        edge
+        for edge in graph.list_edges("asset_runs_product")
+        if edge["from_id"] == affected_asset_id
+    )
+    product_id = product_edge["to_id"]
+
+    kev_assets = service_query(instance, "kev_assets", {"cve_id": affected_cve_id})
+    owner_patch_queue = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+    service_blast_radius = service_query(
+        instance,
+        "service_blast_radius",
+        {"cve_id": service_edge["to_id"]},
+    )
+    product_kev_exposure = service_query(
+        instance,
+        "product_kev_exposure",
+        {"product_id": product_id},
+    )
+
+    assert kev_assets.total_results > 0
+    assert owner_patch_queue.total_results > 0
+    assert service_blast_radius.total_results > 0
+    assert product_kev_exposure.total_results > 0

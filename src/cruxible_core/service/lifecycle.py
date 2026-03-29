@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.config.composer import write_composed_config
+from cruxible_core.config.composer import compose_configs, write_composed_config
 from cruxible_core.config.loader import load_config, load_config_from_string
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -17,7 +17,14 @@ def service_validate(
     config_path: str | None = None,
     config_yaml: str | None = None,
 ) -> ValidateServiceResult:
-    """Validate a config file or inline YAML string."""
+    """Validate a config file or inline YAML string.
+
+    If the config uses ``extends``, the base config is resolved and
+    composed in memory before validation.  For file-based configs the
+    base path is resolved relative to the config file's directory.  For
+    inline ``config_yaml``, ``extends`` must be an absolute path or a
+    ``ConfigError`` is raised.
+    """
     sources = sum(value is not None for value in (config_path, config_yaml))
     if sources == 0:
         raise ConfigError("Provide exactly one of config_path or config_yaml")
@@ -26,9 +33,30 @@ def service_validate(
 
     if config_yaml is not None:
         config = load_config_from_string(config_yaml)
+        config_dir: Path | None = None
     else:
         assert config_path is not None
         config = load_config(config_path)
+        config_dir = Path(config_path).resolve().parent
+
+    if config.extends is not None:
+        base_path = Path(config.extends)
+        if not base_path.is_absolute():
+            if config_dir is None:
+                raise ConfigError(
+                    "Inline config_yaml with a relative extends path cannot be "
+                    "composed — use an absolute path or validate from a file"
+                )
+            base_path = config_dir / base_path
+        if not base_path.exists():
+            raise ConfigError(f"Base config for extends not found: {base_path}")
+        base = load_config(base_path)
+        config = compose_configs(
+            base,
+            config,
+            base_config_path=base_path,
+            overlay_config_path=Path(config_path).resolve() if config_path is not None else None,
+        )
 
     warnings = validate_config(config)
     return ValidateServiceResult(config=config, warnings=warnings)

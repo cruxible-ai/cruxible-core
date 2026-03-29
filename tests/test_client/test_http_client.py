@@ -9,8 +9,8 @@ from typing import Any
 import httpx
 import pytest
 
-from cruxible_core.client.http_client import CruxibleClient
-from cruxible_core.errors import ConstraintViolationError, DataValidationError
+from cruxible_client import CruxibleClient
+from cruxible_client.errors import ConstraintViolationError, DataValidationError
 
 
 def _build_client(handler):

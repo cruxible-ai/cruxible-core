@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TypeVar
 
+from cruxible_client import contracts
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import ConstraintSchema, DecisionPolicySchema
 from cruxible_core.config.validator import validate_config
@@ -12,12 +13,12 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.mcp import contracts
 from cruxible_core.mcp.permissions import (
     PermissionMode,
     check_permission,
     validate_root_dir,
 )
+from cruxible_core.predicate import CONSTRAINT_RULE_SYNTAX
 from cruxible_core.query.candidates import MatchRule
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -1191,7 +1192,7 @@ def _handle_add_constraint_local(
     if parsed is None:
         raise ConfigError(
             f"Rule syntax not supported: {rule!r}. "
-            "Expected: RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property"
+            f"Expected: {CONSTRAINT_RULE_SYNTAX}"
         )
 
     constraint = ConstraintSchema(

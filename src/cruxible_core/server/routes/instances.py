@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
-from cruxible_core.mcp import contracts
+from cruxible_client import contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import get_registry

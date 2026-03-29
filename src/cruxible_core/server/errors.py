@@ -1,11 +1,10 @@
-"""Serialize CoreError instances across the HTTP boundary."""
+"""Serialize server-side CoreError instances across the HTTP boundary."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
-
+from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.errors import (
     ConfigError,
     ConstraintViolationError,
@@ -27,15 +26,7 @@ from cruxible_core.errors import (
     RelationshipNotFoundError,
 )
 
-
-class ErrorResponse(BaseModel):
-    """Structured error payload returned by the HTTP server."""
-
-    error_type: str
-    message: str
-    errors: list[str] = Field(default_factory=list)
-    context: dict[str, Any] = Field(default_factory=dict)
-    mutation_receipt_id: str | None = None
+__all__ = ["ErrorResponse", "error_to_response", "response_to_error"]
 
 
 def _message_for_error(exc: CoreError) -> str:
@@ -117,61 +108,3 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         mutation_receipt_id=exc.mutation_receipt_id,
     )
     return _status_for_error(exc), body
-
-
-def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
-    """Reconstruct a CoreError from an HTTP error response."""
-    context = body.context
-
-    if body.error_type == "ConfigError":
-        exc = ConfigError(body.message, errors=body.errors)
-    elif body.error_type == "DataValidationError":
-        exc = DataValidationError(body.message, errors=body.errors)
-    elif body.error_type == "ConstraintViolationError":
-        exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
-    elif body.error_type == "OwnershipError":
-        exc = OwnershipError(body.message, blocked_types=context.get("blocked_types", []))
-    elif body.error_type == "PermissionDeniedError":
-        exc = PermissionDeniedError(
-            context.get("tool_name", "unknown"),
-            context.get("current_mode", "unknown"),
-            context.get("required_mode", "unknown"),
-        )
-    elif body.error_type == "EntityTypeNotFoundError":
-        exc = EntityTypeNotFoundError(context.get("entity_type", body.message))
-    elif body.error_type == "RelationshipNotFoundError":
-        exc = RelationshipNotFoundError(context.get("relationship_name", body.message))
-    elif body.error_type == "QueryNotFoundError":
-        exc = QueryNotFoundError(context.get("query_name", body.message))
-    elif body.error_type == "EntityNotFoundError":
-        exc = EntityNotFoundError(
-            context.get("entity_type", "unknown"),
-            context.get("entity_id", "unknown"),
-        )
-    elif body.error_type == "EdgeAmbiguityError":
-        exc = EdgeAmbiguityError(
-            from_type=context.get("from_type", "unknown"),
-            from_id=context.get("from_id", "unknown"),
-            to_type=context.get("to_type", "unknown"),
-            to_id=context.get("to_id", "unknown"),
-            relationship=context.get("relationship", "unknown"),
-        )
-    elif body.error_type == "ReceiptNotFoundError":
-        exc = ReceiptNotFoundError(context.get("receipt_id", "unknown"))
-    elif body.error_type == "OutcomeNotFoundError":
-        exc = OutcomeNotFoundError(context.get("receipt_id", "unknown"))
-    elif body.error_type == "InstanceNotFoundError":
-        exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
-    elif body.error_type == "GroupNotFoundError":
-        exc = GroupNotFoundError(context.get("group_id", "unknown"))
-    elif body.error_type == "QueryExecutionError":
-        exc = QueryExecutionError(body.message)
-    elif body.error_type == "IngestionError":
-        exc = IngestionError(body.message)
-    elif body.error_type == "MutationError":
-        exc = MutationError(body.message)
-    else:
-        exc = CoreError(body.message)
-
-    exc.mutation_receipt_id = body.mutation_receipt_id
-    return exc

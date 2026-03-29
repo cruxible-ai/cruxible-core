@@ -15,6 +15,7 @@ from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import REJECTED_STATUSES, make_node_id, split_node_id
+from cruxible_core.predicate import evaluate_comparison
 
 FindingCategory = Literal[
     "orphan_entity",
@@ -166,7 +167,9 @@ def _check_constraint_violations(
             # Skip unparseable rules (matches validator.py pattern)
             continue
 
-        rel_name, from_prop, to_prop = parsed
+        rel_name = parsed.relationship
+        from_prop = parsed.from_property
+        to_prop = parsed.to_property
 
         for from_type, from_id, to_type, to_id, _props in graph.iter_edge_data(rel_name):
             from_entity = graph.get_entity(from_type, from_id)
@@ -178,7 +181,11 @@ def _check_constraint_violations(
             from_val = from_props.get(from_prop)
             to_val = to_props.get(to_prop)
 
-            if from_val is not None and to_val is not None and from_val != to_val:
+            if (
+                from_val is not None
+                and to_val is not None
+                and not evaluate_comparison(from_val, parsed.operator, to_val)
+            ):
                 constraint_summary[constraint.name] = (
                     constraint_summary.get(constraint.name, 0) + 1
                 )
@@ -188,12 +195,13 @@ def _check_constraint_violations(
                         severity=constraint.severity,
                         message=(
                             f"Constraint '{constraint.name}' violated: "
-                            f"{from_type}:{from_id}.{from_prop} ({from_val!r}) "
-                            f"!= {to_type}:{to_id}.{to_prop} ({to_val!r})"
+                            f"expected {from_type}:{from_id}.{from_prop} ({from_val!r}) "
+                            f"{parsed.operator} {to_type}:{to_id}.{to_prop} ({to_val!r})"
                         ),
                         detail={
                             "constraint": constraint.name,
                             "rule": constraint.rule,
+                            "operator": parsed.operator,
                             "from_entity": f"{from_type}:{from_id}",
                             "to_entity": f"{to_type}:{to_id}",
                             "from_value": from_val,

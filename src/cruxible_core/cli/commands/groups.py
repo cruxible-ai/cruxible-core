@@ -8,6 +8,7 @@ from typing import cast
 
 import click
 
+from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _groups_from_payload,
@@ -17,7 +18,6 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.formatting import group_detail_table, groups_table, resolutions_table
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
-from cruxible_core.mcp import contracts
 from cruxible_core.service import (
     service_get_group,
     service_list_groups,

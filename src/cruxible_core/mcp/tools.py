@@ -11,8 +11,9 @@ from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 
+from cruxible_client import contracts
 from cruxible_core import __version__
-from cruxible_core.mcp import contracts, handlers
+from cruxible_core.mcp import handlers
 
 
 def register_tools(server: FastMCP) -> list[str]:
@@ -515,7 +516,8 @@ def register_tools(server: FastMCP) -> list[str]:
         """Add a constraint rule to the config. Writes the updated config to YAML.
 
         Constraints are evaluated by cruxible_evaluate to flag edges that violate them.
-        Rule format: RELATIONSHIP.FROM.property == RELATIONSHIP.TO.property
+        Rule format: RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property
+        Supported operators: ==, !=, >, >=, <, <=
         Identifiers may contain letters, digits, underscores, and hyphens.
 
         Example: classified_as.FROM.Category == classified_as.TO.CategoryName

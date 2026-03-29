@@ -484,6 +484,30 @@ class TestEvaluateConstraint:
             {},
         )
 
+    def test_ordered_numeric_literal(self):
+        entity = EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-1",
+            properties={"year": 2024},
+        )
+        assert _evaluate_constraint(
+            "target.year >= 2024",
+            entity,
+            {},
+        )
+
+    def test_ordered_param_comparison(self):
+        entity = EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-1",
+            properties={"year": 2024},
+        )
+        assert _evaluate_constraint(
+            "target.year > $min_year",
+            entity,
+            {"min_year": 2023},
+        )
+
     def test_missing_property_returns_false(self):
         entity = EntityInstance(
             entity_type="Vehicle",

@@ -4,6 +4,14 @@ Cruxible Core exposes 19 tools through the [Model Context Protocol](https://mode
 
 ## Setup
 
+Install the MCP runtime with:
+
+```bash
+pip install "cruxible-core[mcp]"
+```
+
+If you are writing a separate HTTP client that talks to an already-running daemon, install `cruxible-client` in that agent environment instead of `cruxible-core`.
+
 Add to your MCP client config (Claude Code / Cursor use `.mcp.json`; see [README](../README.md#mcp-setup) for Codex):
 
 ```json
@@ -30,6 +38,8 @@ Each tool requires a minimum permission tier. Set via the `CRUXIBLE_MODE` enviro
 | `ADMIN` | `admin` | All tools including ingest and config mutation |
 
 Default is `ADMIN` if unset.
+
+These tiers are enforced at the daemon boundary. They are meaningful when an agent talks to a running Cruxible daemon through MCP/HTTP, not when it can import `cruxible-core` runtime modules directly in the same environment.
 
 ---
 

@@ -15,6 +15,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.predicate import evaluate_comparison
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
 from cruxible_core.query.engine import execute_query
@@ -111,6 +112,54 @@ def execute_workflow(
                 workflow_name=workflow_name,
                 persist_traces=persist_traces,
                 config_base_path=instance.get_config_path().parent,
+            )
+            continue
+
+        if compiled_step.kind == "list_entities":
+            assert compiled_step.list_entities_spec is not None
+            entity_list = _list_entities(
+                graph,
+                compiled_step.step_id,
+                compiled_step.list_entities_spec,
+                plan.input_payload,
+                step_outputs,
+            )
+            step_outputs[compiled_step.as_name or compiled_step.step_id] = entity_list
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+            receipt_builder.record_plan_step(
+                compiled_step.step_id,
+                "list_entities",
+                detail={
+                    "entity_type": compiled_step.list_entities_spec.entity_type,
+                    "item_count": len(entity_list["items"]),
+                    "total": entity_list["total"],
+                },
+            )
+            continue
+
+        if compiled_step.kind == "list_relationships":
+            assert compiled_step.list_relationships_spec is not None
+            relationship_list = _list_relationships(
+                graph,
+                compiled_step.step_id,
+                compiled_step.list_relationships_spec,
+                plan.input_payload,
+                step_outputs,
+            )
+            step_outputs[compiled_step.as_name or compiled_step.step_id] = relationship_list
+            if compiled_step.as_name is not None:
+                alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+            receipt_builder.record_plan_step(
+                compiled_step.step_id,
+                "list_relationships",
+                detail={
+                    "relationship_type": (
+                        compiled_step.list_relationships_spec.relationship_type
+                    ),
+                    "item_count": len(relationship_list["items"]),
+                    "total": relationship_list["total"],
+                },
             )
             continue
 
@@ -428,19 +477,10 @@ def _build_trace(
 
 
 def _evaluate_assert(left: Any, op: str, right: Any) -> bool:
-    if op == "eq":
-        return left == right
-    if op == "ne":
-        return left != right
-    if op == "gt":
-        return left > right
-    if op == "gte":
-        return left >= right
-    if op == "lt":
-        return left < right
-    if op == "lte":
-        return left <= right
-    raise ConfigError(f"Unsupported assert op '{op}'")
+    try:
+        return evaluate_comparison(left, op, right)
+    except ValueError as exc:
+        raise ConfigError(f"Unsupported assert op '{op}'") from exc
 
 
 def _resolve_step_items(
@@ -452,6 +492,88 @@ def _resolve_step_items(
     if not isinstance(items, list):
         raise QueryExecutionError("Built-in workflow step 'items' must resolve to a list")
     return items
+
+
+def _resolve_limit(
+    limit_template: Any,
+    step_id: str,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> int | None:
+    if limit_template is None:
+        return None
+    limit_value = resolve_value(limit_template, input_payload, step_outputs)
+    if not isinstance(limit_value, int) or limit_value < 1:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' limit must resolve to an integer >= 1"
+        )
+    return limit_value
+
+
+def _resolve_property_filter(
+    property_filter_template: dict[str, Any],
+    step_id: str,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    property_filter = resolve_value(property_filter_template, input_payload, step_outputs)
+    if not isinstance(property_filter, dict):
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' property_filter must resolve to a mapping"
+        )
+    return property_filter
+
+
+def _list_entities(
+    graph: EntityGraph,
+    step_id: str,
+    spec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    property_filter = _resolve_property_filter(
+        spec.property_filter,
+        step_id,
+        input_payload,
+        step_outputs,
+    )
+    limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
+    entities = graph.list_entities(spec.entity_type, property_filter=property_filter or None)
+    items = [entity.model_dump(mode="python") for entity in entities]
+    if limit is not None:
+        items = items[:limit]
+    return {
+        "items": items,
+        "total": len(entities),
+    }
+
+
+def _list_relationships(
+    graph: EntityGraph,
+    step_id: str,
+    spec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    property_filter = _resolve_property_filter(
+        spec.property_filter,
+        step_id,
+        input_payload,
+        step_outputs,
+    )
+    limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
+    relationships = graph.list_edges(relationship_type=spec.relationship_type)
+    if property_filter:
+        relationships = [
+            edge
+            for edge in relationships
+            if all(edge["properties"].get(key) == value for key, value in property_filter.items())
+        ]
+    items = relationships[:limit] if limit is not None else relationships
+    return {
+        "items": items,
+        "total": len(relationships),
+    }
 
 
 def _make_candidate_set(

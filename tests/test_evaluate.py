@@ -28,6 +28,7 @@ def _minimal_config(**overrides) -> CoreConfig:
                 properties={
                     "part_id": PropertySchema(type="string", primary_key=True),
                     "category": PropertySchema(type="string"),
+                    "priority": PropertySchema(type="int", optional=True),
                 }
             ),
             "Vehicle": EntityTypeSchema(
@@ -259,6 +260,81 @@ class TestConstraintViolations:
         report = evaluate_graph(config, graph)
         violations = [f for f in report.findings if f.category == "constraint_violation"]
         assert len(violations) == 0
+
+    def test_detects_not_equal_violation(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(
+                    name="different_category",
+                    rule="replaces.FROM.category != replaces.TO.category",
+                    severity="warning",
+                ),
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": "brake"})
+        )
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P2", properties={"category": "brake"})
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        violations = [f for f in report.findings if f.category == "constraint_violation"]
+        assert len(violations) == 1
+        assert (
+            "expected Part:P1.category ('brake') != Part:P2.category ('brake')"
+            in violations[0].message
+        )
+
+    def test_detects_ordered_constraint_violation(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(
+                    name="replacement_priority_descends",
+                    rule="replaces.FROM.priority > replaces.TO.priority",
+                    severity="error",
+                ),
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="P1",
+                properties={"category": "brake", "priority": 1},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="P2",
+                properties={"category": "brake", "priority": 5},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="P1",
+                to_entity_type="Part",
+                to_entity_id="P2",
+                properties={},
+            )
+        )
+        report = evaluate_graph(config, graph)
+        violations = [f for f in report.findings if f.category == "constraint_violation"]
+        assert len(violations) == 1
+        assert violations[0].severity == "error"
 
 
 class TestCandidateOpportunities:

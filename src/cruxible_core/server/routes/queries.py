@@ -7,8 +7,8 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
-from cruxible_core.mcp import contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import EvaluateRequest, FindCandidatesRequest, QueryRequest
 from cruxible_core.server.routes import resolve_server_instance_id

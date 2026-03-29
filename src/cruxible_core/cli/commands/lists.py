@@ -8,6 +8,7 @@ from pathlib import Path
 
 import click
 
+from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _entities_from_payload,
@@ -26,7 +27,6 @@ from cruxible_core.cli.formatting import (
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import REJECTED_STATUSES
-from cruxible_core.mcp import contracts
 from cruxible_core.service import service_list
 
 

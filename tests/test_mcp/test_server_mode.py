@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
-from cruxible_core.mcp import contracts, handlers
+from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 
 

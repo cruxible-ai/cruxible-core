@@ -11,9 +11,9 @@ Traversal model:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import re
 from collections import deque
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -25,6 +25,7 @@ from cruxible_core.errors import (
     RelationshipNotFoundError,
 )
 from cruxible_core.graph.types import REJECTED_STATUSES, EntityInstance
+from cruxible_core.predicate import COMPARISON_SYMBOL_PATTERN, evaluate_comparison
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
@@ -374,7 +375,9 @@ def _policy_should_suppress(
     return False
 
 
-_CONSTRAINT_RE = re.compile(r"^(target|source)\.(\w+)\s*(==|!=)\s*(.+)$")
+_CONSTRAINT_RE = re.compile(
+    rf"^(target|source)\.([\w-]+)\s*{COMPARISON_SYMBOL_PATTERN}\s*(.+)$"
+)
 
 
 def _evaluate_constraint(
@@ -384,11 +387,12 @@ def _evaluate_constraint(
 ) -> bool:
     """Evaluate a simple constraint expression.
 
-    Supported format: "target.<property> == $<param>" or literal.
+    Supported format: "target.<property> <op> $<param>" or literal.
 
     Examples:
         "target.vehicle_id == $vehicle_id"
         "target.category != brakes"
+        "target.year >= 2024"
     """
     match = _CONSTRAINT_RE.match(constraint.strip())
     if match is None:
@@ -407,11 +411,7 @@ def _evaluate_constraint(
     else:
         rhs_value = _parse_literal(rhs)
 
-    if operator == "==":
-        return lhs_value == rhs_value
-    if operator == "!=":
-        return lhs_value != rhs_value
-    return True
+    return evaluate_comparison(lhs_value, operator, rhs_value)
 
 
 def _parse_literal(value: str) -> Any:
