@@ -160,12 +160,16 @@ across the reference and fork layers.
 
 ## Workflows
 
-The fork defines two workflows that replace the deprecated ingestion mappings.
+The fork defines four non-canonical proposal workflows plus one canonical seed
+load workflow.
 
 | Workflow | Canonical | Steps | Purpose |
 |---|---|---|---|
 | `build_fork_state` | yes | 23 | Load deterministic entities (Assets, Owners, Services, Controls, Exceptions, PatchWindows) and relationships from seed data, apply to graph |
 | `propose_asset_products` | no | 7 | Load software inventory, load reference product catalog, fuzzy match, build candidates, map signals, propose governed `asset_runs_product` edges |
+| `propose_asset_affected` | no | 6 | Read approved `asset_runs_product` and public `vulnerability_affects_product` edges, compare installed versions to affected ranges, propose `asset_affected_by_vulnerability` edges |
+| `propose_asset_exposure` | no | 9 | Read approved affected edges plus asset/control context, derive exploitability and control signals, propose `asset_exposed_to_vulnerability` edges |
+| `propose_service_impact` | no | 6 | Read approved exposure edges plus service dependencies, roll impact up to business services, propose `service_impacted_by_vulnerability` edges |
 
 The reference layer also contributes `build_public_kev_reference` (11 steps, canonical) via composition.
 
@@ -177,6 +181,9 @@ The reference layer also contributes `build_public_kev_reference` (11 steps, can
 | `load_software_inventory` | EmptyInput | SoftwareInventory | fork_seed_bundle | Load software_inventory.csv |
 | `load_reference_product_catalog` | EmptyInput | ReferenceProductCatalog | public_kev_bundle | Load canonical products from reference data |
 | `match_software_to_products` | SoftwareMatchInput | SoftwareMatchResults | — | Fuzzy match software names to CPE product IDs |
+| `assess_asset_affected` | AssetAffectedAssessmentInput | AssetAffectedAssessmentResults | — | Join approved asset-product edges to public vulnerability-product edges and compare versions |
+| `assess_asset_exposure` | AssetExposureAssessmentInput | AssetExposureAssessmentResults | — | Derive exploitability and control-review signals for approved affected assets |
+| `assess_service_impact` | ServiceImpactAssessmentInput | ServiceImpactAssessmentResults | — | Aggregate exposed assets into service-impact candidates |
 
 The reference layer also contributes `load_public_kev_rows` via composition.
 
@@ -185,8 +192,14 @@ The reference layer also contributes `load_public_kev_rows` via composition.
 1. `build_public_kev_reference` — build the reference graph (Vendor, Product, Vulnerability)
 2. `build_fork_state` — load internal entities and deterministic edges
 3. `propose_asset_products` — fuzzy match software inventory against reference products, propose governed edges
+4. `propose_asset_affected` — assess whether approved installed products are actually within KEV-affected version ranges
+5. `propose_asset_exposure` — assess whether approved affected assets are materially exposed
+6. `propose_service_impact` — roll approved exposure up to impacted business services
 
-Step 3 produces group proposals that enter the resolution lifecycle based on `asset_runs_product`'s matching config.
+Steps 3-6 each produce group proposals that enter the resolution lifecycle based
+on the target relationship's `matching` config. Approving those groups is what
+materializes the triage graph used by `kev_assets`, `owner_patch_queue`,
+`service_blast_radius`, and `product_kev_exposure`.
 
 ## Seed Data
 

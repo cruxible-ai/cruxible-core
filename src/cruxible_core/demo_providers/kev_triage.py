@@ -214,6 +214,162 @@ def match_software_to_products(
     return {"items": items}
 
 
+def assess_asset_affected(
+    input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    """Join approved asset-product edges to vulnerability-product edges."""
+    asset_product_edges = _require_items(input_payload, "asset_product_edges")
+    vulnerability_product_edges = _require_items(input_payload, "vulnerability_product_edges")
+
+    vulnerability_edges_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for edge in vulnerability_product_edges:
+        product_id = _edge_to_id(edge)
+        if product_id:
+            vulnerability_edges_by_product[product_id].append(edge)
+
+    rows_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    for edge in asset_product_edges:
+        asset_id = _edge_from_id(edge)
+        product_id = _edge_to_id(edge)
+        properties = _edge_properties(edge)
+        if not asset_id or not product_id:
+            continue
+
+        installed_version = _first_non_empty(properties.get("installed_version")) or ""
+        source = _first_non_empty(properties.get("evidence_source")) or "asset_runs_product"
+        for vulnerability_edge in vulnerability_edges_by_product.get(product_id, []):
+            cve_id = _edge_from_id(vulnerability_edge)
+            if not cve_id:
+                continue
+            vulnerability_properties = _edge_properties(vulnerability_edge)
+            verdict, rationale = _assess_version_membership(
+                installed_version,
+                vulnerability_properties.get("affected_versions"),
+                vulnerability_properties.get("fixed_version"),
+            )
+            if verdict == "contradict":
+                continue
+
+            row = {
+                "asset_id": asset_id,
+                "cve_id": cve_id,
+                "product_id": product_id,
+                "installed_version": installed_version,
+                "source": source,
+                "rationale": rationale,
+                "verdict": verdict,
+            }
+            key = (asset_id, cve_id)
+            current = rows_by_pair.get(key)
+            if current is None or _verdict_rank(verdict) > _verdict_rank(current["verdict"]):
+                rows_by_pair[key] = row
+
+    return {"items": [rows_by_pair[key] for key in sorted(rows_by_pair)]}
+
+
+def assess_asset_exposure(
+    input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    """Assess which affected assets are materially exposed."""
+    affected_edges = _require_items(input_payload, "affected_edges")
+    assets = _require_items(input_payload, "assets")
+    asset_control_edges = _require_items(input_payload, "asset_control_edges")
+    controls = _require_items(input_payload, "controls")
+
+    assets_by_id = {_entity_id(entity): _entity_properties(entity) for entity in assets}
+    controls_by_id = {_entity_id(entity): _entity_properties(entity) for entity in controls}
+    active_controls_by_asset: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for edge in asset_control_edges:
+        asset_id = _edge_from_id(edge)
+        control_id = _edge_to_id(edge)
+        if not asset_id or not control_id:
+            continue
+        control = controls_by_id.get(control_id)
+        if control is None or _first_non_empty(control.get("status")) != "active":
+            continue
+        active_controls_by_asset[asset_id].append(control)
+
+    rows_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    for edge in affected_edges:
+        asset_id = _edge_from_id(edge)
+        cve_id = _edge_to_id(edge)
+        if not asset_id or not cve_id:
+            continue
+
+        asset = assets_by_id.get(asset_id, {})
+        active_controls = active_controls_by_asset.get(asset_id, [])
+        exploitability_verdict = _derive_exploitability_verdict(asset)
+        if exploitability_verdict == "contradict":
+            continue
+
+        control_verdict = "support" if not active_controls else "unsure"
+        priority = _derive_exposure_priority(asset, exploitability_verdict, control_verdict)
+        due_by = _priority_due_by(priority)
+        rationale = _build_exposure_rationale(asset, active_controls, exploitability_verdict)
+        rows_by_pair[(asset_id, cve_id)] = {
+            "asset_id": asset_id,
+            "cve_id": cve_id,
+            "priority": priority,
+            "due_by": due_by,
+            "rationale": rationale,
+            "exploitability_verdict": exploitability_verdict,
+            "control_verdict": control_verdict,
+        }
+
+    return {"items": [rows_by_pair[key] for key in sorted(rows_by_pair)]}
+
+
+def assess_service_impact(
+    input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    """Roll exposed asset-vulnerability pairs up to service impact judgments."""
+    exposure_edges = _require_items(input_payload, "exposure_edges")
+    service_asset_edges = _require_items(input_payload, "service_asset_edges")
+    services = _require_items(input_payload, "services")
+
+    services_by_id = {_entity_id(entity): _entity_properties(entity) for entity in services}
+    service_ids_by_asset: dict[str, list[str]] = defaultdict(list)
+    for edge in service_asset_edges:
+        service_id = _edge_from_id(edge)
+        asset_id = _edge_to_id(edge)
+        if service_id and asset_id:
+            service_ids_by_asset[asset_id].append(service_id)
+
+    impacted_assets_by_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for edge in exposure_edges:
+        asset_id = _edge_from_id(edge)
+        cve_id = _edge_to_id(edge)
+        if not asset_id or not cve_id:
+            continue
+        for service_id in service_ids_by_asset.get(asset_id, []):
+            impacted_assets_by_pair[(service_id, cve_id)].add(asset_id)
+
+    items: list[dict[str, Any]] = []
+    for (service_id, cve_id), asset_ids in sorted(impacted_assets_by_pair.items()):
+        service = services_by_id.get(service_id, {})
+        blast_radius = _derive_blast_radius(
+            _first_non_empty(service.get("tier")) or "",
+            len(asset_ids),
+        )
+        items.append(
+            {
+                "service_id": service_id,
+                "cve_id": cve_id,
+                "blast_radius": blast_radius,
+                "rationale": (
+                    f"Service depends on {len(asset_ids)} exposed asset(s): "
+                    f"{', '.join(sorted(asset_ids))}"
+                ),
+                "verdict": "support",
+            }
+        )
+
+    return {"items": items}
+
+
 # ---------------------------------------------------------------------------
 # Matching helpers
 # ---------------------------------------------------------------------------
@@ -325,6 +481,220 @@ def _catalog_row_completeness(row: dict[str, Any]) -> int:
         bool(row.get(key))
         for key in ("vendor_name", "cpe_vendor", "cpe_product", "cpe_part")
     )
+
+
+def _edge_from_id(edge: dict[str, Any]) -> str:
+    return _first_non_empty(edge.get("from_id")) or ""
+
+
+def _edge_to_id(edge: dict[str, Any]) -> str:
+    return _first_non_empty(edge.get("to_id")) or ""
+
+
+def _edge_properties(edge: dict[str, Any]) -> dict[str, Any]:
+    properties = edge.get("properties")
+    return properties if isinstance(properties, dict) else {}
+
+
+def _entity_id(entity: dict[str, Any]) -> str:
+    return _first_non_empty(entity.get("entity_id")) or ""
+
+
+def _entity_properties(entity: dict[str, Any]) -> dict[str, Any]:
+    properties = entity.get("properties")
+    return properties if isinstance(properties, dict) else {}
+
+
+def _verdict_rank(verdict: str) -> int:
+    return {"support": 2, "unsure": 1, "contradict": 0}.get(verdict, -1)
+
+
+def _assess_version_membership(
+    installed_version: str,
+    affected_versions: Any,
+    fixed_version: Any,
+) -> tuple[str, str]:
+    if not installed_version:
+        return "unsure", "Installed version is missing"
+
+    ranges = affected_versions if isinstance(affected_versions, list) else []
+    comparable_range_seen = False
+    for range_spec in ranges:
+        if not isinstance(range_spec, dict):
+            continue
+        membership = _version_in_range(installed_version, range_spec)
+        if membership is None:
+            continue
+        comparable_range_seen = True
+        if membership:
+            return "support", _build_range_rationale(installed_version, range_spec)
+
+    fixed = _first_non_empty(fixed_version)
+    fixed_comparison = _compare_versions(installed_version, fixed) if fixed else None
+    if comparable_range_seen:
+        if fixed and fixed_comparison is not None and fixed_comparison >= 0:
+            return (
+                "contradict",
+                f"Installed version {installed_version} is at or beyond fixed {fixed}",
+            )
+        return "contradict", f"Installed version {installed_version} is outside the affected range"
+
+    if fixed and fixed_comparison is not None:
+        if fixed_comparison < 0:
+            return "support", f"Installed version {installed_version} is earlier than fixed {fixed}"
+        return "contradict", f"Installed version {installed_version} is at or beyond fixed {fixed}"
+
+    return (
+        "unsure",
+        f"Could not compare installed version {installed_version} to the reference data",
+    )
+
+
+def _build_range_rationale(installed_version: str, range_spec: dict[str, Any]) -> str:
+    clauses: list[str] = [f"Installed version {installed_version} fits the affected range"]
+    for field in (
+        "version_start_including",
+        "version_start_excluding",
+        "version_end_including",
+        "version_end_excluding",
+        "version_exact",
+        "fixed_version",
+    ):
+        value = _first_non_empty(range_spec.get(field))
+        if value:
+            clauses.append(f"{field}={value}")
+    return "; ".join(clauses)
+
+
+def _version_in_range(installed_version: str, range_spec: dict[str, Any]) -> bool | None:
+    exact_version = _first_non_empty(range_spec.get("version_exact"))
+    if exact_version:
+        comparison = _compare_versions(installed_version, exact_version)
+        return None if comparison is None else comparison == 0
+
+    comparable = False
+    for field, predicate in (
+        ("version_start_including", lambda value: value >= 0),
+        ("version_start_excluding", lambda value: value > 0),
+        ("version_end_including", lambda value: value <= 0),
+        ("version_end_excluding", lambda value: value < 0),
+    ):
+        bound = _first_non_empty(range_spec.get(field))
+        if not bound:
+            continue
+        comparison = _compare_versions(installed_version, bound)
+        if comparison is None:
+            return None
+        comparable = True
+        if not predicate(comparison):
+            return False
+
+    if not comparable:
+        return None
+    return True
+
+
+def _compare_versions(left: Any, right: Any) -> int | None:
+    left_tokens = _tokenize_version(left)
+    right_tokens = _tokenize_version(right)
+    if not left_tokens or not right_tokens:
+        return None
+
+    max_length = max(len(left_tokens), len(right_tokens))
+    for index in range(max_length):
+        if index >= len(left_tokens):
+            return -1
+        if index >= len(right_tokens):
+            return 1
+        left_token = left_tokens[index]
+        right_token = right_tokens[index]
+        if left_token == right_token:
+            continue
+        if isinstance(left_token, int) and isinstance(right_token, int):
+            return -1 if left_token < right_token else 1
+        return -1 if str(left_token) < str(right_token) else 1
+
+    return 0
+
+
+def _tokenize_version(value: Any) -> list[int | str]:
+    text = _first_non_empty(value)
+    if text is None:
+        return []
+    parts = re.findall(r"[a-z]+|\d+", text.lower())
+    tokens: list[int | str] = []
+    for part in parts:
+        if part.isdigit():
+            tokens.append(int(part))
+        else:
+            tokens.append(part)
+    return tokens
+
+
+def _derive_exploitability_verdict(asset: dict[str, Any]) -> str:
+    internet_exposed = asset.get("internet_exposed")
+    environment = _first_non_empty(asset.get("environment")) or ""
+    criticality = _first_non_empty(asset.get("criticality")) or ""
+    if internet_exposed is True:
+        return "support"
+    if environment == "production" and criticality in {"critical", "high"}:
+        return "unsure"
+    if environment == "production":
+        return "unsure"
+    return "contradict"
+
+
+def _derive_exposure_priority(
+    asset: dict[str, Any],
+    exploitability_verdict: str,
+    control_verdict: str,
+) -> str:
+    criticality = _first_non_empty(asset.get("criticality")) or ""
+    if exploitability_verdict == "support" and control_verdict == "support":
+        return "urgent" if criticality == "critical" else "high"
+    if criticality in {"critical", "high"}:
+        return "high"
+    return "medium"
+
+
+def _priority_due_by(priority: str) -> str:
+    return {
+        "urgent": "24h",
+        "high": "72h",
+        "medium": "7d",
+    }.get(priority, "14d")
+
+
+def _build_exposure_rationale(
+    asset: dict[str, Any],
+    active_controls: list[dict[str, Any]],
+    exploitability_verdict: str,
+) -> str:
+    hostname = _first_non_empty(asset.get("hostname")) or "asset"
+    environment = _first_non_empty(asset.get("environment")) or "unknown"
+    exposure_clause = (
+        "internet-facing"
+        if asset.get("internet_exposed") is True
+        else f"{environment} asset with {exploitability_verdict} exploitability"
+    )
+    if not active_controls:
+        return f"{hostname} is {exposure_clause} and has no active compensating controls"
+    control_names = ", ".join(
+        sorted(
+            _first_non_empty(control.get("name")) or "unknown control"
+            for control in active_controls
+        )
+    )
+    return f"{hostname} is {exposure_clause}; active controls require review: {control_names}"
+
+
+def _derive_blast_radius(tier: str, exposed_asset_count: int) -> str:
+    normalized = tier.lower()
+    if normalized == "tier-1":
+        return "critical" if exposed_asset_count > 1 else "high"
+    if normalized == "tier-2":
+        return "high" if exposed_asset_count > 1 else "medium"
+    return "medium" if exposed_asset_count > 1 else "low"
 
 
 # ---------------------------------------------------------------------------

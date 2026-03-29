@@ -173,6 +173,9 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
+      product_id:
+        type: string
+        optional: true
       installed_version:
         type: string
         optional: true
@@ -187,8 +190,6 @@ relationships:
         product_version_evidence:
           role: required
           always_review_on_unsure: true
-        scanner_evidence:
-          role: advisory
 
   - name: asset_exposed_to_vulnerability
     description: Accepted judgment that the asset is materially exposed and should drive action.
@@ -384,14 +385,6 @@ integrations:
       Matches installed product version against NVD affected version
       ranges to determine if an asset is actually affected.
 
-  scanner_evidence:
-    kind: scanner_presence
-    contract:
-      output: support|unsure|contradict
-    notes: >
-      Advisory signal from vulnerability scanner findings. Supports
-      the affected-by judgment but does not block auto-resolution.
-
   exploitability_signal:
     kind: exploitability_assessment
     contract:
@@ -544,7 +537,7 @@ contracts:
               patch_window_id: {type: string}
 
   SoftwareInventory:
-    description: Raw software inventory from CMDB and scanners with business-friendly names.
+    description: Raw software inventory from CMDB and inventory tools with business-friendly names.
     fields:
       items:
         type: json
@@ -611,6 +604,88 @@ contracts:
               match_confidence: {type: number}
               verdict: {type: string}
 
+  AssetAffectedAssessmentInput:
+    description: Approved asset-product mappings plus public vulnerability-product edges.
+    fields:
+      asset_product_edges:
+        type: json
+      vulnerability_product_edges:
+        type: json
+
+  AssetAffectedAssessmentResults:
+    description: Candidate asset-vulnerability judgments derived from version-range comparison.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              cve_id: {type: string}
+              product_id: {type: string}
+              installed_version: {type: string}
+              source: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
+  AssetExposureAssessmentInput:
+    description: Approved affected edges plus asset posture and control context.
+    fields:
+      affected_edges:
+        type: json
+      assets:
+        type: json
+      asset_control_edges:
+        type: json
+      controls:
+        type: json
+
+  AssetExposureAssessmentResults:
+    description: Candidate asset exposure judgments with exploitability and control signals.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              cve_id: {type: string}
+              priority: {type: string}
+              due_by: {type: string}
+              rationale: {type: string}
+              exploitability_verdict: {type: string}
+              control_verdict: {type: string}
+
+  ServiceImpactAssessmentInput:
+    description: Approved exposure edges plus service dependency context.
+    fields:
+      exposure_edges:
+        type: json
+      service_asset_edges:
+        type: json
+      services:
+        type: json
+
+  ServiceImpactAssessmentResults:
+    description: Candidate service-vulnerability impact judgments.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              service_id: {type: string}
+              cve_id: {type: string}
+              blast_radius: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
 # ─── Artifacts ────────────────────────────────────────────────────────
 
 artifacts:
@@ -675,6 +750,44 @@ providers:
     contract_in: SoftwareMatchInput
     contract_out: SoftwareMatchResults
     ref: cruxible_core.demo_providers.kev_triage.match_software_to_products
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  assess_asset_affected:
+    kind: function
+    description: >
+      Join approved asset-product mappings to public
+      vulnerability-affects-product edges and assess whether the
+      installed version is within the reference-layer affected range.
+    contract_in: AssetAffectedAssessmentInput
+    contract_out: AssetAffectedAssessmentResults
+    ref: cruxible_core.demo_providers.kev_triage.assess_asset_affected
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  assess_asset_exposure:
+    kind: function
+    description: >
+      Assess whether an affected asset is materially exposed using
+      internet exposure, environment, criticality, and attached active
+      controls.
+    contract_in: AssetExposureAssessmentInput
+    contract_out: AssetExposureAssessmentResults
+    ref: cruxible_core.demo_providers.kev_triage.assess_asset_exposure
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  assess_service_impact:
+    kind: function
+    description: >
+      Roll approved asset exposure judgments up through service
+      dependency edges to propose service impact relationships.
+    contract_in: ServiceImpactAssessmentInput
+    contract_out: ServiceImpactAssessmentResults
+    ref: cruxible_core.demo_providers.kev_triage.assess_service_impact
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -916,6 +1029,216 @@ workflows:
         as: proposal
     returns: proposal
 
+  propose_asset_affected:
+    canonical: false
+    description: >
+      Join approved asset-product mappings to public KEV product
+      coverage and propose asset_affected_by_vulnerability edges from
+      version-range evidence.
+    contract_in: EmptyInput
+    steps:
+      - id: asset_products
+        list_relationships:
+          relationship_type: asset_runs_product
+        as: asset_products
+      - id: vulnerability_products
+        list_relationships:
+          relationship_type: vulnerability_affects_product
+        as: vulnerability_products
+      - id: assessments
+        provider: assess_asset_affected
+        input:
+          asset_product_edges: $steps.asset_products.items
+          vulnerability_product_edges: $steps.vulnerability_products.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: asset_affected_by_vulnerability
+          items: $steps.assessments.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Vulnerability
+          to_id: $item.cve_id
+          properties:
+            product_id: $item.product_id
+            installed_version: $item.installed_version
+            rationale: $item.rationale
+            source: $item.source
+        as: candidates
+      - id: version_signals
+        map_signals:
+          integration: product_version_evidence
+          items: $steps.assessments.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: version_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: asset_affected_by_vulnerability
+          candidates_from: candidates
+          signals_from: [version_signals]
+          thesis_text: >
+            Installed versions fall within KEV reference-layer affected
+            ranges
+          proposed_by: ai_review
+        as: proposal
+    returns: proposal
+
+  propose_asset_exposure:
+    canonical: false
+    description: >
+      Assess whether approved affected assets are materially exposed
+      using environment, exposure posture, and active controls.
+    contract_in: EmptyInput
+    steps:
+      - id: affected_edges
+        list_relationships:
+          relationship_type: asset_affected_by_vulnerability
+        as: affected_edges
+      - id: assets
+        list_entities:
+          entity_type: Asset
+        as: assets
+      - id: asset_controls
+        list_relationships:
+          relationship_type: asset_has_control
+        as: asset_controls
+      - id: controls
+        list_entities:
+          entity_type: CompensatingControl
+        as: controls
+      - id: assessments
+        provider: assess_asset_exposure
+        input:
+          affected_edges: $steps.affected_edges.items
+          assets: $steps.assets.items
+          asset_control_edges: $steps.asset_controls.items
+          controls: $steps.controls.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: asset_exposed_to_vulnerability
+          items: $steps.assessments.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Vulnerability
+          to_id: $item.cve_id
+          properties:
+            priority: $item.priority
+            due_by: $item.due_by
+            rationale: $item.rationale
+        as: candidates
+      - id: exploitability_signals
+        map_signals:
+          integration: exploitability_signal
+          items: $steps.assessments.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.rationale
+          enum:
+            path: exploitability_verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: exploitability_signals
+      - id: control_signals
+        map_signals:
+          integration: control_effectiveness
+          items: $steps.assessments.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.rationale
+          enum:
+            path: control_verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: control_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: asset_exposed_to_vulnerability
+          candidates_from: candidates
+          signals_from: [exploitability_signals, control_signals]
+          thesis_text: >
+            Approved affected assets are materially exposed after
+            posture and control review
+          proposed_by: ai_review
+        as: proposal
+    returns: proposal
+
+  propose_service_impact:
+    canonical: false
+    description: >
+      Roll approved asset exposure judgments up to business services
+      through dependency edges and propose service impact edges.
+    contract_in: EmptyInput
+    steps:
+      - id: exposure_edges
+        list_relationships:
+          relationship_type: asset_exposed_to_vulnerability
+        as: exposure_edges
+      - id: service_asset_edges
+        list_relationships:
+          relationship_type: service_depends_on_asset
+        as: service_asset_edges
+      - id: services
+        list_entities:
+          entity_type: BusinessService
+        as: services
+      - id: assessments
+        provider: assess_service_impact
+        input:
+          exposure_edges: $steps.exposure_edges.items
+          service_asset_edges: $steps.service_asset_edges.items
+          services: $steps.services.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: service_impacted_by_vulnerability
+          items: $steps.assessments.items
+          from_type: BusinessService
+          from_id: $item.service_id
+          to_type: Vulnerability
+          to_id: $item.cve_id
+          properties:
+            blast_radius: $item.blast_radius
+            rationale: $item.rationale
+        as: candidates
+      - id: dependency_signals
+        map_signals:
+          integration: dependency_context
+          items: $steps.assessments.items
+          from_id: $item.service_id
+          to_id: $item.cve_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: dependency_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: service_impacted_by_vulnerability
+          candidates_from: candidates
+          signals_from: [dependency_signals]
+          thesis_text: >
+            Approved exposed assets create downstream business-service
+            impact
+          proposed_by: ai_review
+        as: proposal
+    returns: proposal
+
 # ─── Feedback profiles (Loop 1) ──────────────────────────────────────
 
 feedback_profiles:
@@ -931,7 +1254,7 @@ feedback_profiles:
         remediation_hint: quality_check
         required_scope_keys: [product]
       stale_inventory:
-        description: CMDB or scanner data was outdated at match time.
+        description: CMDB or software inventory data was outdated at match time.
         remediation_hint: provider_fix
         required_scope_keys: [evidence_source]
     scope_keys:
@@ -946,19 +1269,14 @@ feedback_profiles:
         description: Installed version is not within the NVD affected range.
         remediation_hint: constraint
         required_scope_keys: [cve, product]
-      scanner_false_positive:
-        description: Scanner reported vulnerability but it does not apply.
-        remediation_hint: decision_policy
-        required_scope_keys: [cve, scanner_source]
       product_mismatch:
         description: Asset does not actually run this product.
         remediation_hint: provider_fix
         required_scope_keys: [product, hostname]
     scope_keys:
       cve: TO.cve_id
-      product: EDGE.installed_version
+      product: EDGE.product_id
       hostname: FROM.hostname
-      scanner_source: EDGE.source
 
   asset_exposed_to_vulnerability:
     version: 1
