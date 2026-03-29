@@ -70,7 +70,7 @@ def build_lock(config: CoreConfig, config_base_path: Path | None = None) -> Work
         if name in canonical_artifact_names and config_base_path is not None:
             artifact_path = _resolve_local_artifact_path(artifact.uri, config_base_path)
             if artifact_path is not None:
-                actual_sha256 = _compute_path_sha256(artifact_path)
+                actual_sha256 = compute_path_sha256(artifact_path)
                 if artifact.sha256 and artifact.sha256 != actual_sha256:
                     raise ConfigError(
                         f"Artifact '{name}' sha256 does not match live contents. "
@@ -422,7 +422,7 @@ def _verify_local_artifact_hash(uri: str, expected_sha256: str, config_base_path
         raise ConfigError("Canonical workflows require local file or directory artifacts")
     if not artifact_path.exists():
         raise ConfigError(f"Artifact path does not exist: {artifact_path}")
-    actual_sha256 = _compute_path_sha256(artifact_path)
+    actual_sha256 = compute_path_sha256(artifact_path)
     if actual_sha256 != expected_sha256:
         raise ConfigError(
             f"Artifact hash mismatch for {artifact_path}. "
@@ -444,7 +444,7 @@ def _resolve_local_artifact_path(uri: str, config_base_path: Path) -> Path | Non
     return None
 
 
-def _compute_path_sha256(path: Path) -> str:
+def compute_path_sha256(path: Path) -> str:
     if path.is_file():
         return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
     if path.is_dir():
