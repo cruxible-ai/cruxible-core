@@ -42,7 +42,7 @@ def service_publish_model(
         raise ConfigError("Only kind: world_model instances can publish model releases")
 
     snapshot = service_create_snapshot(instance, label=release_id).snapshot
-    bundle_dir = _build_release_bundle(
+    bundle_dir = build_release_bundle(
         instance=instance,
         snapshot_id=snapshot.snapshot_id,
         model_id=model_id,
@@ -238,7 +238,7 @@ def _pull_bundle(transport_ref: str) -> PulledReleaseBundle:
     return transport.pull(resolved_ref, temp_root)
 
 
-def _build_release_bundle(
+def build_release_bundle(
     *,
     instance: InstanceProtocol,
     snapshot_id: str,
