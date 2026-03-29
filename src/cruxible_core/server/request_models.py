@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from cruxible_core.mcp import contracts
+from cruxible_client import contracts
 
 
 class InitRequest(BaseModel):

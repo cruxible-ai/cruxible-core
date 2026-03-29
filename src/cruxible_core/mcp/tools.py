@@ -11,8 +11,9 @@ from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 
+from cruxible_client import contracts
 from cruxible_core import __version__
-from cruxible_core.mcp import contracts, handlers
+from cruxible_core.mcp import handlers
 
 
 def register_tools(server: FastMCP) -> list[str]:

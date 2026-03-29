@@ -10,8 +10,8 @@ import click
 import yaml
 from rich.console import Console
 
+from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.client import CruxibleClient
 from cruxible_core.config.composer import compose_configs
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
@@ -19,7 +19,6 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
-from cruxible_core.mcp import contracts
 from cruxible_core.query.candidates import CandidateMatch
 from cruxible_core.server.config import get_server_token
 from cruxible_core.service import service_sample, service_schema

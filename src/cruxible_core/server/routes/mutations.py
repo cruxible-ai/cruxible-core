@@ -9,8 +9,8 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
-from cruxible_core.mcp import contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     AddConstraintRequest,

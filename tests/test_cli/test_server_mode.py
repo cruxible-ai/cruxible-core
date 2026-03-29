@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from cruxible_client import contracts
 from cruxible_core.cli.main import cli
-from cruxible_core.mcp import contracts
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 

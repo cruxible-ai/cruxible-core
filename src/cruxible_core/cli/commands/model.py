@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
+from cruxible_client import contracts
 from cruxible_core.cli.commands._common import _dispatch_cli, _dispatch_cli_instance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.mcp import contracts
 from cruxible_core.service import (
     service_fork_model,
     service_model_status,

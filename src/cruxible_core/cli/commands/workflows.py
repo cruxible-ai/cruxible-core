@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from cruxible_client import contracts
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _dispatch_cli,
@@ -16,7 +17,6 @@ from cruxible_core.cli.commands._common import (
     _resolve_workflow_input,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.mcp import contracts
 from cruxible_core.service import (
     service_apply_workflow,
     service_create_snapshot,
@@ -73,7 +73,9 @@ def init(config_path: str, root_dir: str | None, data_dir: str | None) -> None:
 def validate(config_path: str) -> None:
     """Validate a config YAML file without creating an instance."""
     result = _dispatch_cli(
-        lambda client: client.validate(config_yaml=_common._read_validation_yaml_or_error(config_path)),
+        lambda client: client.validate(
+            config_yaml=_common._read_validation_yaml_or_error(config_path)
+        ),
         lambda: service_validate(config_path=config_path),
     )
     if isinstance(result, contracts.ValidateResult):

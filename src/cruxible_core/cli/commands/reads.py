@@ -9,6 +9,7 @@ from typing import Any, cast
 import click
 import yaml
 
+from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _candidates_from_payload,
@@ -33,11 +34,9 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.client import CruxibleClient
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.mcp import contracts
 from cruxible_core.query.candidates import MatchRule
 from cruxible_core.receipt import serializer
 from cruxible_core.service import (

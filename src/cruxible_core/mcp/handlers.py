@@ -9,8 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from cruxible_core.client import CruxibleClient
-from cruxible_core.mcp import contracts
+from cruxible_client import CruxibleClient, contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.runtime.instance import CruxibleInstance  # noqa: F401
 from cruxible_core.runtime.instance_manager import (
