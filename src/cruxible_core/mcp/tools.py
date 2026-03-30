@@ -117,12 +117,12 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_validate(config_path, config_yaml)
 
     @_tool
-    def cruxible_model_fork(
+    def cruxible_world_fork(
         transport_ref: str,
         root_dir: str,
-    ) -> contracts.ModelForkResult:
-        """Create a new local fork from a published model release."""
-        return handlers.handle_model_fork(transport_ref, root_dir)
+    ) -> contracts.WorldForkResult:
+        """Create a new local fork from a published world release."""
+        return handlers.handle_world_fork(transport_ref, root_dir)
 
     @_tool
     def cruxible_ingest(
@@ -701,41 +701,41 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
-    def cruxible_model_publish(
+    def cruxible_world_publish(
         instance_id: str,
         transport_ref: str,
-        model_id: str,
+        world_id: str,
         release_id: str,
-        compatibility: contracts.ModelCompatibility,
-    ) -> contracts.ModelPublishResult:
+        compatibility: contracts.WorldCompatibility,
+    ) -> contracts.WorldPublishResult:
         """Publish a root world-model instance as an immutable release bundle."""
-        return handlers.handle_model_publish(
+        return handlers.handle_world_publish(
             instance_id,
             transport_ref,
-            model_id,
+            world_id,
             release_id,
             compatibility,
         )
 
     @_tool
-    def cruxible_model_status(instance_id: str) -> contracts.ModelStatusResult:
+    def cruxible_world_status(instance_id: str) -> contracts.WorldStatusResult:
         """Return upstream tracking metadata for a release-backed fork."""
-        return handlers.handle_model_status(instance_id)
+        return handlers.handle_world_status(instance_id)
 
     @_tool
-    def cruxible_model_pull_preview(
+    def cruxible_world_pull_preview(
         instance_id: str,
-    ) -> contracts.ModelPullPreviewResult:
+    ) -> contracts.WorldPullPreviewResult:
         """Preview pulling a newer upstream release into a release-backed fork."""
-        return handlers.handle_model_pull_preview(instance_id)
+        return handlers.handle_world_pull_preview(instance_id)
 
     @_tool
-    def cruxible_model_pull_apply(
+    def cruxible_world_pull_apply(
         instance_id: str,
         expected_apply_digest: str,
-    ) -> contracts.ModelPullApplyResult:
+    ) -> contracts.WorldPullApplyResult:
         """Apply a previewed upstream release into a release-backed fork."""
-        return handlers.handle_model_pull_apply(instance_id, expected_apply_digest)
+        return handlers.handle_world_pull_apply(instance_id, expected_apply_digest)
 
     @_tool
     def cruxible_get_entity(

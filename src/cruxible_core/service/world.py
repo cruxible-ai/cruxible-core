@@ -1,4 +1,4 @@
-"""Published model release, fork, status, and pull service functions."""
+"""Published world release, fork, status, and pull service functions."""
 
 from __future__ import annotations
 
@@ -16,54 +16,54 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.execution import service_lock
 from cruxible_core.service.snapshots import service_create_snapshot
 from cruxible_core.service.types import (
-    ModelForkResult,
-    ModelPublishResult,
-    ModelPullApplyResult,
-    ModelPullPreviewResult,
-    ModelStatusResult,
+    WorldForkResult,
+    WorldPublishResult,
+    WorldPullApplyResult,
+    WorldPullPreviewResult,
+    WorldStatusResult,
 )
-from cruxible_core.snapshot.types import PublishedModelManifest, UpstreamMetadata
+from cruxible_core.snapshot.types import PublishedWorldManifest, UpstreamMetadata
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import PulledReleaseBundle
 
 
-def service_publish_model(
+def service_publish_world(
     instance: InstanceProtocol,
     *,
     transport_ref: str,
-    model_id: str,
+    world_id: str,
     release_id: str,
     compatibility: str,
-) -> ModelPublishResult:
+) -> WorldPublishResult:
     """Publish a root world-model instance as an immutable release bundle."""
     if instance.get_upstream_metadata() is not None:
-        raise ConfigError("Only root instances can publish model releases in v1")
+        raise ConfigError("Only root instances can publish world releases in v1")
     if instance.load_config().kind != "world_model":
-        raise ConfigError("Only kind: world_model instances can publish model releases")
+        raise ConfigError("Only kind: world_model instances can publish world releases")
 
     snapshot = service_create_snapshot(instance, label=release_id).snapshot
     bundle_dir = build_release_bundle(
         instance=instance,
         snapshot_id=snapshot.snapshot_id,
-        model_id=model_id,
+        world_id=world_id,
         release_id=release_id,
         compatibility=compatibility,
         parent_release_id=None,
     )
     transport, resolved_ref = resolve_transport(transport_ref)
     transport.publish(resolved_ref, bundle_dir)
-    manifest = PublishedModelManifest.model_validate_json(
+    manifest = PublishedWorldManifest.model_validate_json(
         (bundle_dir / "manifest.json").read_text()
     )
-    return ModelPublishResult(manifest=manifest)
+    return WorldPublishResult(manifest=manifest)
 
 
-def service_fork_model(
+def service_fork_world(
     *,
     transport_ref: str,
     root_dir: str | Path,
-) -> ModelForkResult:
-    """Create a new local fork instance from a published model release."""
+) -> WorldForkResult:
+    """Create a new local fork instance from a published world release."""
     root = Path(root_dir)
     if (root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
         raise ConfigError(f"Instance already exists at {root}")
@@ -77,7 +77,7 @@ def service_fork_model(
         "\n".join(
             [
                 "version: '1.0'",
-                f"name: {pulled.manifest.model_id}-fork",
+                f"name: {pulled.manifest.world_id}-fork",
                 f"extends: {str((upstream_dir / 'config.yaml').relative_to(root))}",
                 "entity_types: {}",
                 "relationships: []",
@@ -96,7 +96,7 @@ def service_fork_model(
     instance.save_graph(_load_graph_from_bundle(upstream_dir))
     upstream = UpstreamMetadata(
         transport_ref=transport_ref,
-        model_id=pulled.manifest.model_id,
+        world_id=pulled.manifest.world_id,
         release_id=pulled.manifest.release_id,
         snapshot_id=pulled.manifest.snapshot_id,
         compatibility=pulled.manifest.compatibility,
@@ -113,19 +113,19 @@ def service_fork_model(
     )
     instance.set_upstream_metadata(upstream)
     service_lock(instance)
-    return ModelForkResult(instance=instance, manifest=pulled.manifest)
+    return WorldForkResult(instance=instance, manifest=pulled.manifest)
 
 
-def service_model_status(instance: InstanceProtocol) -> ModelStatusResult:
+def service_world_status(instance: InstanceProtocol) -> WorldStatusResult:
     """Return upstream tracking metadata for a release-backed fork, if any."""
-    return ModelStatusResult(upstream=instance.get_upstream_metadata())
+    return WorldStatusResult(upstream=instance.get_upstream_metadata())
 
 
-def service_pull_model_preview(instance: InstanceProtocol) -> ModelPullPreviewResult:
+def service_pull_world_preview(instance: InstanceProtocol) -> WorldPullPreviewResult:
     """Preview an upstream pull for a release-backed fork instance."""
     upstream = instance.get_upstream_metadata()
     if upstream is None:
-        raise ConfigError("Instance is not tracking an upstream model release")
+        raise ConfigError("Instance is not tracking an upstream world release")
 
     pulled = _pull_bundle(upstream.transport_ref)
     warnings: list[str] = []
@@ -148,13 +148,13 @@ def service_pull_model_preview(instance: InstanceProtocol) -> ModelPullPreviewRe
     next_graph = _load_graph_from_bundle(pulled.root_dir)
     fork_graph = _extract_fork_overlay_graph(instance.load_graph(), upstream)
     conflicts.extend(_find_dangling_reference_conflicts(fork_graph, next_graph, pulled.manifest))
-    apply_digest = _compute_model_apply_digest(
+    apply_digest = _compute_world_apply_digest(
         current_release_id=upstream.release_id,
         target_release_id=pulled.manifest.release_id,
         current_graph_digest=upstream.graph_digest or "",
         next_graph_digest=_sha256_file(pulled.root_dir / "graph.json"),
     )
-    return ModelPullPreviewResult(
+    return WorldPullPreviewResult(
         current_release_id=upstream.release_id,
         target_release_id=pulled.manifest.release_id,
         compatibility=pulled.manifest.compatibility,
@@ -168,17 +168,17 @@ def service_pull_model_preview(instance: InstanceProtocol) -> ModelPullPreviewRe
     )
 
 
-def service_pull_model_apply(
+def service_pull_world_apply(
     instance: InstanceProtocol,
     *,
     expected_apply_digest: str,
-) -> ModelPullApplyResult:
+) -> WorldPullApplyResult:
     """Apply a previewed upstream pull to a release-backed fork instance."""
-    preview = service_pull_model_preview(instance)
+    preview = service_pull_world_preview(instance)
     if preview.apply_digest != expected_apply_digest:
-        raise ConfigError("Model pull apply digest mismatch; rerun pull preview before apply")
+        raise ConfigError("World pull apply digest mismatch; rerun pull preview before apply")
     if preview.conflicts:
-        raise ConfigError("Model pull preview has blocking conflicts", errors=preview.conflicts)
+        raise ConfigError("World pull preview has blocking conflicts", errors=preview.conflicts)
 
     upstream = instance.get_upstream_metadata()
     assert upstream is not None
@@ -208,7 +208,7 @@ def service_pull_model_apply(
 
     updated = UpstreamMetadata(
         transport_ref=upstream.transport_ref,
-        model_id=pulled.manifest.model_id,
+        world_id=pulled.manifest.world_id,
         release_id=pulled.manifest.release_id,
         snapshot_id=pulled.manifest.snapshot_id,
         compatibility=pulled.manifest.compatibility,
@@ -225,7 +225,7 @@ def service_pull_model_apply(
     )
     instance.set_upstream_metadata(updated)
     service_lock(instance)
-    return ModelPullApplyResult(
+    return WorldPullApplyResult(
         release_id=updated.release_id,
         apply_digest=preview.apply_digest,
         pre_pull_snapshot_id=pre_pull_snapshot_id,
@@ -242,7 +242,7 @@ def build_release_bundle(
     *,
     instance: InstanceProtocol,
     snapshot_id: str,
-    model_id: str,
+    world_id: str,
     release_id: str,
     compatibility: str,
     parent_release_id: str | None,
@@ -257,8 +257,8 @@ def build_release_bundle(
         if source.exists():
             shutil.copy2(source, bundle_dir / name)
     config = instance.load_config()
-    manifest = PublishedModelManifest(
-        model_id=model_id,
+    manifest = PublishedWorldManifest(
+        world_id=world_id,
         release_id=release_id,
         snapshot_id=snapshot_id,
         compatibility=compatibility,
@@ -297,7 +297,7 @@ def _lock_text(path: Path) -> str | None:
     return path.read_text()
 
 
-def _compute_model_apply_digest(
+def _compute_world_apply_digest(
     *,
     current_release_id: str | None,
     target_release_id: str,
@@ -337,7 +337,7 @@ def _extract_fork_overlay_graph(
 def _find_dangling_reference_conflicts(
     fork_graph: EntityGraph,
     next_upstream_graph: EntityGraph,
-    manifest: PublishedModelManifest,
+    manifest: PublishedWorldManifest,
 ) -> list[str]:
     upstream_entity_types = set(manifest.owned_entity_types)
     conflicts: list[str] = []

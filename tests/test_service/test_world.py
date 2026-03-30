@@ -1,4 +1,4 @@
-"""Tests for published model release, fork, and pull flows."""
+"""Tests for published world release, fork, and pull flows."""
 
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ from cruxible_core.service import (
     RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
-    service_fork_model,
-    service_model_status,
-    service_publish_model,
-    service_pull_model_apply,
-    service_pull_model_preview,
+    service_fork_world,
+    service_publish_world,
+    service_pull_world_apply,
+    service_pull_world_preview,
     service_reload_config,
+    service_world_status,
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.workflow.executor import _apply_entity_set, _apply_relationship_set
@@ -64,10 +64,10 @@ def published_release_fixture(tmp_path: Path) -> tuple[CruxibleInstance, Path]:
     )
 
     release_dir = tmp_path / "releases" / "current"
-    service_publish_model(
+    service_publish_world(
         instance,
         transport_ref=f"file://{release_dir}",
-        model_id="case-law",
+        world_id="case-law",
         release_id="v1.0.0",
         compatibility="data_only",
     )
@@ -81,7 +81,7 @@ def test_publish_fork_and_pull_apply_preserves_fork_overlay(
     root_instance, release_dir = published_release_fixture
     fork_root = tmp_path / "forked-model"
 
-    fork_result = service_fork_model(
+    fork_result = service_fork_world(
         transport_ref=f"file://{release_dir}",
         root_dir=fork_root,
     )
@@ -117,21 +117,21 @@ def test_publish_fork_and_pull_apply_preserves_fork_overlay(
     root_instance.save_graph(root_graph)
 
     successor_dir = tmp_path / "releases" / "successor"
-    service_publish_model(
+    service_publish_world(
         root_instance,
         transport_ref=f"file://{successor_dir}",
-        model_id="case-law",
+        world_id="case-law",
         release_id="v1.1.0",
         compatibility="data_only",
     )
     _replace_release_dir(successor_dir, release_dir)
 
-    preview = service_pull_model_preview(fork_instance)
+    preview = service_pull_world_preview(fork_instance)
     assert preview.target_release_id == "v1.1.0"
     assert preview.conflicts == []
     assert preview.upstream_entity_delta == 1
 
-    applied = service_pull_model_apply(
+    applied = service_pull_world_apply(
         fork_instance,
         expected_apply_digest=preview.apply_digest,
     )
@@ -141,7 +141,7 @@ def test_publish_fork_and_pull_apply_preserves_fork_overlay(
     merged_graph = fork_instance.load_graph()
     assert merged_graph.has_entity("Case", "CASE-C")
     assert merged_graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "follow_up")
-    status = service_model_status(fork_instance)
+    status = service_world_status(fork_instance)
     assert status.upstream is not None
     assert status.upstream.release_id == "v1.1.0"
 
@@ -152,7 +152,7 @@ def test_pull_preview_surfaces_dangling_fork_relationships(
 ) -> None:
     root_instance, release_dir = published_release_fixture
     fork_root = tmp_path / "forked-model"
-    fork_instance = service_fork_model(
+    fork_instance = service_fork_world(
         transport_ref=f"file://{release_dir}",
         root_dir=fork_root,
     ).instance
@@ -179,16 +179,16 @@ def test_pull_preview_surfaces_dangling_fork_relationships(
     root_instance.save_graph(root_graph)
 
     successor_dir = tmp_path / "releases" / "successor"
-    service_publish_model(
+    service_publish_world(
         root_instance,
         transport_ref=f"file://{successor_dir}",
-        model_id="case-law",
+        world_id="case-law",
         release_id="v2.0.0",
         compatibility="breaking",
     )
     _replace_release_dir(successor_dir, release_dir)
 
-    preview = service_pull_model_preview(fork_instance)
+    preview = service_pull_world_preview(fork_instance)
     assert preview.target_release_id == "v2.0.0"
     assert any("missing upstream entity Case:CASE-B" in conflict for conflict in preview.conflicts)
 
@@ -224,7 +224,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     instance.set_upstream_metadata(
         UpstreamMetadata(
             transport_ref="file:///tmp/release",
-            model_id="case-law",
+            world_id="case-law",
             release_id="v1.0.0",
             snapshot_id="snap_1",
             compatibility="data_only",

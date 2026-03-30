@@ -1,0 +1,6 @@
+asset_id,hostname,asset_type,criticality,environment,internet_exposed
+ASSET-1,prod-web-01,server,critical,production,true
+ASSET-2,prod-api-01,server,high,production,false
+ASSET-3,stage-web-01,server,medium,staging,false
+ASSET-4,corp-laptop-01,laptop,low,corporate,false
+ASSET-5,batch-worker-01,server,medium,production,false

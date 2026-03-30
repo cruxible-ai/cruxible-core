@@ -692,7 +692,7 @@ artifacts:
   fork_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:b0ab4bae06d887bbed1e52f441ecedf052d99b014314c64ddb94731323b7df8d
+    sha256: sha256:1e3f5aecc60dc375cb7c19f84e97949f584eeb33275a9d68194cfdae549326f0
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, and operational system exports.
 

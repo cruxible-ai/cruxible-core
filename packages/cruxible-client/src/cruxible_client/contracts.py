@@ -27,7 +27,7 @@ GroupProposedBy = Literal["human", "ai_review"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
-ModelCompatibility = Literal["data_only", "additive_schema", "breaking"]
+WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -360,12 +360,12 @@ class ForkSnapshotResult(BaseModel):
     snapshot: SnapshotMetadata
 
 
-class PublishedModelManifest(BaseModel):
+class PublishedWorldManifest(BaseModel):
     format_version: int
-    model_id: str
+    world_id: str
     release_id: str
     snapshot_id: str
-    compatibility: ModelCompatibility
+    compatibility: WorldCompatibility
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     parent_release_id: str | None = None
@@ -373,10 +373,10 @@ class PublishedModelManifest(BaseModel):
 
 class UpstreamMetadataResult(BaseModel):
     transport_ref: str
-    model_id: str
+    world_id: str
     release_id: str
     snapshot_id: str
-    compatibility: ModelCompatibility
+    compatibility: WorldCompatibility
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     overlay_config_path: str
@@ -389,23 +389,23 @@ class UpstreamMetadataResult(BaseModel):
     graph_digest: str | None = None
 
 
-class ModelPublishResult(BaseModel):
-    manifest: PublishedModelManifest
+class WorldPublishResult(BaseModel):
+    manifest: PublishedWorldManifest
 
 
-class ModelForkResult(BaseModel):
+class WorldForkResult(BaseModel):
     instance_id: str
-    manifest: PublishedModelManifest
+    manifest: PublishedWorldManifest
 
 
-class ModelStatusResult(BaseModel):
+class WorldStatusResult(BaseModel):
     upstream: UpstreamMetadataResult | None = None
 
 
-class ModelPullPreviewResult(BaseModel):
+class WorldPullPreviewResult(BaseModel):
     current_release_id: str | None = None
     target_release_id: str
-    compatibility: ModelCompatibility
+    compatibility: WorldCompatibility
     apply_digest: str
     warnings: list[str] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
@@ -414,7 +414,7 @@ class ModelPullPreviewResult(BaseModel):
     upstream_edge_delta: int = 0
 
 
-class ModelPullApplyResult(BaseModel):
+class WorldPullApplyResult(BaseModel):
     release_id: str
     apply_digest: str
     pre_pull_snapshot_id: str

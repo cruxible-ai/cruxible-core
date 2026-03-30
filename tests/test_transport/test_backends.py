@@ -1,4 +1,4 @@
-"""Tests for published model transport backends."""
+"""Tests for published world transport backends."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.errors import TransportError
-from cruxible_core.snapshot.types import PublishedModelManifest, WorldSnapshot
+from cruxible_core.snapshot.types import PublishedWorldManifest, WorldSnapshot
 from cruxible_core.transport.backends import OciReleaseTransport
 
 
@@ -50,8 +50,8 @@ def test_oci_publish_raises_clear_error_when_oras_missing(
 def _write_bundle(tmp_path: Path) -> Path:
     bundle_dir = tmp_path / "bundle"
     bundle_dir.mkdir()
-    manifest = PublishedModelManifest(
-        model_id="case-law",
+    manifest = PublishedWorldManifest(
+        world_id="case-law",
         release_id="v1.0.0",
         snapshot_id="snap_1",
         compatibility="data_only",

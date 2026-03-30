@@ -36,8 +36,8 @@ from cruxible_core.service import (
     service_feedback,
     service_feedback_batch,
     service_find_candidates,
-    service_fork_model,
     service_fork_snapshot,
+    service_fork_world,
     service_get_entity,
     service_get_group,
     service_get_outcome_profile,
@@ -51,14 +51,13 @@ from cruxible_core.service import (
     service_list_resolutions,
     service_list_snapshots,
     service_lock,
-    service_model_status,
     service_outcome,
     service_plan,
     service_propose_group,
     service_propose_workflow,
-    service_publish_model,
-    service_pull_model_apply,
-    service_pull_model_preview,
+    service_publish_world,
+    service_pull_world_apply,
+    service_pull_world_preview,
     service_query,
     service_reload_config,
     service_resolve_group,
@@ -69,6 +68,7 @@ from cruxible_core.service import (
     service_test,
     service_update_trust_status,
     service_validate,
+    service_world_status,
 )
 
 WorkflowExecutionContractT = TypeVar(
@@ -1483,83 +1483,83 @@ def _handle_list_resolutions_local(
     )
 
 
-def _handle_model_publish_local(
+def _handle_world_publish_local(
     instance_id: str,
     transport_ref: str,
-    model_id: str,
+    world_id: str,
     release_id: str,
-    compatibility: contracts.ModelCompatibility,
-) -> contracts.ModelPublishResult:
+    compatibility: contracts.WorldCompatibility,
+) -> contracts.WorldPublishResult:
     """Publish a root world-model instance as an immutable release bundle."""
     check_permission(
-        "cruxible_model_publish",
+        "cruxible_world_publish",
         instance_id=instance_id,
         required_mode=PermissionMode.ADMIN,
     )
     instance = get_manager().get(instance_id)
-    result = service_publish_model(
+    result = service_publish_world(
         instance,
         transport_ref=transport_ref,
-        model_id=model_id,
+        world_id=world_id,
         release_id=release_id,
         compatibility=compatibility,
     )
-    return contracts.ModelPublishResult(
-        manifest=contracts.PublishedModelManifest.model_validate(
+    return contracts.WorldPublishResult(
+        manifest=contracts.PublishedWorldManifest.model_validate(
             result.manifest.model_dump(mode="json")
         )
     )
 
 
-def _handle_model_fork_local(
+def _handle_world_fork_local(
     transport_ref: str,
     root_dir: str,
-) -> contracts.ModelForkResult:
-    """Create a new local fork from a published model release."""
+) -> contracts.WorldForkResult:
+    """Create a new local fork from a published world release."""
     check_permission(
-        "cruxible_model_fork",
+        "cruxible_world_fork",
         instance_id=root_dir,
         required_mode=PermissionMode.ADMIN,
     )
     validate_root_dir(root_dir)
-    result = service_fork_model(transport_ref=transport_ref, root_dir=root_dir)
+    result = service_fork_world(transport_ref=transport_ref, root_dir=root_dir)
     registered = get_registry().get_or_create_local_instance(Path(root_dir))
     get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.ModelForkResult(
+    return contracts.WorldForkResult(
         instance_id=registered.record.instance_id,
-        manifest=contracts.PublishedModelManifest.model_validate(
+        manifest=contracts.PublishedWorldManifest.model_validate(
             result.manifest.model_dump(mode="json")
         ),
     )
 
 
-def _handle_model_status_local(instance_id: str) -> contracts.ModelStatusResult:
+def _handle_world_status_local(instance_id: str) -> contracts.WorldStatusResult:
     """Return upstream tracking metadata for a release-backed fork."""
     check_permission(
-        "cruxible_model_status",
+        "cruxible_world_status",
         instance_id=instance_id,
         required_mode=PermissionMode.READ_ONLY,
     )
     instance = get_manager().get(instance_id)
-    result = service_model_status(instance)
+    result = service_world_status(instance)
     upstream = (
         contracts.UpstreamMetadataResult.model_validate(result.upstream.model_dump(mode="json"))
         if result.upstream is not None
         else None
     )
-    return contracts.ModelStatusResult(upstream=upstream)
+    return contracts.WorldStatusResult(upstream=upstream)
 
 
-def _handle_model_pull_preview_local(instance_id: str) -> contracts.ModelPullPreviewResult:
+def _handle_world_pull_preview_local(instance_id: str) -> contracts.WorldPullPreviewResult:
     """Preview pulling a newer upstream release into a fork."""
     check_permission(
-        "cruxible_model_pull_preview",
+        "cruxible_world_pull_preview",
         instance_id=instance_id,
         required_mode=PermissionMode.READ_ONLY,
     )
     instance = get_manager().get(instance_id)
-    result = service_pull_model_preview(instance)
-    return contracts.ModelPullPreviewResult(
+    result = service_pull_world_preview(instance)
+    return contracts.WorldPullPreviewResult(
         current_release_id=result.current_release_id,
         target_release_id=result.target_release_id,
         compatibility=result.compatibility,
@@ -1572,19 +1572,19 @@ def _handle_model_pull_preview_local(instance_id: str) -> contracts.ModelPullPre
     )
 
 
-def _handle_model_pull_apply_local(
+def _handle_world_pull_apply_local(
     instance_id: str,
     expected_apply_digest: str,
-) -> contracts.ModelPullApplyResult:
+) -> contracts.WorldPullApplyResult:
     """Apply a previewed upstream pull to a tracked fork."""
     check_permission(
-        "cruxible_model_pull_apply",
+        "cruxible_world_pull_apply",
         instance_id=instance_id,
         required_mode=PermissionMode.ADMIN,
     )
     instance = get_manager().get(instance_id)
-    result = service_pull_model_apply(instance, expected_apply_digest=expected_apply_digest)
-    return contracts.ModelPullApplyResult(
+    result = service_pull_world_apply(instance, expected_apply_digest=expected_apply_digest)
+    return contracts.WorldPullApplyResult(
         release_id=result.release_id,
         apply_digest=result.apply_digest,
         pre_pull_snapshot_id=result.pre_pull_snapshot_id,

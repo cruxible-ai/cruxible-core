@@ -33,8 +33,8 @@ import yaml
 from cruxible_core.errors import ConfigError
 from cruxible_core.service.execution import service_apply_workflow, service_lock, service_run
 from cruxible_core.service.lifecycle import service_init
-from cruxible_core.service.model import build_release_bundle
-from cruxible_core.snapshot.types import PublishedModelManifest
+from cruxible_core.service.world import build_release_bundle
+from cruxible_core.snapshot.types import PublishedWorldManifest
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import parse_transport_ref
 from cruxible_core.workflow.compiler import compute_path_sha256
@@ -44,7 +44,7 @@ CISA_KEV_URL = (
 )
 EPSS_KEV_URL = "https://raw.githubusercontent.com/jgamblin/KEV_EPSS/main/epss_kev_nvd.csv"
 DEFAULT_TRANSPORT_REF = "oci://ghcr.io/cruxible-ai/models/kev-reference"
-DEFAULT_MODEL_ID = "kev-reference"
+DEFAULT_WORLD_ID = "kev-reference"
 DEFAULT_WORKFLOW_NAME = "build_public_kev_reference"
 DEFAULT_COMPATIBILITY = "data_only"
 
@@ -57,7 +57,7 @@ class PublishRefs:
 
 @dataclass(frozen=True)
 class PublishKevReleaseResult:
-    manifest: PublishedModelManifest
+    manifest: PublishedWorldManifest
     immutable_ref: str
     latest_ref: str
     bundle_dir: Path
@@ -67,12 +67,12 @@ def publish_kev_release(
     *,
     transport_ref: str,
     release_id: str,
-    model_id: str = DEFAULT_MODEL_ID,
+    world_id: str = DEFAULT_WORLD_ID,
     workflow_name: str = DEFAULT_WORKFLOW_NAME,
     compatibility: str = DEFAULT_COMPATIBILITY,
     nvd_api_key: str | None = None,
 ) -> PublishKevReleaseResult:
-    """Build and publish the KEV reference release bundle."""
+    """Build and publish the KEV reference world release bundle."""
     refs = build_publish_refs(transport_ref=transport_ref, release_id=release_id)
     repo_root = _repo_root()
 
@@ -119,7 +119,7 @@ def publish_kev_release(
         bundle_dir = build_release_bundle(
             instance=instance,
             snapshot_id=applied.committed_snapshot_id,
-            model_id=model_id,
+            world_id=world_id,
             release_id=release_id,
             compatibility=compatibility,
             parent_release_id=None,
@@ -127,7 +127,7 @@ def publish_kev_release(
 
         publish_release_bundle(bundle_dir, refs)
 
-        manifest = PublishedModelManifest.model_validate_json(
+        manifest = PublishedWorldManifest.model_validate_json(
             (bundle_dir / "manifest.json").read_text(encoding="utf-8")
         )
         return PublishKevReleaseResult(
@@ -278,8 +278,8 @@ def _prepare_latest_target(ref: str) -> None:
 
 
 def _validate_release_id(value: str) -> None:
-    PublishedModelManifest(
-        model_id="kev-reference",
+    PublishedWorldManifest(
+        world_id="kev-reference",
         release_id=value,
         snapshot_id="snap_validation",
         compatibility=DEFAULT_COMPATIBILITY,
@@ -303,9 +303,9 @@ def parse_args() -> argparse.Namespace:
         help="Immutable release identifier, e.g. 2026-03-27",
     )
     parser.add_argument(
-        "--model-id",
-        default=DEFAULT_MODEL_ID,
-        help=f"Published model_id (default: {DEFAULT_MODEL_ID})",
+        "--world-id",
+        default=DEFAULT_WORLD_ID,
+        help=f"Published world_id (default: {DEFAULT_WORLD_ID})",
     )
     parser.add_argument(
         "--workflow-name",
@@ -333,12 +333,12 @@ def main() -> None:
     result = publish_kev_release(
         transport_ref=args.transport_ref,
         release_id=args.release_id,
-        model_id=args.model_id,
+        world_id=args.world_id,
         workflow_name=args.workflow_name,
         compatibility=args.compatibility,
         nvd_api_key=nvd_api_key,
     )
-    print(f"Published {result.manifest.model_id}:{result.manifest.release_id}")
+    print(f"Published {result.manifest.world_id}:{result.manifest.release_id}")
     print(f"Immutable ref: {result.immutable_ref}")
     print(f"Latest ref:    {result.latest_ref}")
     print(f"Snapshot:      {result.manifest.snapshot_id}")

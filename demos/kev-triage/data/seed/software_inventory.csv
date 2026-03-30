@@ -1,0 +1,2 @@
+asset_id,software_name,vendor,version,evidence_source,last_seen
+ASSET-1,Apache HTTP Server,Apache,2.4.49,qualys,2026-03-20

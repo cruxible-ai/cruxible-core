@@ -1,4 +1,4 @@
-name: Publish KEV Reference Model
+name: Publish KEV Reference World
 
 on:
   schedule:
@@ -29,7 +29,7 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Publish KEV reference model
+      - name: Publish KEV reference world
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: >
