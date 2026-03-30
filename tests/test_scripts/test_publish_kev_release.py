@@ -103,6 +103,9 @@ def test_publish_kev_release_file_transport_end_to_end(
 
     monkeypatch.setattr(module, "download_text", fake_download_text)
     monkeypatch.setattr(module, "load_nvd_fetcher", fake_nvd_fetcher)
+    monkeypatch.setattr(module, "MIN_KEV_ROWS", 0)
+    monkeypatch.setattr(module, "MIN_EPSS_ROWS", 0)
+    monkeypatch.setattr(module, "MIN_NVD_ENTRIES", 0)
 
     result = module.publish_kev_release(
         transport_ref=f"file://{releases_dir}",
