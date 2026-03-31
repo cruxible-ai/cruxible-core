@@ -44,6 +44,36 @@ def compose_configs(
     return CoreConfig.model_validate(composed)
 
 
+def compose_runtime_configs(
+    base: CoreConfig,
+    overlay: CoreConfig,
+    *,
+    base_config_path: Path | None = None,
+    overlay_config_path: Path | None = None,
+) -> CoreConfig:
+    """Compose a release-backed fork runtime config.
+
+    Upstream canonical workflows are removed from the base config before
+    composition so downstream forks do not attempt to rebuild upstream
+    reference state or verify build-only artifacts.
+    """
+    base_data, _removed_workflow_names, removed_provider_names = _strip_canonical_runtime_config(
+        base.model_dump(mode="python", by_alias=True, exclude_none=True)
+    )
+    overlay_data = overlay.model_dump(mode="python", by_alias=True, exclude_none=True)
+    if base_config_path is not None:
+        base_data = _rebase_artifact_uris(base_data, base_config_path.resolve().parent)
+    if overlay_config_path is not None:
+        overlay_data = _rebase_artifact_uris(overlay_data, overlay_config_path.resolve().parent)
+    composed = _compose_mapping(base_data, overlay_data)
+    composed = _strip_removed_runtime_providers(
+        composed,
+        removed_provider_names=removed_provider_names,
+    )
+    composed.pop("extends", None)
+    return CoreConfig.model_validate(composed)
+
+
 def write_composed_config(
     *,
     base_path: Path,
@@ -64,6 +94,26 @@ def write_composed_config(
     return composed
 
 
+def write_runtime_composed_config(
+    *,
+    base_path: Path,
+    overlay_path: Path,
+    output_path: Path,
+) -> CoreConfig:
+    """Compose base+overlay configs for a release-backed fork runtime."""
+    base = load_config(base_path)
+    overlay = load_config(overlay_path)
+    composed = compose_runtime_configs(
+        base,
+        overlay,
+        base_config_path=base_path,
+        overlay_config_path=overlay_path,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    save_config(composed, output_path)
+    return composed
+
+
 def compose_config_files(
     *,
     base_path: Path,
@@ -73,6 +123,22 @@ def compose_config_files(
     base = load_config(base_path)
     overlay = load_config(overlay_path)
     return compose_configs(
+        base,
+        overlay,
+        base_config_path=base_path,
+        overlay_config_path=overlay_path,
+    )
+
+
+def compose_runtime_config_files(
+    *,
+    base_path: Path,
+    overlay_path: Path,
+) -> CoreConfig:
+    """Compose two config files for release-backed fork runtime use."""
+    base = load_config(base_path)
+    overlay = load_config(overlay_path)
+    return compose_runtime_configs(
         base,
         overlay,
         base_config_path=base_path,
@@ -122,6 +188,89 @@ def _compose_relationships(
             raise ConfigError(f"Overlay cannot redefine upstream relationship '{rel['name']}'")
         merged.append(rel)
     return merged
+
+
+def _strip_canonical_runtime_config(
+    data: dict[str, Any],
+) -> tuple[dict[str, Any], set[str], set[str]]:
+    workflows = data.get("workflows")
+    if not isinstance(workflows, dict):
+        return data, set(), set()
+
+    filtered_workflows: dict[str, Any] = {}
+    removed_workflow_names: set[str] = set()
+    removed_provider_names: set[str] = set()
+    for workflow_name, workflow_value in workflows.items():
+        if isinstance(workflow_value, dict) and workflow_value.get("canonical") is True:
+            removed_workflow_names.add(workflow_name)
+            removed_provider_names.update(_workflow_provider_names(workflow_value))
+            continue
+        filtered_workflows[workflow_name] = workflow_value
+
+    if not removed_workflow_names:
+        return data, set(), set()
+
+    stripped = dict(data)
+    stripped["workflows"] = filtered_workflows
+
+    tests = data.get("tests")
+    if isinstance(tests, list):
+        stripped["tests"] = [
+            test_value
+            for test_value in tests
+            if not (
+                isinstance(test_value, dict)
+                and test_value.get("workflow") in removed_workflow_names
+            )
+        ]
+
+    return stripped, removed_workflow_names, removed_provider_names
+
+
+def _workflow_provider_names(workflow_value: dict[str, Any]) -> set[str]:
+    steps = workflow_value.get("steps")
+    if not isinstance(steps, list):
+        return set()
+
+    provider_names: set[str] = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        provider_name = step.get("provider")
+        if isinstance(provider_name, str) and provider_name:
+            provider_names.add(provider_name)
+    return provider_names
+
+
+def _strip_removed_runtime_providers(
+    data: dict[str, Any],
+    *,
+    removed_provider_names: set[str],
+) -> dict[str, Any]:
+    if not removed_provider_names:
+        return data
+
+    providers = data.get("providers")
+    workflows = data.get("workflows")
+    if not isinstance(providers, dict) or not isinstance(workflows, dict):
+        return data
+
+    used_provider_names: set[str] = set()
+    for workflow_value in workflows.values():
+        if isinstance(workflow_value, dict):
+            used_provider_names.update(_workflow_provider_names(workflow_value))
+
+    provider_names_to_remove = removed_provider_names - used_provider_names
+    if not provider_names_to_remove:
+        return data
+
+    stripped = dict(data)
+    stripped["providers"] = {
+        provider_name: provider_value
+        for provider_name, provider_value in providers.items()
+        if provider_name not in provider_names_to_remove
+    }
+    return stripped
 
 
 def _rebase_artifact_uris(data: dict[str, Any], config_dir: Path) -> dict[str, Any]:

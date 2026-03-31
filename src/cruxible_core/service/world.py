@@ -8,7 +8,10 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from cruxible_core.config.composer import compose_config_files, write_composed_config
+from cruxible_core.config.composer import (
+    compose_runtime_config_files,
+    write_runtime_composed_config,
+)
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -86,7 +89,7 @@ def service_fork_world(
         + "\n"
     )
     composed_path = root / ".cruxible" / "composed" / "config.yaml"
-    write_composed_config(
+    write_runtime_composed_config(
         base_path=upstream_dir / "config.yaml",
         overlay_path=overlay_path,
         output_path=composed_path,
@@ -137,7 +140,7 @@ def service_pull_world_preview(instance: InstanceProtocol) -> WorldPullPreviewRe
 
     root = instance.get_root_path()
     try:
-        compose_config_files(
+        compose_runtime_config_files(
             base_path=pulled.root_dir / "config.yaml",
             overlay_path=root / upstream.overlay_config_path,
         )
@@ -190,7 +193,7 @@ def service_pull_world_apply(
     pulled = _pull_bundle(upstream.transport_ref)
     root = instance.get_root_path()
     upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
-    write_composed_config(
+    write_runtime_composed_config(
         base_path=upstream_dir / "config.yaml",
         overlay_path=root / upstream.overlay_config_path,
         output_path=root / upstream.active_config_path,

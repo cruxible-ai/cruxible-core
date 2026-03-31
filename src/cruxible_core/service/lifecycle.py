@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.config.composer import compose_configs, write_composed_config
+from cruxible_core.config.composer import (
+    compose_configs,
+    write_composed_config,
+    write_runtime_composed_config,
+)
 from cruxible_core.config.loader import load_config, load_config_from_string
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -161,7 +165,7 @@ def service_reload_config(
         if not overlay_path.exists():
             raise ConfigError(f"Overlay config not found: {overlay_path}")
 
-        composed = write_composed_config(
+        composed = write_runtime_composed_config(
             base_path=root / upstream.config_path,
             overlay_path=overlay_path,
             output_path=root / upstream.active_config_path,

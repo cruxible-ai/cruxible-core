@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.config.loader import load_config
+from cruxible_core.config.schema import WorkflowSchema, WorkflowStepSchema, WorkflowTestSchema
 from cruxible_core.errors import OwnershipError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
@@ -19,10 +20,12 @@ from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
     service_fork_world,
+    service_lock,
     service_publish_world,
     service_pull_world_apply,
     service_pull_world_preview,
     service_reload_config,
+    service_test,
     service_world_status,
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
@@ -191,6 +194,74 @@ def test_pull_preview_surfaces_dangling_fork_relationships(
     preview = service_pull_world_preview(fork_instance)
     assert preview.target_release_id == "v2.0.0"
     assert any("missing upstream entity Case:CASE-B" in conflict for conflict in preview.conflicts)
+
+
+def test_fork_runtime_config_excludes_upstream_canonical_workflows(
+    canonical_workflow_instance: CruxibleInstance,
+    tmp_path: Path,
+) -> None:
+    config = canonical_workflow_instance.load_config()
+    config.workflows["list_vendors_runtime"] = WorkflowSchema(
+        contract_in="EmptyInput",
+        steps=[
+            WorkflowStepSchema(
+                id="vendors",
+                query="get_vendors",
+                params={"vendor_id": "vendor-acme"},
+                as_="vendors",
+            )
+        ],
+        returns="vendors",
+    )
+    config.tests.extend(
+        [
+            WorkflowTestSchema(
+                name="canonical_reference_smoke",
+                workflow="build_reference",
+            ),
+            WorkflowTestSchema(
+                name="runtime_vendor_smoke",
+                workflow="list_vendors_runtime",
+            ),
+        ]
+    )
+    canonical_workflow_instance.save_config(config)
+    service_add_entities(
+        canonical_workflow_instance,
+        [
+            EntityUpsertInput(
+                entity_type="Vendor",
+                entity_id="vendor-acme",
+                properties={"vendor_id": "vendor-acme", "name": "Acme"},
+            )
+        ],
+    )
+
+    service_lock(canonical_workflow_instance)
+    release_dir = tmp_path / "releases" / "current"
+    service_publish_world(
+        canonical_workflow_instance,
+        transport_ref=f"file://{release_dir}",
+        world_id="canonical-reference",
+        release_id="v1.0.0",
+        compatibility="data_only",
+    )
+
+    fork_root = tmp_path / "forked-runtime"
+    fork_result = service_fork_world(
+        transport_ref=f"file://{release_dir}",
+        root_dir=fork_root,
+    )
+
+    fork_config = fork_result.instance.load_config()
+    assert "build_reference" not in fork_config.workflows
+    assert "list_vendors_runtime" in fork_config.workflows
+    assert "reference_loader" not in fork_config.providers
+    assert [test.name for test in fork_config.tests] == ["runtime_vendor_smoke"]
+    assert (fork_result.instance.get_instance_dir() / "cruxible.lock.yaml").exists()
+    test_result = service_test(fork_result.instance)
+    assert test_result.total == 1
+    assert test_result.failed == 0
 
 
 def test_load_config_with_extends_remains_single_file(tmp_path: Path) -> None:
