@@ -63,7 +63,7 @@ relationships:
         type: float
         optional: true
     description: "Part fits a specific vehicle"
-    inverse: fitted_parts
+    reverse_name: fitted_parts
 
   - name: replaces
     from: Part

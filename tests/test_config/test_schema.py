@@ -13,10 +13,10 @@ from cruxible_core.config.schema import (
     CoreConfig,
     EntityTypeSchema,
     IngestionMapping,
-    IntegrationConfig,
-    IntegrationSpec,
+    IntegrationGuardrailSchema,
+    IntegrationSchema,
     JsonContentQualityCheck,
-    MatchingConfig,
+    MatchingSchema,
     NamedQuerySchema,
     PropertyQualityCheck,
     PropertySchema,
@@ -67,6 +67,10 @@ class TestPropertySchema:
 
 
 class TestEntityTypeSchema:
+    def test_constraints_default_empty(self):
+        entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
+        assert entity.constraints == []
+
     def test_get_primary_key(self):
         entity = EntityTypeSchema(
             properties={
@@ -103,8 +107,7 @@ class TestRelationshipSchema:
         rel = RelationshipSchema(name="r", from_entity="A", to_entity="B")
         assert rel.cardinality == "many_to_many"
         assert rel.properties == {}
-        assert rel.inverse is None
-        assert rel.is_hierarchy is False
+        assert rel.reverse_name is None
 
 
 class TestTraversalStep:
@@ -434,20 +437,7 @@ class TestCoreConfig:
         assert config.get_relationship("links") is not None
         assert config.get_relationship("missing") is None
 
-    def test_get_entity_type(self):
-        config = CoreConfig(
-            name="test",
-            entity_types={
-                "Thing": EntityTypeSchema(
-                    properties={"id": PropertySchema(type="string", primary_key=True)}
-                )
-            },
-            relationships=[],
-        )
-        assert config.get_entity_type("Thing") is not None
-        assert config.get_entity_type("Missing") is None
-
-    def test_get_hierarchy_relationships(self):
+    def test_resolve_relationship_reference(self):
         config = CoreConfig(
             name="test",
             entity_types={
@@ -460,28 +450,33 @@ class TestCoreConfig:
             },
             relationships=[
                 RelationshipSchema(
-                    name="parent_of", from_entity="A", to_entity="A", is_hierarchy=True
+                    name="links",
+                    from_entity="A",
+                    to_entity="B",
+                    reverse_name="linked_from",
                 ),
-                RelationshipSchema(name="links", from_entity="A", to_entity="B"),
             ],
         )
-        hierarchy = config.get_hierarchy_relationships()
-        assert len(hierarchy) == 1
-        assert hierarchy[0].name == "parent_of"
+        assert config.resolve_relationship_reference("links") is not None
+        assert config.resolve_relationship_reference("linked_from") is not None
+        resolved = config.resolve_relationship_reference("linked_from")
+        assert resolved is not None
+        rel, is_reverse = resolved
+        assert rel.name == "links"
+        assert is_reverse is True
 
-    def test_get_hierarchy_relationships_empty(self):
+    def test_get_entity_type(self):
         config = CoreConfig(
             name="test",
             entity_types={
-                "A": EntityTypeSchema(
+                "Thing": EntityTypeSchema(
                     properties={"id": PropertySchema(type="string", primary_key=True)}
-                ),
+                )
             },
-            relationships=[
-                RelationshipSchema(name="links", from_entity="A", to_entity="A"),
-            ],
+            relationships=[],
         )
-        assert config.get_hierarchy_relationships() == []
+        assert config.get_entity_type("Thing") is not None
+        assert config.get_entity_type("Missing") is None
 
     def test_integrations_default_empty(self):
         config = CoreConfig(
@@ -559,56 +554,52 @@ class TestCoreConfig:
 
 
 # ---------------------------------------------------------------------------
-# IntegrationSpec + IntegrationConfig + MatchingConfig
+# IntegrationSchema + IntegrationGuardrailSchema + MatchingSchema
 # ---------------------------------------------------------------------------
 
 
-class TestIntegrationSpec:
+class TestIntegrationSchema:
     def test_basic(self):
-        spec = IntegrationSpec(
+        spec = IntegrationSchema(
             kind="vector_similarity",
-            contract={"model_ref": "text-embed-3-large", "metric": "cosine"},
+            contract="embedding_contract",
             notes="semantic similarity",
         )
         assert spec.kind == "vector_similarity"
-        assert spec.contract["metric"] == "cosine"
+        assert spec.contract == "embedding_contract"
 
     def test_defaults(self):
-        spec = IntegrationSpec(kind="test")
-        assert spec.contract == {}
+        spec = IntegrationSchema(kind="test")
+        assert spec.contract is None
         assert spec.notes == ""
 
-    def test_non_serializable_contract_fails(self):
-        with pytest.raises(ValidationError, match="JSON-serializable"):
-            IntegrationSpec(kind="test", contract={"bad": object()})
 
-
-class TestIntegrationConfig:
+class TestIntegrationGuardrailSchema:
     def test_defaults(self):
-        cfg = IntegrationConfig()
+        cfg = IntegrationGuardrailSchema()
         assert cfg.role == "required"
         assert cfg.always_review_on_unsure is False
         assert cfg.note == ""
 
     def test_all_roles(self):
         for role in ("blocking", "required", "advisory"):
-            cfg = IntegrationConfig(role=role)
+            cfg = IntegrationGuardrailSchema(role=role)
             assert cfg.role == role
 
 
-class TestMatchingConfig:
+class TestMatchingSchema:
     def test_defaults(self):
-        cfg = MatchingConfig()
+        cfg = MatchingSchema()
         assert cfg.integrations == {}
         assert cfg.auto_resolve_when == "all_support"
         assert cfg.auto_resolve_requires_prior_trust == "trusted_only"
         assert cfg.max_group_size == 1000
 
     def test_full(self):
-        cfg = MatchingConfig(
+        cfg = MatchingSchema(
             integrations={
-                "bolt_check": IntegrationConfig(role="blocking"),
-                "style_v1": IntegrationConfig(role="advisory"),
+                "bolt_check": IntegrationGuardrailSchema(role="blocking"),
+                "style_v1": IntegrationGuardrailSchema(role="advisory"),
             },
             auto_resolve_when="no_contradict",
             auto_resolve_requires_prior_trust="trusted_or_watch",
@@ -628,8 +619,8 @@ class TestRelationshipSchemaMatching:
             name="fits",
             from_entity="Part",
             to_entity="Vehicle",
-            matching=MatchingConfig(
-                integrations={"bolt": IntegrationConfig(role="blocking")},
+            matching=MatchingSchema(
+                integrations={"bolt": IntegrationGuardrailSchema(role="blocking")},
                 max_group_size=100,
             ),
         )
@@ -665,8 +656,8 @@ class TestStrictMixedMode:
     def test_empty_registry_bare_labels_ok(self):
         """Empty global registry = open mode, bare labels allowed."""
         config = self._config(
-            matching=MatchingConfig(
-                integrations={"some_label": IntegrationConfig(role="blocking")}
+            matching=MatchingSchema(
+                integrations={"some_label": IntegrationGuardrailSchema(role="blocking")}
             ),
         )
         # Should not raise
@@ -674,15 +665,19 @@ class TestStrictMixedMode:
 
     def test_nonempty_registry_all_resolved_ok(self):
         config = self._config(
-            integrations={"bolt_v1": IntegrationSpec(kind="physical")},
-            matching=MatchingConfig(integrations={"bolt_v1": IntegrationConfig(role="blocking")}),
+            integrations={"bolt_v1": IntegrationSchema(kind="physical")},
+            matching=MatchingSchema(
+                integrations={"bolt_v1": IntegrationGuardrailSchema(role="blocking")}
+            ),
         )
         validate_config(config)
 
     def test_nonempty_registry_unresolved_key_error(self):
         config = self._config(
-            integrations={"bolt_v1": IntegrationSpec(kind="physical")},
-            matching=MatchingConfig(integrations={"unknown": IntegrationConfig(role="blocking")}),
+            integrations={"bolt_v1": IntegrationSchema(kind="physical")},
+            matching=MatchingSchema(
+                integrations={"unknown": IntegrationGuardrailSchema(role="blocking")}
+            ),
         )
         with pytest.raises(ConfigError, match="not found in global integrations"):
             validate_config(config)
@@ -690,13 +685,13 @@ class TestStrictMixedMode:
     def test_no_matching_section_ok(self):
         """Matching=None is always fine."""
         config = self._config(
-            integrations={"bolt_v1": IntegrationSpec(kind="physical")},
+            integrations={"bolt_v1": IntegrationSchema(kind="physical")},
             matching=None,
         )
         validate_config(config)
 
 
-class TestMatchingConfigRoundTrip:
+class TestMatchingSchemaRoundTrip:
     """Load -> save -> load preserves integrations + matching."""
 
     def test_round_trip(self, tmp_path):
@@ -714,11 +709,15 @@ entity_types:
       id:
         type: string
         primary_key: true
+contracts:
+  embedding_io:
+    fields:
+      model_ref:
+        type: string
 integrations:
   cosine_v1:
     kind: vector_similarity
-    contract:
-      model_ref: text-embed-3-large
+    contract: embedding_io
     notes: semantic similarity
 relationships:
   - name: fits
@@ -751,7 +750,7 @@ relationships:
         assert rel2.matching is not None
         assert rel2.matching.integrations["cosine_v1"].role == "blocking"
         assert rel2.matching.integrations["cosine_v1"].always_review_on_unsure is True
-        assert config2.integrations["cosine_v1"].contract["model_ref"] == "text-embed-3-large"
+        assert config2.integrations["cosine_v1"].contract == "embedding_io"
 
 
 class TestQualityCheckValidation:

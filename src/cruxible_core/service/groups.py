@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from cruxible_core.config.schema import MatchingConfig
+from cruxible_core.config.schema import MatchingSchema
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
@@ -32,7 +32,7 @@ from cruxible_core.service.types import (
 
 def derive_review_priority(
     members: list[CandidateMember],
-    matching: MatchingConfig | None,
+    matching: MatchingSchema | None,
     prior_resolution: dict[str, Any] | None,
 ) -> str:
     """Derive review_priority mechanically from universal states.
@@ -372,7 +372,7 @@ def _policy_expired(expires_at: str | None) -> bool:
 
 def _check_auto_resolve_signals(
     members: list[CandidateMember],
-    matching: MatchingConfig,
+    matching: MatchingSchema,
 ) -> bool:
     """Check if signals meet the auto_resolve_when policy.
 

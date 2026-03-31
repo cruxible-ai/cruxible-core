@@ -20,7 +20,7 @@ description: For MCP group tool tests
 integrations:
   check_v1:
     kind: generic
-    contract: {}
+    contract: null
 
 entity_types:
   Vehicle:

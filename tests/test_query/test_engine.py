@@ -52,6 +52,7 @@ def config() -> CoreConfig:
                 name="fits",
                 from_entity="Part",
                 to_entity="Vehicle",
+                reverse_name="fitted_parts",
                 properties={
                     "verified": PropertySchema(type="bool"),
                     "confidence": PropertySchema(type="float", optional=True),
@@ -90,6 +91,18 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Vehicle]",
+            ),
+            "fitted_parts_for_vehicle": NamedQuerySchema(
+                description="Find parts for a vehicle using the reverse relationship alias",
+                entry_point="Vehicle",
+                traversal=[
+                    TraversalStep(
+                        relationship="fitted_parts",
+                        direction="outgoing",
+                        filter={"verified": True},
+                    )
+                ],
+                returns="list[Part]",
             ),
             "replacements_for_vehicle": NamedQuerySchema(
                 description="Find replacements that fit a specific vehicle",
@@ -271,6 +284,18 @@ class TestExecuteQuery:
         part_ids = {r.entity_id for r in result.results}
         # BP-1234 fits ACCORD but is unverified
         assert len(part_ids) == 0
+
+    def test_parts_for_vehicle_via_reverse_name(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        result = execute_query(
+            config,
+            graph,
+            "fitted_parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        part_ids = {r.entity_id for r in result.results}
+        assert part_ids == {"BP-1234", "BP-5678"}
 
     def test_vehicles_for_part(self, config: CoreConfig, graph: EntityGraph):
         result = execute_query(config, graph, "vehicles_for_part", {"part_number": "BP-1234"})

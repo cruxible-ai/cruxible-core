@@ -54,7 +54,7 @@ relationships:
       source:
         type: string
         optional: true
-    inverse: fitted_parts
+    reverse_name: fitted_parts
   - name: replaces
     from: Part
     to: Part

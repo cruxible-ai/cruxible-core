@@ -9,7 +9,9 @@ Hierarchy:
     ├── entity_types: dict[str, EntityTypeSchema]
     │   └── properties: dict[str, PropertySchema]
     ├── relationships: list[RelationshipSchema]
-    │   └── properties: dict[str, PropertySchema]
+    │   ├── properties: dict[str, PropertySchema]
+    │   └── matching: MatchingSchema
+    │       └── integrations: dict[str, IntegrationGuardrailSchema]
     ├── named_queries: dict[str, NamedQuerySchema]
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
@@ -18,6 +20,7 @@ Hierarchy:
     ├── quality_checks: list[QualityCheckSchema]
     ├── decision_policies: list[DecisionPolicySchema]
     ├── ingestion: dict[str, IngestionMapping]
+    ├── integrations: dict[str, IntegrationSchema]
     ├── contracts: dict[str, ContractSchema]
     ├── artifacts: dict[str, ProviderArtifactSchema]
     ├── providers: dict[str, ProviderSchema]
@@ -95,31 +98,24 @@ class EntityTypeSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class IntegrationSpec(BaseModel):
+class IntegrationSchema(BaseModel):
     """Global integration definition. Identity + stable contract.
 
     Integration specs are immutable by convention: any semantic change
     (different model, different fields, different metric) requires a new key
     (e.g. cosine_similarity_v2). Not enforced at runtime in v0.2.0.
+
+    The ``contract`` field references a named ContractSchema key defined in
+    ``CoreConfig.contracts``.  Cross-reference validation happens in the
+    ``validate_integration_contracts`` root validator on ``CoreConfig``.
     """
 
     kind: str
-    contract: dict[str, Any] = Field(default_factory=dict)
+    contract: str | None = None
     notes: str = ""
 
-    @field_validator("contract")
-    @classmethod
-    def validate_contract_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
-        """Ensure contract is JSON-serializable."""
-        try:
-            _json.dumps(v, sort_keys=True)
-        except (TypeError, ValueError) as exc:
-            msg = f"contract must be JSON-serializable: {exc}"
-            raise ValueError(msg) from exc
-        return v
 
-
-class IntegrationConfig(BaseModel):
+class IntegrationGuardrailSchema(BaseModel):
     """Per-integration guardrails for candidate group proposals."""
 
     role: Literal["blocking", "required", "advisory"] = "required"
@@ -127,10 +123,10 @@ class IntegrationConfig(BaseModel):
     note: str = ""
 
 
-class MatchingConfig(BaseModel):
+class MatchingSchema(BaseModel):
     """Guardrails for candidate group proposals on a relationship type."""
 
-    integrations: dict[str, IntegrationConfig] = Field(default_factory=dict)
+    integrations: dict[str, IntegrationGuardrailSchema] = Field(default_factory=dict)
     auto_resolve_when: Literal["all_support", "no_contradict"] = "all_support"
     auto_resolve_requires_prior_trust: Literal["trusted_only", "trusted_or_watch"] = "trusted_only"
     max_group_size: int = 1000
@@ -150,9 +146,8 @@ class RelationshipSchema(BaseModel):
     cardinality: str = "many_to_many"
     properties: dict[str, PropertySchema] = Field(default_factory=dict)
     description: str | None = None
-    inverse: str | None = None
-    is_hierarchy: bool = False
-    matching: MatchingConfig | None = None
+    reverse_name: str | None = Field(default=None, validation_alias="inverse")
+    matching: MatchingSchema | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -765,7 +760,41 @@ class ListRelationshipsSpec(BaseModel):
 
 
 class WorkflowStepSchema(BaseModel):
-    """Single step in a declarative workflow."""
+    """Single step in a declarative workflow.
+
+    Exactly one step kind must be set per step. The 12 kinds fall into
+    four logical phases:
+
+    Phase 1 — Read (pull data in):
+        query               Run a named query against the graph.
+        list_entities       List entities by type with optional filters.
+        list_relationships  List relationships by type with optional filters.
+
+    Phase 2 — Compute (transform data):
+        provider            Call an external provider (function/model/tool).
+        assert              Guard condition; fails the workflow if false.
+
+    Phase 3 — Build (structure results for the graph):
+        make_candidates     Build relationship candidate pairs from list data.
+        map_signals         Convert provider scores/enums into tri-state signals.
+        propose_relationship_group
+                            Assemble candidates + signals into a governed
+                            group proposal.
+        make_entities       Build entity objects from list data.
+        make_relationships  Build relationship objects from list data.
+
+    Phase 4 — Write (mutate the graph, only in ``apply`` mode):
+        apply_entities      Write built entities into the graph.
+        apply_relationships Write built relationships into the graph.
+
+    Steps reference earlier outputs via ``$steps.<id>`` or ``$item``
+    (in list contexts). Typical flows::
+
+        query → provider → make_candidates → propose_relationship_group
+                         → map_signals    ↗
+
+        list_entities → provider → make_relationships → apply_relationships
+    """
 
     id: str
     query: str | None = None
@@ -788,24 +817,24 @@ class WorkflowStepSchema(BaseModel):
 
     @model_validator(mode="after")
     def validate_step_shape(self) -> WorkflowStepSchema:
-        kinds = sum(
-            candidate is not None
-            for candidate in (
-                self.query,
-                self.provider,
-                self.assert_spec,
-                self.list_entities,
-                self.list_relationships,
-                self.make_candidates,
-                self.map_signals,
-                self.propose_relationship_group,
-                self.make_entities,
-                self.make_relationships,
-                self.apply_entities,
-                self.apply_relationships,
-            )
-        )
-        if kinds != 1:
+        step_candidates = {
+            "query": self.query,
+            "provider": self.provider,
+            "assert": self.assert_spec,
+            "list_entities": self.list_entities,
+            "list_relationships": self.list_relationships,
+            "make_candidates": self.make_candidates,
+            "map_signals": self.map_signals,
+            "propose_relationship_group": self.propose_relationship_group,
+            "make_entities": self.make_entities,
+            "make_relationships": self.make_relationships,
+            "apply_entities": self.apply_entities,
+            "apply_relationships": self.apply_relationships,
+        }
+        active_step_kinds = [
+            name for name, candidate in step_candidates.items() if candidate is not None
+        ]
+        if len(active_step_kinds) != 1:
             msg = (
                 "Workflow step must define exactly one of 'query', 'provider', 'assert', "
                 "'list_entities', 'list_relationships', 'make_candidates', "
@@ -815,141 +844,34 @@ class WorkflowStepSchema(BaseModel):
             )
             raise ValueError(msg)
 
-        if self.query is not None:
-            if self.as_ is None:
-                msg = "Query workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "Query workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
+        step_kind = active_step_kinds[0]
+        step_policies = {
+            "query": {"require_as": True, "allow_params": True, "allow_input": False},
+            "provider": {"require_as": True, "allow_params": False, "allow_input": True},
+            "assert": {"require_as": False, "allow_params": False, "allow_input": False},
+        }
+        policy = step_policies.get(
+            step_kind,
+            {"require_as": True, "allow_params": False, "allow_input": False},
+        )
+        step_label = "Assert" if step_kind == "assert" else step_kind
 
-        if self.provider is not None:
+        if policy["require_as"]:
             if self.as_ is None:
-                msg = "Provider workflow steps require 'as'"
+                msg = f"{step_kind} workflow steps require 'as'"
                 raise ValueError(msg)
-            if self.params:
-                msg = "Provider workflow steps may not define 'params'"
-                raise ValueError(msg)
-            return self
-
-        if self.list_entities is not None:
-            if self.as_ is None:
-                msg = "list_entities workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "list_entities workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "list_entities workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.list_relationships is not None:
-            if self.as_ is None:
-                msg = "list_relationships workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "list_relationships workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "list_relationships workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.make_candidates is not None:
-            if self.as_ is None:
-                msg = "make_candidates workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "make_candidates workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "make_candidates workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.map_signals is not None:
-            if self.as_ is None:
-                msg = "map_signals workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "map_signals workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "map_signals workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.propose_relationship_group is not None:
-            if self.as_ is None:
-                msg = "propose_relationship_group workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "propose_relationship_group workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "propose_relationship_group workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.make_entities is not None:
-            if self.as_ is None:
-                msg = "make_entities workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "make_entities workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "make_entities workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.make_relationships is not None:
-            if self.as_ is None:
-                msg = "make_relationships workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "make_relationships workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "make_relationships workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.apply_entities is not None:
-            if self.as_ is None:
-                msg = "apply_entities workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "apply_entities workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "apply_entities workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.apply_relationships is not None:
-            if self.as_ is None:
-                msg = "apply_relationships workflow steps require 'as'"
-                raise ValueError(msg)
-            if self.params:
-                msg = "apply_relationships workflow steps may not define 'params'"
-                raise ValueError(msg)
-            if self.input:
-                msg = "apply_relationships workflow steps may not define 'input'"
-                raise ValueError(msg)
-            return self
-
-        if self.as_ is not None:
-            msg = "Assert workflow steps may not define 'as'"
+        elif self.as_ is not None:
+            msg = f"{step_label} workflow steps may not define 'as'"
             raise ValueError(msg)
-        if self.params:
-            msg = "Assert workflow steps may not define 'params'"
+
+        if not policy["allow_params"] and self.params:
+            msg = f"{step_label} workflow steps may not define 'params'"
             raise ValueError(msg)
-        if self.input:
-            msg = "Assert workflow steps may not define 'input'"
+
+        if not policy["allow_input"] and self.input:
+            msg = f"{step_label} workflow steps may not define 'input'"
             raise ValueError(msg)
+
         return self
 
 
@@ -1071,7 +993,7 @@ class CoreConfig(BaseModel):
     quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
     decision_policies: list[DecisionPolicySchema] = Field(default_factory=list)
     ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
-    integrations: dict[str, IntegrationSpec] = Field(default_factory=dict)
+    integrations: dict[str, IntegrationSchema] = Field(default_factory=dict)
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
     artifacts: dict[str, ProviderArtifactSchema] = Field(default_factory=dict)
     providers: dict[str, ProviderSchema] = Field(default_factory=dict)
@@ -1084,11 +1006,40 @@ class CoreConfig(BaseModel):
             raise ValueError("entity_types must not be empty unless extends is set")
         return self
 
+    @model_validator(mode="after")
+    def validate_integration_contracts(self) -> CoreConfig:
+        """Check that integration contract refs point to existing contracts."""
+        for name, spec in self.integrations.items():
+            if spec.contract is not None and spec.contract not in self.contracts:
+                msg = (
+                    f"Integration '{name}' references contract '{spec.contract}' "
+                    f"which is not defined in contracts"
+                )
+                raise ValueError(msg)
+        return self
+
     def get_relationship(self, name: str) -> RelationshipSchema | None:
         """Find a relationship schema by name."""
         for rel in self.relationships:
             if rel.name == name:
                 return rel
+        return None
+
+    def resolve_relationship_reference(
+        self,
+        name: str,
+    ) -> tuple[RelationshipSchema, bool] | None:
+        """Resolve a canonical relationship name or reverse-name alias.
+
+        Returns the canonical relationship schema plus a boolean indicating
+        whether the reference used the reverse-facing alias.
+        """
+        for rel in self.relationships:
+            if rel.name == name:
+                return rel, False
+        for rel in self.relationships:
+            if rel.reverse_name == name:
+                return rel, True
         return None
 
     def get_entity_type(self, name: str) -> EntityTypeSchema | None:
@@ -1102,7 +1053,3 @@ class CoreConfig(BaseModel):
     def get_outcome_profile(self, profile_key: str) -> OutcomeProfileSchema | None:
         """Find an outcome profile by key."""
         return self.outcome_profiles.get(profile_key)
-
-    def get_hierarchy_relationships(self) -> list[RelationshipSchema]:
-        """Return relationship schemas marked as hierarchy."""
-        return [r for r in self.relationships if r.is_hierarchy]

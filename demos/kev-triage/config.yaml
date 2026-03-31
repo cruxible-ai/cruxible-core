@@ -400,8 +400,7 @@ quality_checks:
 integrations:
   software_product_match:
     kind: software_product_fuzzy_match
-    contract:
-      output: support|unsure|contradict
+    contract: null
     notes: >
       Fuzzy matching between internal software inventory names
       (e.g. "Apache HTTP Server 2.4.49") and reference-layer CPE
@@ -410,40 +409,35 @@ integrations:
 
   product_version_evidence:
     kind: product_version_match
-    contract:
-      output: support|unsure|contradict
+    contract: null
     notes: >
       Matches installed product version against NVD affected version
       ranges to determine if an asset is actually affected.
 
   exploitability_signal:
     kind: exploitability_assessment
-    contract:
-      output: support|unsure|contradict
+    contract: null
     notes: >
       Assesses whether a vulnerability is practically exploitable on
       a specific asset given its environment and exposure posture.
 
   control_effectiveness:
     kind: compensating_control_review
-    contract:
-      output: support|unsure|contradict
+    contract: null
     notes: >
       Reviews whether a compensating control materially reduces
       exploitability for the specific vulnerability class.
 
   dependency_context:
     kind: service_dependency_context
-    contract:
-      output: support|unsure|contradict
+    contract: null
     notes: >
       Evaluates whether a vulnerability on an asset actually impacts
       the business service through real dependency paths.
 
   policy_review:
     kind: remediation_policy_review
-    contract:
-      output: support|unsure|contradict
+    contract: null
     notes: >
       Reviews whether a patch exception is still valid per
       organizational remediation policy.
@@ -583,24 +577,6 @@ contracts:
               version: {type: string}
               evidence_source: {type: string}
               last_seen: {type: string}
-
-  ReferenceProductCatalog:
-    description: Canonical reference-layer products available for matching.
-    fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              product_id: {type: string}
-              product_name: {type: string}
-              vendor_id: {type: string}
-              vendor_name: {type: string}
-              cpe_vendor: {type: string}
-              cpe_product: {type: string}
-              cpe_part: {type: string}
 
   SoftwareMatchInput:
     description: Software inventory rows plus canonical reference products to match against.
@@ -757,20 +733,6 @@ providers:
     deterministic: true
     runtime: python
     artifact: fork_seed_bundle
-
-  load_reference_product_catalog:
-    kind: function
-    description: >
-      Load canonical reference products from the upstream public data
-      artifact so the matcher can resolve internal software names to
-      reference-layer product IDs.
-    contract_in: EmptyInput
-    contract_out: ReferenceProductCatalog
-    ref: cruxible_core.demo_providers.kev_triage.load_reference_product_catalog
-    version: "1.0.0"
-    deterministic: true
-    runtime: python
-    artifact: public_kev_bundle
 
   match_software_to_products:
     kind: function
@@ -1015,8 +977,8 @@ workflows:
         input: {}
         as: inventory
       - id: reference_products
-        provider: load_reference_product_catalog
-        input: {}
+        list_entities:
+          entity_type: Product
         as: reference_products
       - id: matches
         provider: match_software_to_products

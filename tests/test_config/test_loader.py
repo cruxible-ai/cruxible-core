@@ -85,7 +85,7 @@ relationships: []
         assert fits is not None
         assert fits.from_entity == "Part"
         assert fits.to_entity == "Vehicle"
-        assert fits.inverse == "fitted_parts"
+        assert fits.reverse_name == "fitted_parts"
         assert "verified" in fits.properties
 
         replaces = config.get_relationship("replaces")
@@ -170,6 +170,25 @@ class TestSaveConfig:
         reloaded = load_config(out_path)
         names = [c.name for c in reloaded.constraints]
         assert "test_constraint" in names
+
+    def test_save_config_with_entity_constraints(self, tmp_path: Path):
+        yaml_str = (
+            "version: '1.0'\n"
+            "name: entity_constraints\n"
+            "entity_types:\n"
+            "  Thing:\n"
+            "    constraints:\n"
+            "      - thing.id != ''\n"
+            "    properties:\n"
+            "      id: {type: string, primary_key: true}\n"
+            "relationships: []\n"
+        )
+        config = load_config(yaml_str)
+        out_path = tmp_path / "entity_constraints.yaml"
+        save_config(config, out_path)
+
+        reloaded = load_config(out_path)
+        assert reloaded.entity_types["Thing"].constraints == ["thing.id != ''"]
 
     def test_save_config_relationship_aliases(self, tmp_path: Path):
         """Output YAML uses 'from'/'to' not 'from_entity'/'to_entity'."""
