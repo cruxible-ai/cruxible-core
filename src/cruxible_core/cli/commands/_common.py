@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json as _json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -25,6 +26,15 @@ from cruxible_core.service import service_sample, service_schema
 
 console = Console()
 ResultT = TypeVar("ResultT")
+
+json_option = click.option(
+    "--json", "output_json", is_flag=True, default=False, help="Output as JSON.",
+)
+
+
+def _emit_json(data: Any) -> None:
+    """Emit structured JSON to stdout, bypassing Rich."""
+    click.echo(_json.dumps(data, indent=2, default=str))
 
 
 def _root_ctx_obj() -> dict[str, Any]:

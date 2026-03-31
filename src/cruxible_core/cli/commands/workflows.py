@@ -12,9 +12,11 @@ from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _dispatch_cli,
     _dispatch_cli_instance,
+    _emit_json,
     _print_apply_previews,
     _read_text_or_error,
     _resolve_workflow_input,
+    json_option,
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.service import (
@@ -151,9 +153,13 @@ def plan_cmd(workflow_name: str, input_text: str | None, input_file: str | None)
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
+@json_option
 @handle_errors
-def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None) -> None:
-    """Execute a workflow for the current instance."""
+def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None, output_json: bool) -> None:
+    """Execute a workflow for the current instance.
+
+    For workflows that produce group proposals, use 'cruxible propose' instead.
+    """
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.workflow_run(
@@ -163,6 +169,17 @@ def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None) 
         ),
         lambda instance: service_run(instance, workflow_name, payload),
     )
+    if output_json:
+        _emit_json({
+            "workflow": result.workflow,
+            "mode": result.mode,
+            "apply_digest": result.apply_digest,
+            "head_snapshot_id": result.head_snapshot_id,
+            "receipt_id": result.receipt_id,
+            "trace_ids": result.trace_ids or [],
+            "output": result.output,
+        })
+        return
     click.echo(f"Workflow {result.workflow} completed.")
     if result.mode != "run":
         click.echo(f"Mode: {result.mode}")
@@ -194,6 +211,7 @@ def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None) 
     default=None,
     help="Expected head snapshot ID from workflow preview.",
 )
+@json_option
 @handle_errors
 def apply_cmd(
     workflow_name: str,
@@ -201,6 +219,7 @@ def apply_cmd(
     input_file: str | None,
     apply_digest: str,
     head_snapshot: str | None,
+    output_json: bool,
 ) -> None:
     """Apply a canonical workflow after verifying preview identity."""
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
@@ -220,6 +239,14 @@ def apply_cmd(
             expected_head_snapshot_id=head_snapshot,
         ),
     )
+    if output_json:
+        _emit_json({
+            "workflow": result.workflow,
+            "committed_snapshot_id": result.committed_snapshot_id,
+            "receipt_id": result.receipt_id,
+            "output": result.output,
+        })
+        return
     click.echo(f"Workflow {result.workflow} applied.")
     if result.committed_snapshot_id:
         click.echo(f"Committed snapshot: {result.committed_snapshot_id}")
@@ -258,8 +285,9 @@ def test_cmd(test_name: str | None) -> None:
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
+@json_option
 @handle_errors
-def propose_cmd(workflow_name: str, input_text: str | None, input_file: str | None) -> None:
+def propose_cmd(workflow_name: str, input_text: str | None, input_file: str | None, output_json: bool) -> None:
     """Execute a workflow and bridge its output into a candidate group."""
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     result = _dispatch_cli_instance(
@@ -270,6 +298,17 @@ def propose_cmd(workflow_name: str, input_text: str | None, input_file: str | No
         ),
         lambda instance: service_propose_workflow(instance, workflow_name, payload),
     )
+
+    if output_json:
+        _emit_json({
+            "workflow": result.workflow,
+            "group_id": result.group_id,
+            "status": result.group_status,
+            "receipt_id": result.receipt_id,
+            "trace_ids": result.trace_ids or [],
+            "output": result.output,
+        })
+        return
 
     click.echo(f"Workflow {result.workflow} proposed group {result.group_id}.")
     click.echo(f"Receipt ID: {result.receipt_id}")
