@@ -14,6 +14,7 @@ from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _candidates_from_payload,
     _dispatch_cli_instance,
+    _emit_json,
     _entities_from_payload,
     _get_client,
     _lookup_query_param_hints_local,
@@ -23,6 +24,7 @@ from cruxible_core.cli.commands._common import (
     _require_instance_id,
     _require_local_instance,
     console,
+    json_option,
 )
 from cruxible_core.cli.formatting import (
     candidates_table,
@@ -61,12 +63,14 @@ from cruxible_core.service import (
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
+@json_option
 @handle_errors
 def query(
     query_name: str,
     param: tuple[str, ...],
     limit: int | None,
     count_only: bool,
+    output_json: bool,
 ) -> None:
     """Execute a named query and save the receipt."""
     params = _parse_params(param)
@@ -84,6 +88,19 @@ def query(
             raise
         results = _entities_from_payload(result.results)
         total = result.total_results
+        if output_json:
+            items = [] if count_only else [r.model_dump(mode="python") for r in results]
+            if limit is not None and not count_only:
+                items = items[:limit]
+            _emit_json({
+                "results": items,
+                "total_results": total,
+                "steps_executed": result.steps_executed,
+                "receipt_id": result.receipt_id,
+                "param_hints": result.param_hints.model_dump(mode="python") if result.param_hints else None,
+                "policy_summary": result.policy_summary.model_dump(mode="python") if hasattr(result, "policy_summary") and result.policy_summary else None,
+            })
+            return
         click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
         if count_only:
             _print_query_param_hints(result.param_hints)
@@ -107,6 +124,19 @@ def query(
 
     results = result.results
     total = result.total_results
+    if output_json:
+        items = [] if count_only else [{"entity_type": e.entity_type, "entity_id": e.entity_id, "properties": dict(e.properties)} for e in results]
+        if limit is not None and not count_only:
+            items = items[:limit]
+        _emit_json({
+            "results": items,
+            "total_results": total,
+            "steps_executed": result.steps_executed,
+            "receipt_id": result.receipt_id,
+            "param_hints": asdict(result.param_hints) if result.param_hints is not None else None,
+            "policy_summary": result.policy_summary if result.policy_summary else None,
+        })
+        return
     click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
     if count_only:
         hints = None
@@ -161,19 +191,24 @@ def explain(receipt_id: str, fmt: str) -> None:
 
 
 @click.command()
+@json_option
 @handle_errors
-def schema() -> None:
+def schema(output_json: bool) -> None:
     """Display the config schema for this instance."""
     config = _dispatch_cli_instance(
         lambda client, instance_id: CoreConfig.model_validate(client.schema(instance_id)),
         service_schema,
     )
+    if output_json:
+        _emit_json(config.model_dump(mode="python"))
+        return
     console.print(schema_table(config))
 
 
 @click.command("stats")
+@json_option
 @handle_errors
-def stats_cmd() -> None:
+def stats_cmd(output_json: bool) -> None:
     """Display entity and relationship counts for this instance."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.stats(instance_id),
@@ -184,6 +219,15 @@ def stats_cmd() -> None:
     entity_counts = result.entity_counts
     relationship_counts = result.relationship_counts
     head_snapshot_id = result.head_snapshot_id
+    if output_json:
+        _emit_json({
+            "entity_count": entity_count,
+            "edge_count": edge_count,
+            "entity_counts": entity_counts,
+            "relationship_counts": relationship_counts,
+            "head_snapshot_id": head_snapshot_id,
+        })
+        return
     click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
     if head_snapshot_id:
         click.echo(f"Head snapshot: {head_snapshot_id}")
@@ -193,8 +237,9 @@ def stats_cmd() -> None:
 @click.command()
 @click.option("--type", "entity_type", required=True, help="Entity type to sample.")
 @click.option("--limit", default=5, help="Number of entities to show.")
+@json_option
 @handle_errors
-def sample(entity_type: str, limit: int) -> None:
+def sample(entity_type: str, limit: int, output_json: bool) -> None:
     """Show a sample of entities of a given type."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.sample(instance_id, entity_type, limit=limit),
@@ -205,6 +250,12 @@ def sample(entity_type: str, limit: int) -> None:
         if isinstance(result, contracts.SampleResult)
         else result
     )
+    if output_json:
+        _emit_json({
+            "entities": [e.model_dump(mode="python") for e in entities],
+            "entity_type": entity_type,
+        })
+        return
     console.print(entities_table(entities, entity_type))
 
 
@@ -213,8 +264,9 @@ def sample(entity_type: str, limit: int) -> None:
     "--threshold", default=0.5, type=float, help="Confidence threshold for flagging edges."
 )
 @click.option("--limit", default=100, type=int, help="Max findings to show.")
+@json_option
 @handle_errors
-def evaluate(threshold: float, limit: int) -> None:
+def evaluate(threshold: float, limit: int, output_json: bool) -> None:
     """Assess graph quality: orphans, gaps, violations, unreviewed co-members."""
     report = _dispatch_cli_instance(
         lambda client, instance_id: client.evaluate(
@@ -237,6 +289,18 @@ def evaluate(threshold: float, limit: int) -> None:
     edge_count = report.edge_count
     summary = report.summary
     quality_summary = report.quality_summary
+    constraint_summary = getattr(report, "constraint_summary", {})
+
+    if output_json:
+        _emit_json({
+            "findings": findings,
+            "entity_count": entity_count,
+            "edge_count": edge_count,
+            "summary": summary,
+            "quality_summary": quality_summary,
+            "constraint_summary": constraint_summary,
+        })
+        return
 
     click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
     click.echo(f"Findings: {len(findings)}")
@@ -340,6 +404,7 @@ def inspect_group() -> None:
     default=None, help="Optional relationship filter.",
 )
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max neighbors to show.")
+@json_option
 @handle_errors
 def inspect_entity_cmd(
     entity_type: str,
@@ -347,6 +412,7 @@ def inspect_entity_cmd(
     direction: str,
     relationship_type: str | None,
     limit: int | None,
+    output_json: bool,
 ) -> None:
     """Inspect an entity and its immediate neighbors."""
     def _remote_fetch(
@@ -408,6 +474,16 @@ def inspect_entity_cmd(
         _remote_fetch,
         _local_fetch,
     )
+    if output_json:
+        _emit_json({
+            "found": inspect_result.found,
+            "entity_type": inspect_result.entity_type,
+            "entity_id": inspect_result.entity_id,
+            "properties": inspect_result.properties,
+            "neighbors": neighbor_rows,
+            "total_neighbors": inspect_result.total_neighbors,
+        })
+        return
     if not inspect_result.found:
         click.echo("Not found.")
         return
@@ -431,8 +507,9 @@ def inspect_entity_cmd(
 @click.command("get-entity")
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", required=True, help="Entity ID.")
+@json_option
 @handle_errors
-def get_entity_cmd(entity_type: str, entity_id: str) -> None:
+def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
     """Look up a specific entity by type and ID."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.get_entity(instance_id, entity_type, entity_id),
@@ -440,6 +517,9 @@ def get_entity_cmd(entity_type: str, entity_id: str) -> None:
     )
     if isinstance(result, contracts.GetEntityResult):
         if not result.found:
+            if output_json:
+                _emit_json({"found": False, "entity_type": entity_type, "entity_id": entity_id})
+                return
             click.echo("Not found.")
             return
         entity = EntityInstance(
@@ -449,9 +529,19 @@ def get_entity_cmd(entity_type: str, entity_id: str) -> None:
         )
     else:
         if result is None:
+            if output_json:
+                _emit_json({"found": False, "entity_type": entity_type, "entity_id": entity_id})
+                return
             click.echo("Not found.")
             return
         entity = result
+    if output_json:
+        _emit_json({
+            "entity_type": entity.entity_type,
+            "entity_id": entity.entity_id,
+            "properties": dict(entity.properties),
+        })
+        return
     console.print(entities_table([entity], entity_type))
 
 
@@ -462,6 +552,7 @@ def get_entity_cmd(entity_type: str, entity_id: str) -> None:
 @click.option("--to-type", required=True, help="Target entity type.")
 @click.option("--to-id", required=True, help="Target entity ID.")
 @click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
+@json_option
 @handle_errors
 def get_relationship_cmd(
     from_type: str,
@@ -470,6 +561,7 @@ def get_relationship_cmd(
     to_type: str,
     to_id: str,
     edge_key: int | None,
+    output_json: bool,
 ) -> None:
     """Look up a specific relationship by its endpoints and type."""
     result = _dispatch_cli_instance(
@@ -494,6 +586,9 @@ def get_relationship_cmd(
     )
     if isinstance(result, contracts.GetRelationshipResult):
         if not result.found:
+            if output_json:
+                _emit_json({"found": False, "relationship_type": relationship})
+                return
             click.echo("Not found.")
             return
         rel = RelationshipInstance(
@@ -507,9 +602,15 @@ def get_relationship_cmd(
         )
     else:
         if result is None:
+            if output_json:
+                _emit_json({"found": False, "relationship_type": relationship})
+                return
             click.echo("Not found.")
             return
         rel = result
+    if output_json:
+        _emit_json(rel.model_dump(mode="python"))
+        return
     console.print(relationship_table(rel))
 
 

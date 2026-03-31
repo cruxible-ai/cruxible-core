@@ -158,9 +158,6 @@ relationships:
       evidence_source:
         type: string
         optional: true
-      match_confidence:
-        type: number
-        optional: true
     matching:
       integrations:
         software_product_match:
@@ -310,6 +307,40 @@ named_queries:
       - relationship: vulnerability_affects_product
         direction: incoming
       - relationship: asset_affected_by_vulnerability
+        direction: incoming
+
+  vendor_service_impact:
+    description: >
+      Starting from a vendor, trace through affected products, confirmed
+      vulnerable assets, and service dependencies to find business services
+      in the blast radius. This is the question you ask when a vendor
+      discloses a breach or a critical supply-chain vulnerability.
+    entry_point: Vendor
+    returns: BusinessService
+    traversal:
+      - relationship: product_from_vendor
+        direction: incoming
+      - relationship: vulnerability_affects_product
+        direction: incoming
+      - relationship: asset_affected_by_vulnerability
+        direction: incoming
+      - relationship: service_depends_on_asset
+        direction: incoming
+
+  control_coverage_gap:
+    description: >
+      Starting from a compensating control, find the business services
+      that would lose coverage if this control were disabled or invalidated.
+      Traces from control through covered assets to exposed vulnerabilities
+      to dependent services.
+    entry_point: CompensatingControl
+    returns: BusinessService
+    traversal:
+      - relationship: asset_has_control
+        direction: incoming
+      - relationship: asset_exposed_to_vulnerability
+        direction: outgoing
+      - relationship: service_impacted_by_vulnerability
         direction: incoming
 
   asset_exception_context:
@@ -1004,7 +1035,6 @@ workflows:
           properties:
             installed_version: $item.installed_version
             evidence_source: $item.evidence_source
-            match_confidence: $item.match_confidence
         as: candidates
       - id: signals
         map_signals:

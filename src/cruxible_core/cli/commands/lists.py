@@ -11,11 +11,13 @@ import click
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
+    _emit_json,
     _entities_from_payload,
     _feedback_from_payload,
     _outcomes_from_payload,
     _require_local_instance,
     console,
+    json_option,
 )
 from cruxible_core.cli.formatting import (
     edges_table,
@@ -38,8 +40,9 @@ def list_group() -> None:
 @list_group.command("entities")
 @click.option("--type", "entity_type", required=True, help="Entity type to list.")
 @click.option("--limit", default=50, help="Max entities to show.")
+@json_option
 @handle_errors
-def list_entities(entity_type: str, limit: int) -> None:
+def list_entities(entity_type: str, limit: int, output_json: bool) -> None:
     """List entities of a given type."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -55,6 +58,12 @@ def list_entities(entity_type: str, limit: int) -> None:
         if isinstance(result, contracts.ListResult)
         else result.items
     )
+    if output_json:
+        _emit_json({
+            "items": [e.model_dump(mode="python") for e in entities],
+            "total": result.total,
+        })
+        return
     console.print(entities_table(entities, entity_type))
     click.echo(f"{len(entities)} entity(ies) shown.")
 
@@ -63,8 +72,9 @@ def list_entities(entity_type: str, limit: int) -> None:
 @click.option("--query-name", default=None, help="Filter by query name.")
 @click.option("--operation-type", default=None, help="Filter by operation type.")
 @click.option("--limit", default=50, help="Max receipts to show.")
+@json_option
 @handle_errors
-def list_receipts(query_name: str | None, operation_type: str | None, limit: int) -> None:
+def list_receipts(query_name: str | None, operation_type: str | None, limit: int, output_json: bool) -> None:
     """List receipt summaries."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -82,6 +92,12 @@ def list_receipts(query_name: str | None, operation_type: str | None, limit: int
             limit=limit,
         ),
     )
+    if output_json:
+        _emit_json({
+            "items": result.items,
+            "total": result.total,
+        })
+        return
     console.print(receipts_table(result.items))
     click.echo(f"{len(result.items)} receipt(s) shown.")
 
@@ -89,8 +105,9 @@ def list_receipts(query_name: str | None, operation_type: str | None, limit: int
 @list_group.command("feedback")
 @click.option("--receipt", "receipt_id", default=None, help="Filter by receipt ID.")
 @click.option("--limit", default=50, help="Max records to show.")
+@json_option
 @handle_errors
-def list_feedback(receipt_id: str | None, limit: int) -> None:
+def list_feedback(receipt_id: str | None, limit: int, output_json: bool) -> None:
     """List feedback records."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -106,6 +123,12 @@ def list_feedback(receipt_id: str | None, limit: int) -> None:
         if isinstance(result, contracts.ListResult)
         else result.items
     )
+    if output_json:
+        _emit_json({
+            "items": [r.model_dump(mode="python") for r in records],
+            "total": result.total,
+        })
+        return
     console.print(feedback_table(records))
     click.echo(f"{len(records)} record(s) shown.")
 
@@ -113,8 +136,9 @@ def list_feedback(receipt_id: str | None, limit: int) -> None:
 @list_group.command("outcomes")
 @click.option("--receipt", "receipt_id", default=None, help="Filter by receipt ID.")
 @click.option("--limit", default=50, help="Max records to show.")
+@json_option
 @handle_errors
-def list_outcomes(receipt_id: str | None, limit: int) -> None:
+def list_outcomes(receipt_id: str | None, limit: int, output_json: bool) -> None:
     """List outcome records."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -130,6 +154,12 @@ def list_outcomes(receipt_id: str | None, limit: int) -> None:
         if isinstance(result, contracts.ListResult)
         else result.items
     )
+    if output_json:
+        _emit_json({
+            "items": [r.model_dump(mode="python") for r in records],
+            "total": result.total,
+        })
+        return
     console.print(outcomes_table(records))
     click.echo(f"{len(records)} record(s) shown.")
 
@@ -137,8 +167,9 @@ def list_outcomes(receipt_id: str | None, limit: int) -> None:
 @list_group.command("edges")
 @click.option("--relationship", default=None, help="Filter by relationship type.")
 @click.option("--limit", default=50, help="Max edges to show.")
+@json_option
 @handle_errors
-def list_edges(relationship: str | None, limit: int) -> None:
+def list_edges(relationship: str | None, limit: int, output_json: bool) -> None:
     """List edges in the graph."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -154,6 +185,12 @@ def list_edges(relationship: str | None, limit: int) -> None:
             limit=limit,
         ),
     )
+    if output_json:
+        _emit_json({
+            "items": result.items,
+            "total": result.total,
+        })
+        return
     console.print(edges_table(result.items))
     click.echo(f"{len(result.items)} edge(s) shown.")
 

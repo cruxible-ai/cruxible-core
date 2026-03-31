@@ -18,7 +18,15 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import evaluate_comparison
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
-from cruxible_core.query.engine import execute_query
+from cruxible_core.read_surface import (
+    list_entities as read_list_entities,
+)
+from cruxible_core.read_surface import (
+    list_relationships as read_list_relationships,
+)
+from cruxible_core.read_surface import (
+    run_query as read_run_query,
+)
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
@@ -538,13 +546,16 @@ def _list_entities(
         step_outputs,
     )
     limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
-    entities = graph.list_entities(spec.entity_type, property_filter=property_filter or None)
-    items = [entity.model_dump(mode="python") for entity in entities]
-    if limit is not None:
-        items = items[:limit]
+    result = read_list_entities(
+        graph,
+        spec.entity_type,
+        property_filter=property_filter or None,
+        limit=limit,
+    )
+    items = [entity.model_dump(mode="python") for entity in result.items]
     return {
         "items": items,
-        "total": len(entities),
+        "total": result.total,
     }
 
 
@@ -562,17 +573,15 @@ def _list_relationships(
         step_outputs,
     )
     limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
-    relationships = graph.list_edges(relationship_type=spec.relationship_type)
-    if property_filter:
-        relationships = [
-            edge
-            for edge in relationships
-            if all(edge["properties"].get(key) == value for key, value in property_filter.items())
-        ]
-    items = relationships[:limit] if limit is not None else relationships
+    result = read_list_relationships(
+        graph,
+        relationship_type=spec.relationship_type,
+        property_filter=property_filter or None,
+        limit=limit,
+    )
     return {
-        "items": items,
-        "total": len(relationships),
+        "items": result.items,
+        "total": result.total,
     }
 
 
@@ -1168,7 +1177,7 @@ def _execute_query_step(
 ) -> None:
     assert compiled_step.query_name is not None
     step_params = resolve_value(compiled_step.params_template, plan.input_payload, step_outputs)
-    query_result = execute_query(config, graph, compiled_step.query_name, step_params)
+    query_result = read_run_query(config, graph, compiled_step.query_name, step_params)
     if query_result.receipt is None:
         raise QueryExecutionError(f"Query step '{compiled_step.step_id}' did not produce a receipt")
     if persist_receipt:

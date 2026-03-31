@@ -204,7 +204,7 @@ def stats_table(
 def groups_table(groups: list[CandidateGroup]) -> Table:
     """Build a Rich table for a list of candidate groups."""
     table = Table(title="Candidate Groups")
-    table.add_column("Group ID", style="cyan")
+    table.add_column("Group ID", style="cyan", no_wrap=True)
     table.add_column("Relationship")
     table.add_column("Status")
     table.add_column("Priority")
@@ -254,7 +254,7 @@ def group_detail_table(group: CandidateGroup, members: list[CandidateMember]) ->
 def resolutions_table(resolutions: list[dict[str, Any]]) -> Table:
     """Build a Rich table for group resolutions."""
     table = Table(title="Group Resolutions")
-    table.add_column("Resolution ID", style="cyan")
+    table.add_column("Resolution ID", style="cyan", no_wrap=True)
     table.add_column("Relationship")
     table.add_column("Action")
     table.add_column("Trust Status")

@@ -68,13 +68,20 @@ def service_init(
     config_yaml: str | None = None,
     data_dir: str | None = None,
 ) -> InitResult:
-    """Initialize a new cruxible instance (create-only)."""
+    """Initialize a new cruxible instance (create-only).
+
+    If the config uses ``extends``, the base is resolved and the composed
+    config is written to ``{root_dir}/config.yaml``.  The instance then
+    references the flattened file — future base/overlay edits require
+    re-init or the full fork flow.
+    """
     if config_path is not None and config_yaml is not None:
         raise ConfigError("Provide exactly one of config_path or config_yaml, not both")
     if config_path is None and config_yaml is None:
         raise ConfigError("config_path or config_yaml is required when initializing a new instance")
 
     root = Path(root_dir)
+    wrote_inline = False
 
     if config_yaml is not None:
         load_config_from_string(config_yaml)
@@ -93,25 +100,49 @@ def service_init(
         except OSError as exc:
             raise ConfigError(f"Failed to write config.yaml: {exc}") from exc
         config_path = "config.yaml"
+        wrote_inline = True
 
     assert config_path is not None
     resolved = Path(config_path)
     if not resolved.is_absolute():
         resolved = root / resolved
 
+    # Compose extends overlay before init so the instance gets a self-contained config.
+    config = load_config(resolved)
+    if config.extends is not None:
+        base_path = Path(config.extends)
+        if not base_path.is_absolute():
+            base_path = resolved.resolve().parent / base_path
+        if not base_path.exists():
+            if wrote_inline:
+                (root / "config.yaml").unlink(missing_ok=True)
+            raise ConfigError(f"Base config for extends not found: {base_path}")
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            composed_path = root / "config.yaml"
+            write_composed_config(
+                base_path=base_path,
+                overlay_path=resolved,
+                output_path=composed_path,
+            )
+        except Exception:
+            if wrote_inline:
+                (root / "config.yaml").unlink(missing_ok=True)
+            raise
+        config_path = "config.yaml"
+
     try:
         instance = CruxibleInstance.init(root, config_path, data_dir)
     except Exception:
-        if config_yaml is not None:
+        if wrote_inline or config.extends is not None:
             try:
-                disk_config = root / "config.yaml"
-                disk_config.unlink(missing_ok=True)
+                (root / "config.yaml").unlink(missing_ok=True)
             except Exception:
                 pass
         raise
 
-    config = instance.load_config()
-    warnings = validate_config(config)
+    loaded = instance.load_config()
+    warnings = validate_config(loaded)
 
     return InitResult(instance=instance, warnings=warnings)
 
@@ -157,6 +188,19 @@ def service_reload_config(
         if not resolved.is_absolute():
             resolved = instance.get_root_path() / resolved
         config = load_config(resolved)
+        if config.extends is not None:
+            base_path = Path(config.extends)
+            if not base_path.is_absolute():
+                base_path = resolved.resolve().parent / base_path
+            if not base_path.exists():
+                raise ConfigError(f"Base config for extends not found: {base_path}")
+            base = load_config(base_path)
+            config = compose_configs(
+                base,
+                config,
+                base_config_path=base_path,
+                overlay_config_path=resolved.resolve(),
+            )
         warnings = validate_config(config)
         instance.set_config_path(config_path)
         return ReloadConfigResult(
@@ -166,6 +210,24 @@ def service_reload_config(
         )
 
     config = instance.load_config()
+    if config.extends is not None:
+        config_file = instance.get_config_path()
+        if not isinstance(config_file, Path):
+            config_file = Path(str(config_file))
+        if not config_file.is_absolute():
+            config_file = instance.get_root_path() / config_file
+        base_path = Path(config.extends)
+        if not base_path.is_absolute():
+            base_path = config_file.resolve().parent / base_path
+        if not base_path.exists():
+            raise ConfigError(f"Base config for extends not found: {base_path}")
+        base = load_config(base_path)
+        config = compose_configs(
+            base,
+            config,
+            base_config_path=base_path,
+            overlay_config_path=config_file.resolve(),
+        )
     warnings = validate_config(config)
     return ReloadConfigResult(
         config_path=str(instance.get_config_path()),

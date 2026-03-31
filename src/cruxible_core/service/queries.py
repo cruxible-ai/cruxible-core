@@ -5,10 +5,33 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError, EdgeAmbiguityError, ReceiptNotFoundError
+from cruxible_core.errors import ConfigError, ReceiptNotFoundError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.query.engine import execute_query
+from cruxible_core.read_surface import (
+    get_entity as read_get_entity,
+)
+from cruxible_core.read_surface import (
+    get_relationship as read_get_relationship,
+)
+from cruxible_core.read_surface import (
+    graph_stats as read_graph_stats,
+)
+from cruxible_core.read_surface import (
+    inspect_entity as read_inspect_entity,
+)
+from cruxible_core.read_surface import (
+    list_entities as read_list_entities,
+)
+from cruxible_core.read_surface import (
+    list_relationships as read_list_relationships,
+)
+from cruxible_core.read_surface import (
+    run_query as read_run_query,
+)
+from cruxible_core.read_surface import (
+    sample_entities as read_sample_entities,
+)
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.types import (
     InspectEntityResult,
@@ -35,24 +58,24 @@ def service_query(
     """
     config = instance.load_config()
     graph = instance.load_graph()
-    result = execute_query(config, graph, query_name, params)
+    query_result = read_run_query(config, graph, query_name, params)
 
-    if result.receipt:
+    if query_result.receipt:
         store = instance.get_receipt_store()
         try:
-            store.save_receipt(result.receipt)
+            store.save_receipt(query_result.receipt)
         finally:
             store.close()
 
-    total = result.total_results or len(result.results)
+    total = query_result.total_results or len(query_result.results)
     return QueryServiceResult(
-        results=result.results,
-        receipt_id=result.receipt.receipt_id if result.receipt else None,
-        receipt=result.receipt,
+        results=query_result.results,
+        receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
+        receipt=query_result.receipt,
         total_results=total,
-        steps_executed=result.steps_executed,
+        steps_executed=query_result.steps_executed,
         param_hints=_query_param_hints(config, graph, query_name),
-        policy_summary=result.policy_summary,
+        policy_summary=query_result.policy_summary,
     )
 
 
@@ -73,27 +96,19 @@ def service_sample(
 ) -> list[EntityInstance]:
     """Sample entities of a given type."""
     graph = instance.load_graph()
-    entities = graph.list_entities(entity_type)
-    return entities[:limit]
+    return read_sample_entities(graph, entity_type, limit=limit)
 
 
 def service_stats(instance: InstanceProtocol) -> StatsServiceResult:
     """Return graph counts grouped by entity and relationship type."""
     graph = instance.load_graph()
-    entity_counts = {
-        entity_type: graph.entity_count(entity_type)
-        for entity_type in graph.list_entity_types()
-    }
-    relationship_counts = {
-        relationship_type: graph.edge_count(relationship_type)
-        for relationship_type in graph.list_relationship_types()
-    }
+    result = read_graph_stats(graph, head_snapshot_id=instance.get_head_snapshot_id())
     return StatsServiceResult(
-        entity_count=graph.entity_count(),
-        edge_count=graph.edge_count(),
-        entity_counts=entity_counts,
-        relationship_counts=relationship_counts,
-        head_snapshot_id=instance.get_head_snapshot_id(),
+        entity_count=result.entity_count,
+        edge_count=result.edge_count,
+        entity_counts=result.entity_counts,
+        relationship_counts=result.relationship_counts,
+        head_snapshot_id=result.head_snapshot_id,
     )
 
 
@@ -104,7 +119,7 @@ def service_get_entity(
 ) -> EntityInstance | None:
     """Look up a specific entity by type and ID."""
     graph = instance.load_graph()
-    return graph.get_entity(entity_type, entity_id)
+    return read_get_entity(graph, entity_type, entity_id)
 
 
 def service_inspect_entity(
@@ -118,36 +133,30 @@ def service_inspect_entity(
 ) -> InspectEntityResult:
     """Look up an entity and its immediate neighbors."""
     graph = instance.load_graph()
-    entity = graph.get_entity(entity_type, entity_id)
-    if entity is None:
-        return InspectEntityResult(found=False, entity_type=entity_type, entity_id=entity_id)
-
-    neighbor_rows = graph.get_neighbor_relationships(
+    result = read_inspect_entity(
+        graph,
         entity_type,
         entity_id,
-        relationship_type=relationship_type,
         direction=direction,
+        relationship_type=relationship_type,
+        limit=limit,
     )
-    total_neighbors = len(neighbor_rows)
-    if limit is not None:
-        neighbor_rows = neighbor_rows[:limit]
-    neighbors = [
-        InspectNeighborResult(
-            direction=row["direction"],
-            relationship_type=str(row["relationship_type"]),
-            edge_key=row.get("edge_key"),
-            properties=dict(row.get("properties", {})),
-            entity=row["entity"],
-        )
-        for row in neighbor_rows
-    ]
     return InspectEntityResult(
-        found=True,
-        entity_type=entity.entity_type,
-        entity_id=entity.entity_id,
-        properties=dict(entity.properties),
-        neighbors=neighbors,
-        total_neighbors=total_neighbors,
+        found=result.found,
+        entity_type=result.entity_type,
+        entity_id=result.entity_id,
+        properties=result.properties,
+        neighbors=[
+            InspectNeighborResult(
+                direction=neighbor.direction,
+                relationship_type=neighbor.relationship_type,
+                edge_key=neighbor.edge_key,
+                properties=neighbor.properties,
+                entity=neighbor.entity,
+            )
+            for neighbor in result.neighbors
+        ],
+        total_neighbors=result.total_neighbors,
     )
 
 
@@ -165,46 +174,14 @@ def service_get_relationship(
     Raises EdgeAmbiguityError if multiple edges match and no edge_key given.
     """
     graph = instance.load_graph()
-
-    if edge_key is None:
-        count = graph.relationship_count_between(
-            from_type, from_id, to_type, to_id, relationship_type
-        )
-        if count > 1:
-            raise EdgeAmbiguityError(
-                from_type=from_type,
-                from_id=from_id,
-                to_type=to_type,
-                to_id=to_id,
-                relationship=relationship_type,
-            )
-
-    return graph.get_relationship(
-        from_type, from_id, to_type, to_id, relationship_type, edge_key=edge_key
-    )
-
-
-def _query_param_hints(
-    config: CoreConfig,
-    graph,
-    query_name: str,
-) -> QueryParamHints | None:
-    query_schema = config.named_queries.get(query_name)
-    if query_schema is None:
-        return None
-    entity_schema = config.get_entity_type(query_schema.entry_point)
-    primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
-    required_params = [primary_key] if primary_key is not None else []
-    example_ids: list[str] = []
-    if primary_key is not None:
-        example_ids = sorted(
-            entity.entity_id for entity in graph.list_entities(query_schema.entry_point)
-        )[:3]
-    return QueryParamHints(
-        entry_point=query_schema.entry_point,
-        required_params=required_params,
-        primary_key=primary_key,
-        example_ids=example_ids,
+    return read_get_relationship(
+        graph,
+        from_type=from_type,
+        from_id=from_id,
+        relationship_type=relationship_type,
+        to_type=to_type,
+        to_id=to_id,
+        edge_key=edge_key,
     )
 
 
@@ -255,19 +232,23 @@ def service_list(
         if not entity_type:
             raise ConfigError("entity_type is required when listing entities")
         graph = instance.load_graph()
-        entities = graph.list_entities(entity_type, property_filter=property_filter)
-        return ListResult(items=entities[:limit], total=len(entities))
+        result = read_list_entities(
+            graph,
+            entity_type,
+            property_filter=property_filter,
+            limit=limit,
+        )
+        return ListResult(items=result.items, total=result.total)
 
     if resource == "edges":
         graph = instance.load_graph()
-        all_edges = graph.list_edges(relationship_type=relationship_type)
-        if property_filter:
-            all_edges = [
-                e
-                for e in all_edges
-                if all(e["properties"].get(k) == v for k, v in property_filter.items())
-            ]
-        return ListResult(items=all_edges[:limit], total=len(all_edges))
+        result = read_list_relationships(
+            graph,
+            relationship_type=relationship_type,
+            property_filter=property_filter,
+            limit=limit,
+        )
+        return ListResult(items=result.items, total=result.total)
 
     if resource == "receipts":
         store = instance.get_receipt_store()
@@ -297,3 +278,27 @@ def service_list(
     finally:
         feedback_store.close()
     return ListResult(items=outcome_records, total=total)
+
+
+def _query_param_hints(
+    config: CoreConfig,
+    graph,
+    query_name: str,
+) -> QueryParamHints | None:
+    query_schema = config.named_queries.get(query_name)
+    if query_schema is None:
+        return None
+    entity_schema = config.get_entity_type(query_schema.entry_point)
+    primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
+    required_params = [primary_key] if primary_key is not None else []
+    example_ids: list[str] = []
+    if primary_key is not None:
+        example_ids = sorted(
+            entity.entity_id for entity in graph.list_entities(query_schema.entry_point)
+        )[:3]
+    return QueryParamHints(
+        entry_point=query_schema.entry_point,
+        required_params=required_params,
+        primary_key=primary_key,
+        example_ids=example_ids,
+    )

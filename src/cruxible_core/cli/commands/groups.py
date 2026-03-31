@@ -11,9 +11,11 @@ import click
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
+    _emit_json,
     _groups_from_payload,
     _members_from_payload,
     console,
+    json_option,
 )
 from cruxible_core.cli.formatting import group_detail_table, groups_table, resolutions_table
 from cruxible_core.cli.main import handle_errors
@@ -164,8 +166,9 @@ def group_propose(
     default="human",
     help="Who resolved (default: human).",
 )
+@json_option
 @handle_errors
-def group_resolve(group_id: str, action: str, rationale: str, source: str) -> None:
+def group_resolve(group_id: str, action: str, rationale: str, source: str, output_json: bool) -> None:
     """Resolve a candidate group (approve or reject)."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.resolve_group(
@@ -183,6 +186,17 @@ def group_resolve(group_id: str, action: str, rationale: str, source: str) -> No
             resolved_by=source,  # type: ignore[arg-type]
         ),
     )
+
+    if output_json:
+        _emit_json({
+            "group_id": result.group_id,
+            "action": result.action,
+            "edges_created": result.edges_created,
+            "edges_skipped": result.edges_skipped,
+            "resolution_id": result.resolution_id,
+            "receipt_id": result.receipt_id,
+        })
+        return
 
     click.echo(f"Group {result.group_id} {result.action}d.")
     if result.action == "approve":
@@ -227,22 +241,27 @@ def group_trust(resolution_id: str, trust_status: str, reason: str) -> None:
 
 @group_group.command("get")
 @click.option("--group", "group_id", required=True, help="Group ID.")
+@json_option
 @handle_errors
-def group_get(group_id: str) -> None:
+def group_get(group_id: str, output_json: bool) -> None:
     """Get details of a candidate group."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.get_group(instance_id, group_id),
         lambda instance: service_get_group(instance, group_id),
     )
     if isinstance(result, contracts.GetGroupToolResult):
-        console.print(
-            group_detail_table(
-                CandidateGroup.model_validate(result.group),
-                _members_from_payload(result.members),
-            )
-        )
+        group = CandidateGroup.model_validate(result.group)
+        members = _members_from_payload(result.members)
+    else:
+        group = result.group
+        members = result.members
+    if output_json:
+        _emit_json({
+            "group": group.model_dump(mode="python"),
+            "members": [m.model_dump(mode="python") for m in members],
+        })
         return
-    console.print(group_detail_table(result.group, result.members))
+    console.print(group_detail_table(group, members))
 
 
 @group_group.command("list")
@@ -254,8 +273,9 @@ def group_get(group_id: str) -> None:
     help="Filter by status.",
 )
 @click.option("--limit", default=50, help="Max groups to show.")
+@json_option
 @handle_errors
-def group_list(relationship: str | None, status: str | None, limit: int) -> None:
+def group_list(relationship: str | None, status: str | None, limit: int, output_json: bool) -> None:
     """List candidate groups."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list_groups(
@@ -277,6 +297,12 @@ def group_list(relationship: str | None, status: str | None, limit: int) -> None
     else:
         groups = result.groups
         total = result.total
+    if output_json:
+        _emit_json({
+            "groups": [g.model_dump(mode="python") for g in groups],
+            "total": total,
+        })
+        return
     console.print(groups_table(groups))
     click.echo(f"{len(groups)} of {total} group(s) shown.")
 
@@ -290,8 +316,9 @@ def group_list(relationship: str | None, status: str | None, limit: int) -> None
     help="Filter by action.",
 )
 @click.option("--limit", default=50, help="Max resolutions to show.")
+@json_option
 @handle_errors
-def group_resolutions(relationship: str | None, action: str | None, limit: int) -> None:
+def group_resolutions(relationship: str | None, action: str | None, limit: int, output_json: bool) -> None:
     """List group resolutions."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list_resolutions(
@@ -307,5 +334,11 @@ def group_resolutions(relationship: str | None, action: str | None, limit: int) 
             limit=limit,
         ),
     )
+    if output_json:
+        _emit_json({
+            "resolutions": result.resolutions,
+            "total": result.total,
+        })
+        return
     console.print(resolutions_table(result.resolutions))
     click.echo(f"{len(result.resolutions)} of {result.total} resolution(s) shown.")
