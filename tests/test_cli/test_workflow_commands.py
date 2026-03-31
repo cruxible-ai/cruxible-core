@@ -286,3 +286,166 @@ class TestWorkflowCli:
         )
         assert applied.exit_code == 0
         assert "Committed snapshot: snap_" in applied.output
+
+    def test_run_save_preview_writes_file(
+        self,
+        runner: CliRunner,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        _chdir_run(runner, canonical_workflow_instance.root, ["lock"])
+        preview_file = canonical_workflow_instance.root / "preview.json"
+
+        result = _chdir_run(
+            runner,
+            canonical_workflow_instance.root,
+            [
+                "run",
+                "--workflow",
+                "build_reference",
+                "--save-preview",
+                str(preview_file),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert preview_file.exists()
+        payload = json.loads(preview_file.read_text())
+        assert payload["kind"] == "workflow_preview"
+        assert payload["version"] == 1
+        assert payload["workflow"] == "build_reference"
+        assert payload["input"] == {}
+        assert payload["apply_digest"].startswith("sha256:")
+        assert "head_snapshot_id" in payload
+        assert "apply_previews" in payload
+
+    def test_run_save_preview_non_canonical_errors(
+        self,
+        runner: CliRunner,
+        proposal_workflow_project: CruxibleInstance,
+        proposal_input_file: Path,
+    ) -> None:
+        _chdir_run(runner, proposal_workflow_project.root, ["lock"])
+        preview_file = proposal_workflow_project.root / "preview.json"
+
+        result = _chdir_run(
+            runner,
+            proposal_workflow_project.root,
+            [
+                "run",
+                "--workflow",
+                "propose_campaign_recommendations",
+                "--input-file",
+                str(proposal_input_file),
+                "--save-preview",
+                str(preview_file),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "did not produce preview state" in result.output
+        assert not preview_file.exists()
+
+    def test_apply_from_preview_file(
+        self,
+        runner: CliRunner,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        _chdir_run(runner, canonical_workflow_instance.root, ["lock"])
+        preview_file = canonical_workflow_instance.root / "preview.json"
+
+        preview = _chdir_run(
+            runner,
+            canonical_workflow_instance.root,
+            [
+                "run",
+                "--workflow",
+                "build_reference",
+                "--save-preview",
+                str(preview_file),
+            ],
+        )
+        assert preview.exit_code == 0
+
+        applied = _chdir_run(
+            runner,
+            canonical_workflow_instance.root,
+            ["apply", "--preview-file", str(preview_file)],
+        )
+        assert applied.exit_code == 0
+        assert "Committed snapshot: snap_" in applied.output
+
+        canonical_workflow_instance.invalidate_graph_cache()
+        graph = canonical_workflow_instance.load_graph()
+        assert graph.entity_count("Vendor") == 1
+        assert graph.entity_count("Product") == 2
+        assert graph.entity_count("Vulnerability") == 2
+
+    @pytest.mark.parametrize(
+        ("extra_args", "label"),
+        [
+            (["--workflow", "build_reference"], "workflow"),
+            (["--input", "{}"], "input"),
+            (["--input-file", "INPUT_FILE"], "input-file"),
+            (["--apply-digest", "sha256:manual"], "apply-digest"),
+            (["--head-snapshot", "snap_manual"], "head-snapshot"),
+        ],
+    )
+    def test_apply_preview_file_rejects_mixed_flags(
+        self,
+        runner: CliRunner,
+        canonical_workflow_instance: CruxibleInstance,
+        canonical_input_file: Path,
+        extra_args: list[str],
+        label: str,
+    ) -> None:
+        preview_file = canonical_workflow_instance.root / f"mixed-{label}.json"
+        preview_file.write_text(
+            json.dumps(
+                {
+                    "kind": "workflow_preview",
+                    "version": 1,
+                    "workflow": "build_reference",
+                    "input": {},
+                    "apply_digest": "sha256:test",
+                    "head_snapshot_id": "snap_test",
+                }
+            )
+        )
+
+        args = ["apply", "--preview-file", str(preview_file)]
+        if extra_args == ["--input-file", "INPUT_FILE"]:
+            args.extend(["--input-file", str(canonical_input_file)])
+        else:
+            args.extend(extra_args)
+
+        result = _chdir_run(runner, canonical_workflow_instance.root, args)
+
+        assert result.exit_code != 0
+        assert "--preview-file cannot be combined" in result.output
+
+    @pytest.mark.parametrize(
+        ("contents", "message"),
+        [
+            ("{not-json", "is not valid JSON"),
+            (json.dumps({"kind": "not_preview", "version": 1}), "unsupported kind"),
+            (json.dumps({"kind": "workflow_preview", "version": 2}), "unsupported version"),
+        ],
+    )
+    def test_apply_preview_file_rejects_malformed(
+        self,
+        runner: CliRunner,
+        canonical_workflow_instance: CruxibleInstance,
+        contents: str,
+        message: str,
+    ) -> None:
+        preview_file = canonical_workflow_instance.root / "bad-preview.json"
+        preview_file.write_text(contents)
+
+        result = _chdir_run(
+            runner,
+            canonical_workflow_instance.root,
+            ["apply", "--preview-file", str(preview_file)],
+        )
+
+        assert result.exit_code != 0
+        assert message in result.output

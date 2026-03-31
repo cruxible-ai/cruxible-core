@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -33,6 +34,71 @@ from cruxible_core.service import (
     service_test,
     service_validate,
 )
+
+
+def _write_preview_file(
+    preview_path: Path,
+    *,
+    workflow: str,
+    input_payload: dict[str, Any],
+    apply_digest: str,
+    head_snapshot_id: str | None,
+    apply_previews: dict[str, Any],
+) -> None:
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    preview_path.write_text(
+        json.dumps(
+            {
+                "kind": "workflow_preview",
+                "version": 1,
+                "workflow": workflow,
+                "input": input_payload,
+                "apply_digest": apply_digest,
+                "head_snapshot_id": head_snapshot_id,
+                "apply_previews": apply_previews,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _load_preview_file(preview_path: Path) -> dict[str, Any]:
+    try:
+        raw = json.loads(preview_path.read_text())
+    except OSError as exc:
+        raise click.UsageError(f"Could not read preview file '{preview_path}': {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise click.UsageError(f"Preview file '{preview_path}' is not valid JSON") from exc
+
+    if not isinstance(raw, dict):
+        raise click.UsageError(f"Preview file '{preview_path}' must contain a JSON object")
+    if raw.get("kind") != "workflow_preview":
+        raise click.UsageError(f"Preview file '{preview_path}' has unsupported kind")
+    if raw.get("version") != 1:
+        raise click.UsageError(f"Preview file '{preview_path}' has unsupported version")
+
+    workflow = raw.get("workflow")
+    input_payload = raw.get("input")
+    apply_digest = raw.get("apply_digest")
+    head_snapshot_id = raw.get("head_snapshot_id")
+
+    if not isinstance(workflow, str) or not workflow:
+        raise click.UsageError(f"Preview file '{preview_path}' is missing workflow")
+    if not isinstance(input_payload, dict):
+        raise click.UsageError(f"Preview file '{preview_path}' has invalid input payload")
+    if not isinstance(apply_digest, str) or not apply_digest:
+        raise click.UsageError(f"Preview file '{preview_path}' is missing apply_digest")
+    if head_snapshot_id is not None and not isinstance(head_snapshot_id, str):
+        raise click.UsageError(f"Preview file '{preview_path}' has invalid head_snapshot_id")
+
+    return {
+        "workflow": workflow,
+        "input": input_payload,
+        "apply_digest": apply_digest,
+        "head_snapshot_id": head_snapshot_id,
+    }
 
 
 @click.command()
@@ -153,9 +219,21 @@ def plan_cmd(workflow_name: str, input_text: str | None, input_file: str | None)
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
+@click.option(
+    "--save-preview",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Save preview state to a JSON file for use with apply --preview-file.",
+)
 @json_option
 @handle_errors
-def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None, output_json: bool) -> None:
+def run_cmd(
+    workflow_name: str,
+    input_text: str | None,
+    input_file: str | None,
+    save_preview: Path | None,
+    output_json: bool,
+) -> None:
     """Execute a workflow for the current instance.
 
     For workflows that produce group proposals, use 'cruxible propose' instead.
@@ -169,6 +247,20 @@ def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None, 
         ),
         lambda instance: service_run(instance, workflow_name, payload),
     )
+    if save_preview is not None:
+        if not result.canonical or not result.apply_digest:
+            raise click.ClickException(
+                f"Workflow '{result.workflow}' did not produce preview state; "
+                "--save-preview only works for canonical workflows."
+            )
+        _write_preview_file(
+            save_preview,
+            workflow=result.workflow,
+            input_payload=payload,
+            apply_digest=result.apply_digest,
+            head_snapshot_id=result.head_snapshot_id,
+            apply_previews=result.apply_previews,
+        )
     if output_json:
         _emit_json({
             "workflow": result.workflow,
@@ -197,7 +289,7 @@ def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None, 
 
 
 @click.command("apply")
-@click.option("--workflow", "workflow_name", required=True, help="Workflow name from config.")
+@click.option("--workflow", "workflow_name", default=None, help="Workflow name from config.")
 @click.option("--input", "input_text", default=None, help="Inline JSON or YAML workflow input.")
 @click.option(
     "--input-file",
@@ -205,24 +297,57 @@ def run_cmd(workflow_name: str, input_text: str | None, input_file: str | None, 
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
-@click.option("--apply-digest", required=True, help="Preview apply digest from workflow run.")
+@click.option(
+    "--apply-digest",
+    default=None,
+    help="Preview apply digest from workflow run.",
+)
 @click.option(
     "--head-snapshot",
     default=None,
     help="Expected head snapshot ID from workflow preview.",
 )
+@click.option(
+    "--preview-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read preview state from a file saved by run --save-preview.",
+)
 @json_option
 @handle_errors
 def apply_cmd(
-    workflow_name: str,
+    workflow_name: str | None,
     input_text: str | None,
     input_file: str | None,
-    apply_digest: str,
+    apply_digest: str | None,
     head_snapshot: str | None,
+    preview_file: Path | None,
     output_json: bool,
 ) -> None:
     """Apply a canonical workflow after verifying preview identity."""
-    payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
+    if preview_file is not None:
+        if any(
+            value is not None
+            for value in (workflow_name, input_text, input_file, apply_digest, head_snapshot)
+        ):
+            raise click.UsageError(
+                "--preview-file cannot be combined with --workflow, --input, "
+                "--input-file, --apply-digest, or --head-snapshot"
+            )
+        preview = _load_preview_file(preview_file)
+        workflow_name = preview["workflow"]
+        payload = preview["input"]
+        apply_digest = preview["apply_digest"]
+        head_snapshot = preview["head_snapshot_id"]
+    else:
+        if workflow_name is None:
+            raise click.UsageError("--workflow is required unless --preview-file is used")
+        if apply_digest is None:
+            raise click.UsageError("--apply-digest is required unless --preview-file is used")
+        payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
+
+    assert workflow_name is not None
+    assert apply_digest is not None
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.workflow_apply(
             instance_id,
@@ -287,7 +412,12 @@ def test_cmd(test_name: str | None) -> None:
 )
 @json_option
 @handle_errors
-def propose_cmd(workflow_name: str, input_text: str | None, input_file: str | None, output_json: bool) -> None:
+def propose_cmd(
+    workflow_name: str,
+    input_text: str | None,
+    input_file: str | None,
+    output_json: bool,
+) -> None:
     """Execute a workflow and bridge its output into a candidate group."""
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     result = _dispatch_cli_instance(
