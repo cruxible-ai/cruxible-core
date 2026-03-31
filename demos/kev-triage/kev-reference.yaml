@@ -18,6 +18,7 @@ entity_types:
     description: Product identified by CPE vendor and product strings.
     properties:
       product_id: {type: string, primary_key: true}
+      vendor_id: {type: string, optional: true}
       vendor_name: {type: string, optional: true}
       product_name: {type: string, indexed: true}
       cpe_vendor: {type: string, optional: true}
@@ -222,6 +223,7 @@ workflows:
           entity_id: $item.product_id
           properties:
             product_id: $item.product_id
+            vendor_id: $item.vendor_id
             vendor_name: $item.vendor_name
             product_name: $item.product_name
             cpe_vendor: $item.cpe_vendor

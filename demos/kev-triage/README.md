@@ -166,7 +166,7 @@ load workflow.
 | Workflow | Canonical | Steps | Purpose |
 |---|---|---|---|
 | `build_fork_state` | yes | 23 | Load deterministic entities (Assets, Owners, Services, Controls, Exceptions, PatchWindows) and relationships from seed data, apply to graph |
-| `propose_asset_products` | no | 7 | Load software inventory, load reference product catalog, fuzzy match, build candidates, map signals, propose governed `asset_runs_product` edges |
+| `propose_asset_products` | no | 7 | Load software inventory, list published `Product` entities from the reference graph, fuzzy match, build candidates, map signals, propose governed `asset_runs_product` edges |
 | `propose_asset_affected` | no | 6 | Read approved `asset_runs_product` and public `vulnerability_affects_product` edges, compare installed versions to affected ranges, propose `asset_affected_by_vulnerability` edges |
 | `propose_asset_exposure` | no | 9 | Read approved affected edges plus asset/control context, derive exploitability and control signals, propose `asset_exposed_to_vulnerability` edges |
 | `propose_service_impact` | no | 6 | Read approved exposure edges plus service dependencies, roll impact up to business services, propose `service_impacted_by_vulnerability` edges |
@@ -179,7 +179,6 @@ The reference layer also contributes `build_public_kev_reference` (11 steps, can
 |---|---|---|---|---|
 | `load_fork_seed_data` | EmptyInput | ForkSeedData | fork_seed_bundle | Load all seed CSVs into structured arrays |
 | `load_software_inventory` | EmptyInput | SoftwareInventory | fork_seed_bundle | Load software_inventory.csv |
-| `load_reference_product_catalog` | EmptyInput | ReferenceProductCatalog | public_kev_bundle | Load canonical products from reference data |
 | `match_software_to_products` | SoftwareMatchInput | SoftwareMatchResults | — | Fuzzy match software names to CPE product IDs |
 | `assess_asset_affected` | AssetAffectedAssessmentInput | AssetAffectedAssessmentResults | — | Join approved asset-product edges to public vulnerability-product edges and compare versions |
 | `assess_asset_exposure` | AssetExposureAssessmentInput | AssetExposureAssessmentResults | — | Derive exploitability and control-review signals for approved affected assets |
