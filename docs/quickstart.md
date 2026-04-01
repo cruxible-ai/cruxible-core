@@ -23,13 +23,17 @@ pip install "cruxible-core[mcp]"
 pip install cruxible-client
 ```
 
-Use `cruxible-client` when the agent talks to a separate Cruxible daemon over HTTP/MCP and does not need local runtime access.
+Use `cruxible-client` when the agent talks to a separate Cruxible daemon over HTTP and does not need local runtime access.
 
 If permission modes matter, do not install `cruxible-core` in that agent environment.
+
+If you need a real runtime boundary rather than advisory local permissions, see [Isolated Deployment](isolated-deployment.md).
 
 ## MCP Setup
 
 Add the MCP server to your AI agent:
+
+This is the convenience path for local development. It is not a hard isolation boundary.
 
 **Claude Code / Cursor** (project `.mcp.json` or `~/.claude.json` / `.cursor/mcp.json`):
 
@@ -110,3 +114,4 @@ The agent will run evaluations, surface low-confidence edges for review, and rec
 - [MCP Tools Reference](mcp-tools.md) — All tools with parameters and return types
 - [CLI Reference](cli-reference.md) — Terminal commands
 - [AI Agent Guide](for-ai-agents.md) — Orchestration workflows and best practices
+- [Isolated Deployment](isolated-deployment.md) — Advanced setup for a real runtime boundary
