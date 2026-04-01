@@ -55,7 +55,7 @@ class TestOnboardDomain:
         assert "prepare_data" in text
         assert "YAML Config" in text
         assert "Validate and Initialize" in text
-        assert "Ingest Source Data" in text
+        assert "Load Source Data" in text
         assert "Validate Graph Quality" in text
         assert "even if evaluate is clean" in text
         assert "Sample Queries" in text
