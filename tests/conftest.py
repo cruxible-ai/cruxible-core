@@ -199,8 +199,7 @@ contracts:
 integrations:
   catalog:
     kind: heuristic
-    contract:
-      output: support|unsure|contradict
+    contract: null
 
 providers:
   campaign_recommendations:

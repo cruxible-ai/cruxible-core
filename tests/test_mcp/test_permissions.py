@@ -79,8 +79,8 @@ class TestCheckPermission:
         init_permissions()
         # Should not raise
         check_permission("cruxible_schema")
-        check_permission("cruxible_model_status")
-        check_permission("cruxible_model_pull_preview")
+        check_permission("cruxible_world_status")
+        check_permission("cruxible_world_pull_preview")
         check_permission("cruxible_plan_workflow")
 
     def test_graph_write_tool_in_read_only(self, monkeypatch):
@@ -110,9 +110,9 @@ class TestCheckPermission:
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_apply_workflow")
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_model_publish")
+            check_permission("cruxible_world_publish")
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_model_pull_apply")
+            check_permission("cruxible_world_pull_apply")
 
     def test_graph_write_tool_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
@@ -153,9 +153,9 @@ class TestCheckPermission:
         check_permission("cruxible_ingest")
         check_permission("cruxible_lock_workflow")
         check_permission("cruxible_apply_workflow")
-        check_permission("cruxible_model_publish")
-        check_permission("cruxible_model_fork")
-        check_permission("cruxible_model_pull_apply")
+        check_permission("cruxible_world_publish")
+        check_permission("cruxible_world_fork")
+        check_permission("cruxible_world_pull_apply")
 
     def test_denial_message_includes_modes(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")

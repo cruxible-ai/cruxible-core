@@ -224,7 +224,7 @@ def test_add_entity_returns_contract_shape(app_client: TestClient, server_projec
     assert response.json()["entities_added"] == 1
 
 
-def test_model_publish_fork_and_status_routes(
+def test_world_publish_fork_and_status_routes(
     app_client: TestClient,
     server_project: Path,
     tmp_path: Path,
@@ -233,10 +233,10 @@ def test_model_publish_fork_and_status_routes(
     release_dir = tmp_path / "releases" / "current"
 
     publish = app_client.post(
-        f"/api/v1/{instance_id}/model/publish",
+        f"/api/v1/{instance_id}/world/publish",
         json={
             "transport_ref": f"file://{release_dir}",
-            "model_id": "car-parts",
+            "world_id": "car-parts",
             "release_id": "v1.0.0",
             "compatibility": "data_only",
         },
@@ -246,7 +246,7 @@ def test_model_publish_fork_and_status_routes(
 
     fork_root = tmp_path / "forked-model"
     fork = app_client.post(
-        "/api/v1/models/fork",
+        "/api/v1/worlds/fork",
         json={
             "transport_ref": f"file://{release_dir}",
             "root_dir": str(fork_root),
@@ -256,9 +256,9 @@ def test_model_publish_fork_and_status_routes(
     fork_instance_id = fork.json()["instance_id"]
     assert fork_instance_id != str(fork_root)
 
-    status = app_client.get(f"/api/v1/{fork_instance_id}/model/status")
+    status = app_client.get(f"/api/v1/{fork_instance_id}/world/status")
     assert status.status_code == 200
-    assert status.json()["upstream"]["model_id"] == "car-parts"
+    assert status.json()["upstream"]["world_id"] == "car-parts"
     assert status.json()["upstream"]["release_id"] == "v1.0.0"
 
 

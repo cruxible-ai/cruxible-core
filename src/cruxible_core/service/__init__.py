@@ -39,13 +39,6 @@ from cruxible_core.service.lifecycle import (
     service_reload_config,
     service_validate,
 )
-from cruxible_core.service.model import (
-    service_fork_model,
-    service_model_status,
-    service_publish_model,
-    service_pull_model_apply,
-    service_pull_model_preview,
-)
 from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_relationships,
@@ -90,11 +83,6 @@ from cruxible_core.service.types import (
     ListResolutionsResult,
     ListResult,
     LockServiceResult,
-    ModelForkResult,
-    ModelPublishResult,
-    ModelPullApplyResult,
-    ModelPullPreviewResult,
-    ModelStatusResult,
     OutcomeDecisionPolicySuggestion,
     OutcomeGroupSummary,
     OutcomeProviderFixCandidate,
@@ -119,6 +107,18 @@ from cruxible_core.service.types import (
     UncodedFeedbackExample,
     UncodedOutcomeExample,
     ValidateServiceResult,
+    WorldForkResult,
+    WorldPublishResult,
+    WorldPullApplyResult,
+    WorldPullPreviewResult,
+    WorldStatusResult,
+)
+from cruxible_core.service.world import (
+    service_fork_world,
+    service_publish_world,
+    service_pull_world_apply,
+    service_pull_world_preview,
+    service_world_status,
 )
 
 __all__ = [
@@ -142,11 +142,11 @@ __all__ = [
     "InspectNeighborResult",
     "InitResult",
     "LockServiceResult",
-    "ModelForkResult",
-    "ModelPublishResult",
-    "ModelPullApplyResult",
-    "ModelPullPreviewResult",
-    "ModelStatusResult",
+    "WorldForkResult",
+    "WorldPublishResult",
+    "WorldPullApplyResult",
+    "WorldPullPreviewResult",
+    "WorldStatusResult",
     "ListGroupsResult",
     "ListResolutionsResult",
     "ListResult",
@@ -176,11 +176,11 @@ __all__ = [
     "ValidateServiceResult",
     # Execution
     "service_lock",
-    "service_model_status",
-    "service_publish_model",
-    "service_fork_model",
-    "service_pull_model_preview",
-    "service_pull_model_apply",
+    "service_world_status",
+    "service_publish_world",
+    "service_fork_world",
+    "service_pull_world_preview",
+    "service_pull_world_apply",
     "service_plan",
     "service_apply_workflow",
     "service_propose_workflow",

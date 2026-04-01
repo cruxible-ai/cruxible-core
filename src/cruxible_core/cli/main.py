@@ -89,7 +89,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     inspect_group,
     list_group,
     lock_cmd,
-    model_group,
     outcome_cmd,
     outcome_profile_cmd,
     plan_cmd,
@@ -103,12 +102,13 @@ from cruxible_core.cli.commands import (  # noqa: E402
     stats_cmd,
     test_cmd,
     validate,
+    world_group,
 )  # re-exported from cli.commands submodules
 
 cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]
 cli.add_command(lock_cmd)  # type: ignore[has-type]
-cli.add_command(model_group, "model")  # type: ignore[has-type]
+cli.add_command(world_group, "world")  # type: ignore[has-type]
 cli.add_command(plan_cmd)  # type: ignore[has-type]
 cli.add_command(run_cmd)  # type: ignore[has-type]
 cli.add_command(apply_cmd)  # type: ignore[has-type]

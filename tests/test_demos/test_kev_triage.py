@@ -13,15 +13,17 @@ from cruxible_core.demo_providers.kev_triage import (
     assess_asset_exposure,
     assess_service_impact,
     load_fork_seed_data,
-    load_reference_product_catalog,
     match_software_to_products,
 )
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.service import (
     service_apply_workflow,
+    service_fork_world,
     service_lock,
     service_propose_workflow,
+    service_publish_world,
     service_query,
+    service_reload_config,
     service_resolve_group,
     service_run,
 )
@@ -104,14 +106,6 @@ def test_load_fork_seed_data_reads_expected_rows() -> None:
     assert payload["assets"][0]["internet_exposed"] is True
 
 
-def test_load_reference_product_catalog_returns_unique_products() -> None:
-    payload = load_reference_product_catalog({}, _provider_context(KEV_DEMO_DIR / "data"))
-    product_ids = [item["product_id"] for item in payload["items"]]
-    assert payload["items"]
-    assert len(product_ids) == len(set(product_ids))
-    assert all(item["product_name"] for item in payload["items"])
-
-
 def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
     payload = match_software_to_products(
         {
@@ -166,6 +160,50 @@ def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
             "match_confidence": payload["items"][0]["match_confidence"],
             "verdict": "support",
         },
+    ]
+
+
+def test_match_software_to_products_accepts_entity_shaped_reference_products() -> None:
+    payload = match_software_to_products(
+        {
+            "inventory_items": [
+                {
+                    "asset_id": "ASSET-1",
+                    "software_name": "Apache HTTP Server",
+                    "vendor": "Apache",
+                    "version": "2.4.49",
+                    "evidence_source": "scanner-a",
+                    "last_seen": "2026-03-20",
+                }
+            ],
+            "reference_products": [
+                {
+                    "entity_type": "Product",
+                    "entity_id": "apache__http_server",
+                    "properties": {
+                        "product_id": "apache__http_server",
+                        "vendor_id": "apache",
+                        "product_name": "Http Server",
+                        "vendor_name": "Apache",
+                        "cpe_vendor": "apache",
+                        "cpe_product": "http_server",
+                        "cpe_part": "a",
+                    },
+                }
+            ],
+        },
+        _provider_context(None),
+    )
+
+    assert payload["items"] == [
+        {
+            "asset_id": "ASSET-1",
+            "product_id": "apache__http_server",
+            "installed_version": "2.4.49",
+            "evidence_source": "scanner-a",
+            "match_confidence": payload["items"][0]["match_confidence"],
+            "verdict": "support",
+        }
     ]
 
 
@@ -365,3 +403,33 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert owner_patch_queue.total_results > 0
     assert service_blast_radius.total_results > 0
     assert product_kev_exposure.total_results > 0
+
+
+def test_release_backed_kev_fork_can_propose_asset_products(tmp_path: Path) -> None:
+    reference_root = tmp_path / "reference"
+    reference_root.mkdir()
+    reference = CruxibleInstance.init(reference_root, str(KEV_DEMO_DIR / "kev-reference.yaml"))
+    service_lock(reference)
+    _apply_canonical_workflow(reference, "build_public_kev_reference")
+    product = reference.load_graph().list_entities("Product")[0]
+    assert product.properties.get("vendor_id")
+
+    release_dir = tmp_path / "releases" / "current"
+    service_publish_world(
+        reference,
+        transport_ref=f"file://{release_dir}",
+        world_id="kev-reference",
+        release_id="2026-03-31",
+        compatibility="data_only",
+    )
+
+    fork_root = tmp_path / "fork"
+    fork = service_fork_world(
+        transport_ref=f"file://{release_dir}",
+        root_dir=fork_root,
+    ).instance
+    service_reload_config(fork, str(KEV_DEMO_DIR / "config.yaml"))
+    service_lock(fork)
+
+    proposed = service_propose_workflow(fork, "propose_asset_products", {})
+    assert proposed.group_id is not None

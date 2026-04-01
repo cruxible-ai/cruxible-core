@@ -18,6 +18,7 @@ entity_types:
     description: Product identified by CPE vendor and product strings.
     properties:
       product_id: {type: string, primary_key: true}
+      vendor_id: {type: string, optional: true}
       vendor_name: {type: string, optional: true}
       product_name: {type: string, indexed: true}
       cpe_vendor: {type: string, optional: true}
@@ -176,7 +177,7 @@ artifacts:
   public_kev_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:7779e605a3e5cf40ee9ea1b860f4b7ed845f858aff14c3b9b2e314e6ef2e52bf
+    sha256: sha256:3aecb3b6b1b8745ac9d36db0abed511c08795cb544ff1cfb26b7926bfc39a328
 
 providers:
   load_public_kev_rows:
@@ -222,6 +223,7 @@ workflows:
           entity_id: $item.product_id
           properties:
             product_id: $item.product_id
+            vendor_id: $item.vendor_id
             vendor_name: $item.vendor_name
             product_name: $item.product_name
             cpe_vendor: $item.cpe_vendor

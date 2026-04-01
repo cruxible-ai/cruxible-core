@@ -11,8 +11,8 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.schema import (
     DecisionPolicyMatch,
     DecisionPolicySchema,
-    IntegrationConfig,
-    MatchingConfig,
+    IntegrationGuardrailSchema,
+    MatchingSchema,
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import EntityInstance
@@ -36,23 +36,39 @@ description: Vehicle-to-part fitment with matching config
 integrations:
   bolt_pattern_check:
     kind: physical_compatibility
-    contract:
-      lookup_table: bolt_patterns
+    contract: bolt_pattern_io
     notes: "authoritative physical compatibility"
   year_range_check:
     kind: temporal_compatibility
-    contract:
-      field: year
-      tolerance: 2
+    contract: year_range_io
   description_fit_v1:
     kind: llm_classification
-    contract:
-      model_ref: claude-sonnet-4-20250514
+    contract: llm_classify_io
   style_tags_v1:
     kind: keyword_match
-    contract:
-      field: tags
-      method: jaccard
+    contract: keyword_match_io
+
+contracts:
+  bolt_pattern_io:
+    fields:
+      lookup_table:
+        type: string
+  year_range_io:
+    fields:
+      field:
+        type: string
+      tolerance:
+        type: int
+  llm_classify_io:
+    fields:
+      model_ref:
+        type: string
+  keyword_match_io:
+    fields:
+      field:
+        type: string
+      method:
+        type: string
 
 entity_types:
   Vehicle:
@@ -789,7 +805,6 @@ description: trusted_or_watch policy
 integrations:
   check_v1:
     kind: generic
-    contract: {}
 
 entity_types:
   Part:
@@ -860,10 +875,8 @@ description: no_contradict policy
 integrations:
   blocker:
     kind: generic
-    contract: {}
   required_check:
     kind: generic
-    contract: {}
 
 entity_types:
   Part:
@@ -946,52 +959,52 @@ ingestion: {}
 
 class TestDeriveReviewPriority:
     def test_blocking_contradict_critical(self) -> None:
-        matching = MatchingConfig(integrations={"blocker": IntegrationConfig(role="blocking")})
+        matching = MatchingSchema(integrations={"blocker": IntegrationGuardrailSchema(role="blocking")})
         members = [_member(signals=[CandidateSignal(integration="blocker", signal="contradict")])]
         assert derive_review_priority(members, matching, None) == "critical"
 
     def test_invalidated_prior_critical(self) -> None:
-        matching = MatchingConfig(integrations={"check": IntegrationConfig(role="required")})
+        matching = MatchingSchema(integrations={"check": IntegrationGuardrailSchema(role="required")})
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
         prior = {"trust_status": "invalidated"}
         assert derive_review_priority(members, matching, prior) == "critical"
 
     def test_always_review_on_unsure_review(self) -> None:
-        matching = MatchingConfig(
-            integrations={"check": IntegrationConfig(role="required", always_review_on_unsure=True)}
+        matching = MatchingSchema(
+            integrations={"check": IntegrationGuardrailSchema(role="required", always_review_on_unsure=True)}
         )
         members = [_member(signals=[CandidateSignal(integration="check", signal="unsure")])]
         prior = {"trust_status": "trusted"}
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_blocking_review(self) -> None:
-        matching = MatchingConfig(integrations={"blocker": IntegrationConfig(role="blocking")})
+        matching = MatchingSchema(integrations={"blocker": IntegrationGuardrailSchema(role="blocking")})
         members = [_member(signals=[CandidateSignal(integration="blocker", signal="unsure")])]
         prior = {"trust_status": "trusted"}
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_required_review(self) -> None:
-        matching = MatchingConfig(integrations={"req": IntegrationConfig(role="required")})
+        matching = MatchingSchema(integrations={"req": IntegrationGuardrailSchema(role="required")})
         members = [_member(signals=[CandidateSignal(integration="req", signal="unsure")])]
         prior = {"trust_status": "trusted"}
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_no_prior_review(self) -> None:
-        matching = MatchingConfig(integrations={"check": IntegrationConfig(role="required")})
+        matching = MatchingSchema(integrations={"check": IntegrationGuardrailSchema(role="required")})
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
         assert derive_review_priority(members, matching, None) == "review"
 
     def test_prior_watch_review(self) -> None:
-        matching = MatchingConfig(integrations={"check": IntegrationConfig(role="required")})
+        matching = MatchingSchema(integrations={"check": IntegrationGuardrailSchema(role="required")})
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
         prior = {"trust_status": "watch"}
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_all_support_trusted_normal(self) -> None:
-        matching = MatchingConfig(
+        matching = MatchingSchema(
             integrations={
-                "blocker": IntegrationConfig(role="blocking"),
-                "req": IntegrationConfig(role="required"),
+                "blocker": IntegrationGuardrailSchema(role="blocking"),
+                "req": IntegrationGuardrailSchema(role="required"),
             }
         )
         members = [
@@ -1007,10 +1020,10 @@ class TestDeriveReviewPriority:
 
     def test_advisory_ignored_for_priority(self) -> None:
         """Advisory contradict does NOT escalate priority."""
-        matching = MatchingConfig(
+        matching = MatchingSchema(
             integrations={
-                "req": IntegrationConfig(role="required"),
-                "adv": IntegrationConfig(role="advisory"),
+                "req": IntegrationGuardrailSchema(role="required"),
+                "adv": IntegrationGuardrailSchema(role="advisory"),
             }
         )
         members = [
@@ -1034,10 +1047,10 @@ class TestDeriveReviewPriority:
 
     def test_critical_beats_review(self) -> None:
         """When both critical and review conditions exist, critical wins."""
-        matching = MatchingConfig(
+        matching = MatchingSchema(
             integrations={
-                "blocker": IntegrationConfig(role="blocking"),
-                "req": IntegrationConfig(role="required"),
+                "blocker": IntegrationGuardrailSchema(role="blocking"),
+                "req": IntegrationGuardrailSchema(role="required"),
             }
         )
         members = [

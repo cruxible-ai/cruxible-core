@@ -103,17 +103,17 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ValidateResult)
 
-    def model_fork(
+    def world_fork(
         self,
         *,
         transport_ref: str,
         root_dir: str,
-    ) -> contracts.ModelForkResult:
+    ) -> contracts.WorldForkResult:
         response = self._client.post(
-            "/api/v1/models/fork",
+            "/api/v1/worlds/fork",
             json={"transport_ref": transport_ref, "root_dir": root_dir},
         )
-        return self._parse_model(response, contracts.ModelForkResult)
+        return self._parse_model(response, contracts.WorldForkResult)
 
     def ingest(
         self,
@@ -585,45 +585,45 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ForkSnapshotResult)
 
-    def model_publish(
+    def world_publish(
         self,
         instance_id: str,
         *,
         transport_ref: str,
-        model_id: str,
+        world_id: str,
         release_id: str,
-        compatibility: contracts.ModelCompatibility,
-    ) -> contracts.ModelPublishResult:
+        compatibility: contracts.WorldCompatibility,
+    ) -> contracts.WorldPublishResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/model/publish",
+            f"/api/v1/{instance_id}/world/publish",
             json={
                 "transport_ref": transport_ref,
-                "model_id": model_id,
+                "world_id": world_id,
                 "release_id": release_id,
                 "compatibility": compatibility,
             },
         )
-        return self._parse_model(response, contracts.ModelPublishResult)
+        return self._parse_model(response, contracts.WorldPublishResult)
 
-    def model_status(self, instance_id: str) -> contracts.ModelStatusResult:
-        response = self._client.get(f"/api/v1/{instance_id}/model/status")
-        return self._parse_model(response, contracts.ModelStatusResult)
+    def world_status(self, instance_id: str) -> contracts.WorldStatusResult:
+        response = self._client.get(f"/api/v1/{instance_id}/world/status")
+        return self._parse_model(response, contracts.WorldStatusResult)
 
-    def model_pull_preview(self, instance_id: str) -> contracts.ModelPullPreviewResult:
-        response = self._client.post(f"/api/v1/{instance_id}/model/pull/preview")
-        return self._parse_model(response, contracts.ModelPullPreviewResult)
+    def world_pull_preview(self, instance_id: str) -> contracts.WorldPullPreviewResult:
+        response = self._client.post(f"/api/v1/{instance_id}/world/pull/preview")
+        return self._parse_model(response, contracts.WorldPullPreviewResult)
 
-    def model_pull_apply(
+    def world_pull_apply(
         self,
         instance_id: str,
         *,
         expected_apply_digest: str,
-    ) -> contracts.ModelPullApplyResult:
+    ) -> contracts.WorldPullApplyResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/model/pull/apply",
+            f"/api/v1/{instance_id}/world/pull/apply",
             json={"expected_apply_digest": expected_apply_digest},
         )
-        return self._parse_model(response, contracts.ModelPullApplyResult)
+        return self._parse_model(response, contracts.WorldPullApplyResult)
 
     def add_constraint(
         self,

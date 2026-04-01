@@ -13,6 +13,7 @@ build/
 htmlcov/
 *.db
 *.csv
+!demos/kev-triage/data/seed/*.csv
 .DS_Store
 /.cruxible/
 .venv/

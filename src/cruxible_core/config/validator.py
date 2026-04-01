@@ -51,6 +51,10 @@ def validate_config(config: CoreConfig) -> list[str]:
 def _validate_relationships(config: CoreConfig, errors: list[str]) -> None:
     """Check that relationship from/to reference valid entity types."""
     entity_names = set(config.entity_types.keys())
+    canonical_names = [rel.name for rel in config.relationships]
+    canonical_name_set = set(canonical_names)
+    seen_names: set[str] = set()
+    seen_reverse_names: set[str] = set()
 
     for rel in config.relationships:
         if rel.from_entity not in entity_names:
@@ -63,19 +67,24 @@ def _validate_relationships(config: CoreConfig, errors: list[str]) -> None:
                 f"Relationship '{rel.name}': 'to' entity type "
                 f"'{rel.to_entity}' not defined in entity_types"
             )
-
-    # Check for duplicate relationship names
-    seen: set[str] = set()
-    for rel in config.relationships:
-        if rel.name in seen:
+        if rel.name in seen_names:
             errors.append(f"Duplicate relationship name: '{rel.name}'")
-        seen.add(rel.name)
+        seen_names.add(rel.name)
+        if rel.reverse_name is None:
+            continue
+        if rel.reverse_name in seen_reverse_names:
+            errors.append(f"Duplicate relationship reverse_name: '{rel.reverse_name}'")
+        if rel.reverse_name in canonical_name_set:
+            errors.append(
+                f"Relationship '{rel.name}': reverse_name '{rel.reverse_name}' "
+                "collides with a canonical relationship name"
+            )
+        seen_reverse_names.add(rel.reverse_name)
 
 
 def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
     """Check that named queries reference valid entity types and relationships."""
     entity_names = set(config.entity_types.keys())
-    rel_names = {rel.name for rel in config.relationships}
 
     for query_name, query in config.named_queries.items():
         if query.entry_point not in entity_names:
@@ -86,7 +95,7 @@ def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
 
         for i, step in enumerate(query.traversal):
             for rel_name in step.relationship_types:
-                if rel_name not in rel_names:
+                if config.resolve_relationship_reference(rel_name) is None:
                     errors.append(
                         f"Named query '{query_name}' step {i}: relationship "
                         f"'{rel_name}' not defined in relationships"
@@ -921,6 +930,10 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
         if uses_apply_steps and not workflow.canonical:
             errors.append(
                 f"Workflow '{workflow_name}': apply_* steps require canonical: true"
+            )
+        if workflow.canonical and not uses_apply_steps:
+            errors.append(
+                f"Workflow '{workflow_name}': canonical workflows require at least one apply_* step"
             )
 
         if workflow.canonical:

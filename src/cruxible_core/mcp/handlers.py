@@ -101,14 +101,14 @@ def handle_validate(
     )
 
 
-def handle_model_fork(
+def handle_world_fork(
     transport_ref: str,
     root_dir: str,
-) -> contracts.ModelForkResult:
-    """Create a new local fork from a published model release."""
+) -> contracts.WorldForkResult:
+    """Create a new local fork from a published world release."""
     return _dispatch_remote_or_local(
-        lambda client: client.model_fork(transport_ref=transport_ref, root_dir=root_dir),
-        lambda: local_api._handle_model_fork_local(transport_ref, root_dir),
+        lambda client: client.world_fork(transport_ref=transport_ref, root_dir=root_dir),
+        lambda: local_api._handle_world_fork_local(transport_ref, root_dir),
     )
 
 
@@ -881,59 +881,59 @@ def handle_list_resolutions(
     )
 
 
-def handle_model_publish(
+def handle_world_publish(
     instance_id: str,
     transport_ref: str,
-    model_id: str,
+    world_id: str,
     release_id: str,
-    compatibility: contracts.ModelCompatibility,
-) -> contracts.ModelPublishResult:
+    compatibility: contracts.WorldCompatibility,
+) -> contracts.WorldPublishResult:
     """Publish a root world-model instance to a transport ref."""
     return _dispatch_remote_or_local(
-        lambda client: client.model_publish(
+        lambda client: client.world_publish(
             instance_id,
             transport_ref=transport_ref,
-            model_id=model_id,
+            world_id=world_id,
             release_id=release_id,
             compatibility=compatibility,
         ),
-        lambda: local_api._handle_model_publish_local(
+        lambda: local_api._handle_world_publish_local(
             instance_id,
             transport_ref,
-            model_id,
+            world_id,
             release_id,
             compatibility,
         ),
     )
 
 
-def handle_model_status(instance_id: str) -> contracts.ModelStatusResult:
+def handle_world_status(instance_id: str) -> contracts.WorldStatusResult:
     """Read upstream tracking metadata for a release-backed fork."""
     return _dispatch_remote_or_local(
-        lambda client: client.model_status(instance_id),
-        lambda: local_api._handle_model_status_local(instance_id),
+        lambda client: client.world_status(instance_id),
+        lambda: local_api._handle_world_status_local(instance_id),
     )
 
 
-def handle_model_pull_preview(instance_id: str) -> contracts.ModelPullPreviewResult:
+def handle_world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
     """Preview pulling a new upstream release into a local fork."""
     return _dispatch_remote_or_local(
-        lambda client: client.model_pull_preview(instance_id),
-        lambda: local_api._handle_model_pull_preview_local(instance_id),
+        lambda client: client.world_pull_preview(instance_id),
+        lambda: local_api._handle_world_pull_preview_local(instance_id),
     )
 
 
-def handle_model_pull_apply(
+def handle_world_pull_apply(
     instance_id: str,
     expected_apply_digest: str,
-) -> contracts.ModelPullApplyResult:
+) -> contracts.WorldPullApplyResult:
     """Apply a previewed upstream release into a local fork."""
     return _dispatch_remote_or_local(
-        lambda client: client.model_pull_apply(
+        lambda client: client.world_pull_apply(
             instance_id,
             expected_apply_digest=expected_apply_digest,
         ),
-        lambda: local_api._handle_model_pull_apply_local(
+        lambda: local_api._handle_world_pull_apply_local(
             instance_id,
             expected_apply_digest,
         ),

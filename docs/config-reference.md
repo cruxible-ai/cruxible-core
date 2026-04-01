@@ -58,7 +58,7 @@ tests: [ ... ]
 
 ## Config Composition
 
-The `extends` field enables a **fork pattern** for release-backed model publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream fork adds its own internal extensions without duplicating the base.
+The `extends` field enables a **fork pattern** for release-backed world publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream fork adds its own internal extensions without duplicating the base.
 
 **How it works:** `cruxible_validate` detects `extends`, resolves the base path relative to the overlay file, composes in memory, and validates the composed result. The raw `load_config()` function still parses a single file — composition happens in the service/CLI layer. For inline `config_yaml` (no file path), `extends` must use an absolute path or validation will error.
 

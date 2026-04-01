@@ -179,17 +179,20 @@ def _execute_step(
       2. Result dedup: each entity appears once in output (first path owns lineage)
       3. Evidence: all traversal edges recorded in receipt regardless of dedup
     """
-    # Validate all relationship types up front
-    rel_types = step.relationship_types
-    for rel_name in rel_types:
-        if config.get_relationship(rel_name) is None:
-            raise RelationshipNotFoundError(rel_name)
+    # Validate and resolve all relationship references up front.
+    resolved_refs: list[tuple[str, str]] = []
+    for rel_ref in step.relationship_types:
+        resolved = config.resolve_relationship_reference(rel_ref)
+        if resolved is None:
+            raise RelationshipNotFoundError(rel_ref)
+        rel_schema, is_reverse = resolved
+        direction = _flip_relationship_direction(step.direction) if is_reverse else step.direction
+        resolved_refs.append((rel_schema.name, direction))
     step_policies = {
         rel_name: _active_query_policies(config, query_name, rel_name)
-        for rel_name in rel_types
+        for rel_name, _ in resolved_refs
     }
 
-    direction = step.direction
     next_entities: list[EntityInstance] = []
     next_parent_ids: list[str] = []
 
@@ -212,7 +215,7 @@ def _execute_step(
         if depth >= step.max_depth:
             continue
 
-        for rel_type in rel_types:
+        for rel_type, direction in resolved_refs:
             rel_policies = step_policies.get(rel_type, [])
             neighbors = graph.get_neighbors_with_edge_refs(
                 entity.entity_type,
@@ -307,6 +310,16 @@ def _execute_step(
                     queue.append((neighbor, depth + 1, traversal_id))
 
     return next_entities, next_parent_ids or None
+
+
+def _flip_relationship_direction(
+    direction: str,
+) -> str:
+    if direction == "outgoing":
+        return "incoming"
+    if direction == "incoming":
+        return "outgoing"
+    return direction
 
 
 def _active_query_policies(

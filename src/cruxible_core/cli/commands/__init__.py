@@ -14,7 +14,6 @@ from cruxible_core.cli.commands.lists import (
     export_group,
     list_group,
 )
-from cruxible_core.cli.commands.model import model_group
 from cruxible_core.cli.commands.mutations import (
     add_constraint_cmd,
     add_decision_policy_cmd,
@@ -49,6 +48,7 @@ from cruxible_core.cli.commands.workflows import (
     test_cmd,
     validate,
 )
+from cruxible_core.cli.commands.world import world_group
 
 __all__ = [
     "add_constraint_cmd",
@@ -74,7 +74,7 @@ __all__ = [
     "inspect_group",
     "list_group",
     "lock_cmd",
-    "model_group",
+    "world_group",
     "outcome_cmd",
     "outcome_profile_cmd",
     "plan_cmd",

@@ -77,7 +77,7 @@ entity_types:
 ### relationships
 - `name`, `from`/`to` (entity type names)
 - `properties` (typed, same as entities), `cardinality` (one|many)
-- `inverse` (optional reverse relationship name)
+- `reverse_name` (optional reverse relationship name)
 
 ### named_queries
 - `entry_point` (entity type + optional filter)

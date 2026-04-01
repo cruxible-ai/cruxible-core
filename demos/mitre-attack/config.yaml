@@ -188,7 +188,7 @@ relationships:
     from: Campaign
     to: Group
     cardinality: many
-    inverse: campaigns
+    reverse_name: campaigns
 
   - name: mitigates
     description: "A mitigation addresses or reduces the impact of a technique."

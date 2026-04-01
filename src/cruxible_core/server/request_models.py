@@ -185,17 +185,17 @@ class ForkSnapshotRequest(BaseModel):
     root_dir: str
 
 
-class ModelPublishRequest(BaseModel):
+class WorldPublishRequest(BaseModel):
     transport_ref: str
-    model_id: str
+    world_id: str
     release_id: str
-    compatibility: contracts.ModelCompatibility
+    compatibility: contracts.WorldCompatibility
 
 
-class ModelForkRequest(BaseModel):
+class WorldForkRequest(BaseModel):
     transport_ref: str
     root_dir: str
 
 
-class ModelPullApplyRequest(BaseModel):
+class WorldPullApplyRequest(BaseModel):
     expected_apply_digest: str

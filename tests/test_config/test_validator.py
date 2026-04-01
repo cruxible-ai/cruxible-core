@@ -16,7 +16,7 @@ from cruxible_core.config.schema import (
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
     IngestionMapping,
-    IntegrationSpec,
+    IntegrationSchema,
     NamedQuerySchema,
     OutcomeCodeSchema,
     OutcomeProfileSchema,
@@ -88,6 +88,43 @@ class TestValidateRelationships:
             validate_config(config)
         assert any("Duplicate" in e for e in exc_info.value.errors)
 
+    def test_duplicate_relationship_reverse_names(self):
+        config = _minimal_config(
+            relationships=[
+                RelationshipSchema(
+                    name="links",
+                    from_entity="A",
+                    to_entity="B",
+                    reverse_name="linked_from",
+                ),
+                RelationshipSchema(
+                    name="connects",
+                    from_entity="B",
+                    to_entity="A",
+                    reverse_name="linked_from",
+                ),
+            ]
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("reverse_name" in e for e in exc_info.value.errors)
+
+    def test_reverse_name_cannot_collide_with_canonical_name(self):
+        config = _minimal_config(
+            relationships=[
+                RelationshipSchema(
+                    name="links",
+                    from_entity="A",
+                    to_entity="B",
+                    reverse_name="connects",
+                ),
+                RelationshipSchema(name="connects", from_entity="B", to_entity="A"),
+            ]
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("collides" in e for e in exc_info.value.errors)
+
 
 class TestValidateNamedQueries:
     def test_valid_query(self):
@@ -99,6 +136,26 @@ class TestValidateNamedQueries:
                     returns="list[B]",
                 )
             }
+        )
+        validate_config(config)
+
+    def test_valid_query_with_reverse_name(self):
+        config = _minimal_config(
+            relationships=[
+                RelationshipSchema(
+                    name="links",
+                    from_entity="A",
+                    to_entity="B",
+                    reverse_name="linked_from",
+                ),
+            ],
+            named_queries={
+                "find_a": NamedQuerySchema(
+                    entry_point="B",
+                    traversal=[TraversalStep(relationship="linked_from")],
+                    returns="list[A]",
+                )
+            },
         )
         validate_config(config)
 
@@ -380,7 +437,7 @@ class TestValidateWorkflowExecution:
                 "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
             },
             integrations={
-                "catalog": IntegrationSpec(kind="heuristic"),
+                "catalog": IntegrationSchema(kind="heuristic"),
             },
             artifacts={
                 "artifact": ProviderArtifactSchema(
@@ -622,6 +679,31 @@ class TestValidateWorkflowExecution:
             validate_config(config)
         assert any("candidates_from alias 'missing_candidates'" in e for e in exc_info.value.errors)
         assert any("signals_from alias 'missing_signals'" in e for e in exc_info.value.errors)
+
+    def test_canonical_workflow_requires_apply_step(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    canonical=True,
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "canonical workflows require at least one apply_* step" in error
+            for error in exc_info.value.errors
+        )
 
     def test_item_reference_outside_builtin_steps_is_rejected(self):
         config = self._workflow_config(

@@ -20,11 +20,11 @@ class WorldSnapshot(BaseModel):
     origin_snapshot_id: str | None = None
 
 
-class PublishedModelManifest(BaseModel):
-    """Distribution metadata for a published model release bundle."""
+class PublishedWorldManifest(BaseModel):
+    """Distribution metadata for a published world release bundle."""
 
     format_version: int = 1
-    model_id: str
+    world_id: str
     release_id: str
     snapshot_id: str
     compatibility: str
@@ -46,7 +46,7 @@ class UpstreamMetadata(BaseModel):
     """Per-instance upstream release tracking metadata for pullable forks."""
 
     transport_ref: str
-    model_id: str
+    world_id: str
     release_id: str
     snapshot_id: str
     compatibility: str

@@ -25,7 +25,7 @@ description: For trust status tests
 integrations:
   check_v1:
     kind: generic
-    contract: {}
+    contract: null
 
 entity_types:
   Vehicle:

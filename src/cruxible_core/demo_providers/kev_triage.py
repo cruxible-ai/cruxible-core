@@ -137,43 +137,17 @@ def load_software_inventory(
     return {"items": _load_csv_rows(bundle_root / "software_inventory.csv")}
 
 
-def load_reference_product_catalog(
-    _input_payload: dict[str, Any],
-    context: ProviderContext,
-) -> dict[str, Any]:
-    """Load a unique reference product catalog from the public artifact bundle."""
-    bundle_root = _require_artifact_root(context, "load_reference_product_catalog")
-    products_by_id: dict[str, dict[str, Any]] = {}
-
-    for product_rows in _load_nvd_cpe_data(bundle_root / "nvd_kev_cves.json").values():
-        for product in product_rows:
-            product_id = str(product["product_id"])
-            current = products_by_id.get(product_id)
-            candidate = {
-                "product_id": product_id,
-                "product_name": product["product_name"],
-                "vendor_id": product["vendor_id"],
-                "vendor_name": product["vendor_name"],
-                "cpe_vendor": product["cpe_vendor"],
-                "cpe_product": product["cpe_product"],
-                "cpe_part": product["cpe_part"],
-            }
-            if current is None or _catalog_row_completeness(candidate) > _catalog_row_completeness(
-                current
-            ):
-                products_by_id[product_id] = candidate
-
-    items = [products_by_id[key] for key in sorted(products_by_id)]
-    return {"items": items}
-
-
 def match_software_to_products(
     input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
     """Match software inventory rows to reference products deterministically."""
     inventory_items = _require_items(input_payload, "inventory_items")
-    reference_products = _require_items(input_payload, "reference_products")
+    reference_products = [
+        product
+        for raw_product in _require_items(input_payload, "reference_products")
+        if (product := _normalize_reference_product(raw_product)) is not None
+    ]
 
     best_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
     for item in inventory_items:
@@ -212,6 +186,42 @@ def match_software_to_products(
         row.pop("_last_seen", None)
         items.append(row)
     return {"items": items}
+
+
+def _normalize_reference_product(product: dict[str, Any]) -> dict[str, Any] | None:
+    if "properties" not in product:
+        product_id = _first_non_empty(product.get("product_id"))
+        if not product_id:
+            return None
+        return {
+            "product_id": product_id,
+            "product_name": _first_non_empty(product.get("product_name")) or "",
+            "vendor_id": _first_non_empty(product.get("vendor_id")) or "",
+            "vendor_name": _first_non_empty(product.get("vendor_name")) or "",
+            "cpe_vendor": _first_non_empty(product.get("cpe_vendor")) or "",
+            "cpe_product": _first_non_empty(product.get("cpe_product")) or "",
+            "cpe_part": _first_non_empty(product.get("cpe_part")) or "",
+        }
+
+    properties = product.get("properties")
+    if not isinstance(properties, dict):
+        return None
+
+    product_id = _first_non_empty(product.get("entity_id"), properties.get("product_id"))
+    if not product_id:
+        return None
+
+    vendor_name = _first_non_empty(properties.get("vendor_name")) or ""
+    cpe_vendor = _first_non_empty(properties.get("cpe_vendor")) or ""
+    return {
+        "product_id": product_id,
+        "product_name": _first_non_empty(properties.get("product_name")) or "",
+        "vendor_id": _first_non_empty(properties.get("vendor_id")) or "",
+        "vendor_name": vendor_name,
+        "cpe_vendor": cpe_vendor,
+        "cpe_product": _first_non_empty(properties.get("cpe_product")) or "",
+        "cpe_part": _first_non_empty(properties.get("cpe_part")) or "",
+    }
 
 
 def assess_asset_affected(
@@ -473,13 +483,6 @@ def _match_row_sort_key(row: dict[str, Any]) -> tuple[float, str, str]:
         float(row.get("match_confidence", 0.0)),
         str(row.get("_last_seen", "")),
         str(row.get("installed_version", "")),
-    )
-
-
-def _catalog_row_completeness(row: dict[str, Any]) -> int:
-    return sum(
-        bool(row.get(key))
-        for key in ("vendor_name", "cpe_vendor", "cpe_product", "cpe_part")
     )
 
 

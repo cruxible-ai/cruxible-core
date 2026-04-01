@@ -19,13 +19,11 @@ import importlib.util
 import json
 import os
 import shutil
-import sys
 import tempfile
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, Sequence
+from typing import Any, Callable
 
 import httpx
 import yaml
@@ -33,8 +31,8 @@ import yaml
 from cruxible_core.errors import ConfigError
 from cruxible_core.service.execution import service_apply_workflow, service_lock, service_run
 from cruxible_core.service.lifecycle import service_init
-from cruxible_core.service.model import build_release_bundle
-from cruxible_core.snapshot.types import PublishedModelManifest
+from cruxible_core.service.world import build_release_bundle
+from cruxible_core.snapshot.types import PublishedWorldManifest
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import parse_transport_ref
 from cruxible_core.workflow.compiler import compute_path_sha256
@@ -44,9 +42,13 @@ CISA_KEV_URL = (
 )
 EPSS_KEV_URL = "https://raw.githubusercontent.com/jgamblin/KEV_EPSS/main/epss_kev_nvd.csv"
 DEFAULT_TRANSPORT_REF = "oci://ghcr.io/cruxible-ai/models/kev-reference"
-DEFAULT_MODEL_ID = "kev-reference"
+DEFAULT_WORLD_ID = "kev-reference"
 DEFAULT_WORKFLOW_NAME = "build_public_kev_reference"
 DEFAULT_COMPATIBILITY = "data_only"
+
+MIN_KEV_ROWS = 1000
+MIN_EPSS_ROWS = 1000
+MIN_NVD_ENTRIES = 500
 
 
 @dataclass(frozen=True)
@@ -57,22 +59,21 @@ class PublishRefs:
 
 @dataclass(frozen=True)
 class PublishKevReleaseResult:
-    manifest: PublishedModelManifest
+    manifest: PublishedWorldManifest
     immutable_ref: str
     latest_ref: str
-    bundle_dir: Path
 
 
 def publish_kev_release(
     *,
     transport_ref: str,
     release_id: str,
-    model_id: str = DEFAULT_MODEL_ID,
+    world_id: str = DEFAULT_WORLD_ID,
     workflow_name: str = DEFAULT_WORKFLOW_NAME,
     compatibility: str = DEFAULT_COMPATIBILITY,
     nvd_api_key: str | None = None,
 ) -> PublishKevReleaseResult:
-    """Build and publish the KEV reference release bundle."""
+    """Build and publish the KEV reference world release bundle."""
     refs = build_publish_refs(transport_ref=transport_ref, release_id=release_id)
     repo_root = _repo_root()
 
@@ -83,9 +84,6 @@ def publish_kev_release(
 
         populate_data_dir(data_dir, api_key=nvd_api_key)
 
-        providers_src = repo_root / "demos" / "kev-triage" / "providers.py"
-        shutil.copy2(providers_src, workspace / "providers.py")
-
         config_src = repo_root / "demos" / "kev-triage" / "kev-reference.yaml"
         config_path = workspace / "config.yaml"
         artifact_sha256 = compute_path_sha256(data_dir)
@@ -95,21 +93,20 @@ def publish_kev_release(
             artifact_sha256=artifact_sha256,
         )
 
-        with temporary_module_root(workspace):
-            instance = service_init(workspace, config_path="config.yaml").instance
-            service_lock(instance)
-            preview = service_run(instance, workflow_name, {})
-            if preview.apply_digest is None:
-                raise ConfigError(
-                    f"Canonical workflow '{workflow_name}' did not produce an apply digest"
-                )
-            applied = service_apply_workflow(
-                instance,
-                workflow_name,
-                {},
-                expected_apply_digest=preview.apply_digest,
-                expected_head_snapshot_id=preview.head_snapshot_id,
+        instance = service_init(workspace, config_path="config.yaml").instance
+        service_lock(instance)
+        preview = service_run(instance, workflow_name, {})
+        if preview.apply_digest is None:
+            raise ConfigError(
+                f"Canonical workflow '{workflow_name}' did not produce an apply digest"
             )
+        applied = service_apply_workflow(
+            instance,
+            workflow_name,
+            {},
+            expected_apply_digest=preview.apply_digest,
+            expected_head_snapshot_id=preview.head_snapshot_id,
+        )
 
         if applied.committed_snapshot_id is None:
             raise ConfigError(
@@ -119,7 +116,7 @@ def publish_kev_release(
         bundle_dir = build_release_bundle(
             instance=instance,
             snapshot_id=applied.committed_snapshot_id,
-            model_id=model_id,
+            world_id=world_id,
             release_id=release_id,
             compatibility=compatibility,
             parent_release_id=None,
@@ -127,14 +124,13 @@ def publish_kev_release(
 
         publish_release_bundle(bundle_dir, refs)
 
-        manifest = PublishedModelManifest.model_validate_json(
+        manifest = PublishedWorldManifest.model_validate_json(
             (bundle_dir / "manifest.json").read_text(encoding="utf-8")
         )
         return PublishKevReleaseResult(
             manifest=manifest,
             immutable_ref=refs.immutable_ref,
             latest_ref=refs.latest_ref,
-            bundle_dir=bundle_dir,
         )
 
 
@@ -171,15 +167,32 @@ def publish_release_bundle(bundle_dir: Path, refs: PublishRefs) -> None:
 
 def populate_data_dir(data_dir: Path, *, api_key: str | None) -> None:
     """Fetch the three KEV source files into the temp artifact directory."""
+    kev_text = download_text(CISA_KEV_URL)
+    kev_row_count = kev_text.count("\n") - 1
+    if kev_row_count < MIN_KEV_ROWS:
+        raise ConfigError(
+            f"KEV CSV has only {kev_row_count} rows (expected >={MIN_KEV_ROWS}). "
+            "Source may be returning a maintenance page or truncated data."
+        )
     (data_dir / "known_exploited_vulnerabilities.csv").write_text(
-        download_text(CISA_KEV_URL),
-        encoding="utf-8",
+        kev_text, encoding="utf-8"
     )
-    (data_dir / "epss_kev_nvd.csv").write_text(
-        download_text(EPSS_KEV_URL),
-        encoding="utf-8",
-    )
+
+    epss_text = download_text(EPSS_KEV_URL)
+    epss_row_count = epss_text.count("\n") - 1
+    if epss_row_count < MIN_EPSS_ROWS:
+        raise ConfigError(
+            f"EPSS CSV has only {epss_row_count} rows (expected >={MIN_EPSS_ROWS}). "
+            "Source may be returning a maintenance page or truncated data."
+        )
+    (data_dir / "epss_kev_nvd.csv").write_text(epss_text, encoding="utf-8")
+
     nvd_rows = load_nvd_fetcher()(api_key)
+    if len(nvd_rows) < MIN_NVD_ENTRIES:
+        raise ConfigError(
+            f"NVD fetch returned only {len(nvd_rows)} entries (expected >={MIN_NVD_ENTRIES}). "
+            "NVD API may be returning partial data."
+        )
     (data_dir / "nvd_kev_cves.json").write_text(
         json.dumps(nvd_rows, indent=2, sort_keys=False) + "\n",
         encoding="utf-8",
@@ -240,31 +253,6 @@ def load_module_from_path(*, name: str, path: Path) -> ModuleType:
     return module
 
 
-@contextmanager
-def temporary_module_root(
-    module_root: Path,
-    module_names: Sequence[str] = ("providers",),
-) -> Iterator[None]:
-    """Temporarily prepend a directory to sys.path and force module reload."""
-    previous_modules = {name: sys.modules.get(name) for name in module_names}
-    root_str = str(module_root)
-    sys.path.insert(0, root_str)
-    for name in module_names:
-        sys.modules.pop(name, None)
-    try:
-        yield
-    finally:
-        try:
-            sys.path.remove(root_str)
-        except ValueError:
-            pass
-        for name in module_names:
-            sys.modules.pop(name, None)
-            previous = previous_modules[name]
-            if previous is not None:
-                sys.modules[name] = previous
-
-
 def _prepare_latest_target(ref: str) -> None:
     """Make file-backed latest refs replaceable while keeping immutable refs strict."""
     scheme, remainder = parse_transport_ref(ref)
@@ -278,8 +266,8 @@ def _prepare_latest_target(ref: str) -> None:
 
 
 def _validate_release_id(value: str) -> None:
-    PublishedModelManifest(
-        model_id="kev-reference",
+    PublishedWorldManifest(
+        world_id="kev-reference",
         release_id=value,
         snapshot_id="snap_validation",
         compatibility=DEFAULT_COMPATIBILITY,
@@ -303,9 +291,9 @@ def parse_args() -> argparse.Namespace:
         help="Immutable release identifier, e.g. 2026-03-27",
     )
     parser.add_argument(
-        "--model-id",
-        default=DEFAULT_MODEL_ID,
-        help=f"Published model_id (default: {DEFAULT_MODEL_ID})",
+        "--world-id",
+        default=DEFAULT_WORLD_ID,
+        help=f"Published world_id (default: {DEFAULT_WORLD_ID})",
     )
     parser.add_argument(
         "--workflow-name",
@@ -333,12 +321,12 @@ def main() -> None:
     result = publish_kev_release(
         transport_ref=args.transport_ref,
         release_id=args.release_id,
-        model_id=args.model_id,
+        world_id=args.world_id,
         workflow_name=args.workflow_name,
         compatibility=args.compatibility,
         nvd_api_key=nvd_api_key,
     )
-    print(f"Published {result.manifest.model_id}:{result.manifest.release_id}")
+    print(f"Published {result.manifest.world_id}:{result.manifest.release_id}")
     print(f"Immutable ref: {result.immutable_ref}")
     print(f"Latest ref:    {result.latest_ref}")
     print(f"Snapshot:      {result.manifest.snapshot_id}")
