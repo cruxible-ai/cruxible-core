@@ -235,7 +235,7 @@ def _handle_workflow_run_local(
     check_permission(
         "workflow_run",
         instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
+        required_mode=PermissionMode.GOVERNED_WRITE,
     )
     instance = get_manager().get(instance_id)
     result = service_run(instance, workflow_name, input_payload or {})

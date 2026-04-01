@@ -125,6 +125,63 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_model_fork(transport_ref, root_dir)
 
     @_tool
+    def cruxible_lock_workflow(instance_id: str) -> contracts.WorkflowLockResult:
+        """Generate the workflow lock file for the current instance config.
+
+        Run this after changing providers, artifacts, or workflow config and
+        before planning or executing workflows.
+        """
+        return handlers.handle_workflow_lock(instance_id)
+
+    @_tool
+    def cruxible_plan_workflow(
+        instance_id: str,
+        workflow_name: str,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowPlanResult:
+        """Compile a configured workflow into a concrete execution plan."""
+        return handlers.handle_workflow_plan(
+            instance_id,
+            workflow_name,
+            input_payload=input_payload,
+        )
+
+    @_tool
+    def cruxible_run_workflow(
+        instance_id: str,
+        workflow_name: str,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowRunResult:
+        """Execute a configured workflow and return receipts, traces, and output.
+
+        Canonical workflows run in preview mode and return an `apply_digest`
+        plus the current `head_snapshot_id`. To commit a canonical workflow,
+        call `cruxible_apply_workflow` with those values.
+        """
+        return handlers.handle_workflow_run(
+            instance_id,
+            workflow_name,
+            input_payload=input_payload,
+        )
+
+    @_tool
+    def cruxible_apply_workflow(
+        instance_id: str,
+        workflow_name: str,
+        expected_apply_digest: str,
+        expected_head_snapshot_id: str | None = None,
+        input_payload: dict[str, Any] | None = None,
+    ) -> contracts.WorkflowApplyResult:
+        """Apply a canonical workflow after verifying the preview identity."""
+        return handlers.handle_workflow_apply(
+            instance_id,
+            workflow_name,
+            expected_apply_digest=expected_apply_digest,
+            expected_head_snapshot_id=expected_head_snapshot_id,
+            input_payload=input_payload,
+        )
+
+    @_tool
     def cruxible_ingest(
         instance_id: str,
         mapping_name: str,
@@ -134,7 +191,11 @@ def register_tools(server: FastMCP) -> list[str]:
         data_ndjson: str | None = None,
         upload_id: str | None = None,
     ) -> contracts.IngestResult:
-        """Ingest data through an ingestion mapping.
+        """Ingest data through a legacy ingestion mapping.
+
+        Deprecated for new configs: prefer workflow-based deterministic loading
+        via `cruxible_lock_workflow`, `cruxible_run_workflow`, and
+        `cruxible_apply_workflow`.
 
         For deterministic relationships only (explicit in source data).
         For inferred relationships (matching, classification), use

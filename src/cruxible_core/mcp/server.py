@@ -44,9 +44,11 @@ Use prompt defaults unless the user explicitly requests deviation.
 The server runs in one of four cumulative permission modes controlled by
 the `CRUXIBLE_MODE` environment variable:
 - `READ_ONLY`: query, inspect, validate — no graph or config mutations
-- `GOVERNED_WRITE`: READ_ONLY + governed proposal and feedback surfaces
+- `GOVERNED_WRITE`: READ_ONLY + receipt-persisting workflow runs,
+  governed proposal, and feedback surfaces
 - `GRAPH_WRITE`: GOVERNED_WRITE + raw graph mutation and proposal resolution
-- `ADMIN` (default): all tools available including ingest and config mutation
+- `ADMIN` (default): all tools available including canonical workflow
+  apply, ingest, and config mutation
 
 If a tool call is denied, the error message indicates the required mode.
 
@@ -86,7 +88,14 @@ entity_types:
 - Rule expressions, e.g. `replaces.FROM.category == replaces.TO.category`
 - `severity`: warning | error
 
+### workflows
+- Prefer workflows for deterministic loading and repeatable execution.
+- Canonical workflows use `cruxible_lock_workflow`, `cruxible_run_workflow`,
+  and `cruxible_apply_workflow`.
+- Governed proposal workflows use `cruxible_propose_workflow`.
+
 ### ingestion
+- Legacy compatibility path for older configs.
 - One mapping per data file
 - Entity mappings: `entity_type`, `id_column`, `column_map`
 - Relationship mappings: `relationship_type`, `from_column`, `to_column`,

@@ -3,10 +3,11 @@
 Controls which tools an MCP session can invoke, enforced via the
 ``CRUXIBLE_MODE`` environment variable. Four cumulative tiers:
 
-- ``READ_ONLY``: query, inspect, validate — no graph or config mutations
-- ``GOVERNED_WRITE``: propose or review via governed surfaces, no raw mutation
+- ``READ_ONLY``: query, inspect, validate, and plan workflows
+- ``GOVERNED_WRITE``: execute workflows that persist receipts and
+  propose or review via governed surfaces
 - ``GRAPH_WRITE``: raw graph mutation and proposal resolution
-- ``ADMIN``: ingest data, add constraints, create new instances
+- ``ADMIN``: apply canonical workflows, ingest data, add constraints, create new instances
 
 Default is ``ADMIN`` (backward compatible).
 
@@ -97,10 +98,12 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_analyze_outcomes": PermissionMode.READ_ONLY,
     "cruxible_model_status": PermissionMode.READ_ONLY,
     "cruxible_model_pull_preview": PermissionMode.READ_ONLY,
+    "cruxible_plan_workflow": PermissionMode.READ_ONLY,
     # GOVERNED_WRITE tools
     "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
     "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,
     "cruxible_outcome": PermissionMode.GOVERNED_WRITE,
+    "cruxible_run_workflow": PermissionMode.GOVERNED_WRITE,
     "cruxible_propose_workflow": PermissionMode.GOVERNED_WRITE,
     "cruxible_propose_group": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
@@ -112,6 +115,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_ingest": PermissionMode.ADMIN,
     "cruxible_add_constraint": PermissionMode.ADMIN,
     "cruxible_add_decision_policy": PermissionMode.ADMIN,
+    "cruxible_lock_workflow": PermissionMode.ADMIN,
+    "cruxible_apply_workflow": PermissionMode.ADMIN,
     "cruxible_model_publish": PermissionMode.ADMIN,
     "cruxible_model_fork": PermissionMode.ADMIN,
     "cruxible_model_pull_apply": PermissionMode.ADMIN,

@@ -246,6 +246,139 @@ class TestInit:
         assert result["status"] == "loaded"
         assert any("fits" in w and "missing from config" in w for w in result["warnings"])
 
+
+# ── workflow tools ───────────────────────────────────────────────────
+
+
+class TestWorkflowTools:
+    def test_lock_run_and_apply_canonical_workflow(
+        self,
+        server,
+        canonical_workflow_project,
+    ):
+        instance = call_tool(
+            server,
+            "cruxible_init",
+            {"root_dir": str(canonical_workflow_project), "config_path": "config.yaml"},
+        )
+        instance_id = instance["instance_id"]
+
+        lock_result = call_tool(server, "cruxible_lock_workflow", {"instance_id": instance_id})
+        assert lock_result["providers_locked"] == 1
+        assert lock_result["artifacts_locked"] == 1
+
+        plan_result = call_tool(
+            server,
+            "cruxible_plan_workflow",
+            {
+                "instance_id": instance_id,
+                "workflow_name": "build_reference",
+                "input_payload": {},
+            },
+        )
+        assert plan_result["plan"]["workflow"] == "build_reference"
+
+        run_result = call_tool(
+            server,
+            "cruxible_run_workflow",
+            {
+                "instance_id": instance_id,
+                "workflow_name": "build_reference",
+                "input_payload": {},
+            },
+        )
+        assert run_result["mode"] == "preview"
+        assert run_result["canonical"] is True
+        assert run_result["apply_digest"].startswith("sha256:")
+
+        apply_result = call_tool(
+            server,
+            "cruxible_apply_workflow",
+            {
+                "instance_id": instance_id,
+                "workflow_name": "build_reference",
+                "expected_apply_digest": run_result["apply_digest"],
+                "expected_head_snapshot_id": run_result["head_snapshot_id"],
+                "input_payload": {},
+            },
+        )
+        assert apply_result["committed_snapshot_id"].startswith("snap_")
+
+        sample_result = call_tool(
+            server,
+            "cruxible_sample",
+            {"instance_id": instance_id, "entity_type": "Vendor"},
+        )
+        assert sample_result["count"] == 1
+
+    def test_run_workflow_does_not_create_group_for_non_canonical_workflow(
+        self,
+        server,
+        tmp_path,
+        proposal_workflow_config_yaml,
+    ):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+        instance = call_tool(
+            server,
+            "cruxible_init",
+            {"root_dir": str(tmp_path), "config_path": "config.yaml"},
+        )
+        instance_id = instance["instance_id"]
+
+        for entity in [
+            {
+                "entity_type": "Campaign",
+                "entity_id": "CMP-1",
+                "properties": {"campaign_id": "CMP-1", "region": "north"},
+            },
+            {
+                "entity_type": "Product",
+                "entity_id": "SKU-123",
+                "properties": {"sku": "SKU-123", "category": "beverages"},
+            },
+            {
+                "entity_type": "Product",
+                "entity_id": "SKU-456",
+                "properties": {"sku": "SKU-456", "category": "beverages"},
+            },
+        ]:
+            call_tool(
+                server,
+                "cruxible_add_entity",
+                {"instance_id": instance_id, "entities": [entity]},
+            )
+
+        call_tool(server, "cruxible_lock_workflow", {"instance_id": instance_id})
+
+        run_result = call_tool(
+            server,
+            "cruxible_run_workflow",
+            {
+                "instance_id": instance_id,
+                "workflow_name": "propose_campaign_recommendations",
+                "input_payload": {"campaign_id": "CMP-1"},
+            },
+        )
+        assert run_result["mode"] == "run"
+        assert run_result["canonical"] is False
+        assert run_result["receipt_id"].startswith("RCP-")
+        assert run_result["output"]["relationship_type"] == "recommended_for"
+
+        groups_result = call_tool(server, "cruxible_list_groups", {"instance_id": instance_id})
+        assert groups_result["total"] == 0
+
+        propose_result = call_tool(
+            server,
+            "cruxible_propose_workflow",
+            {
+                "instance_id": instance_id,
+                "workflow_name": "propose_campaign_recommendations",
+                "input_payload": {"campaign_id": "CMP-1"},
+            },
+        )
+        assert propose_result["group_id"].startswith("GRP-")
+
     def test_init_reload_no_warnings_on_additive_change(self, server, tmp_project, vehicles_csv):
         """Reload has no warnings when config adds a new type (additive change)."""
         call_tool(
@@ -2834,6 +2967,10 @@ MUTATING_TOOL_PAYLOADS = {
         "receipt_id": "RCP-fake",
         "outcome": "correct",
     },
+    "cruxible_run_workflow": {
+        "instance_id": "fake",
+        "workflow_name": "wf",
+    },
     "cruxible_ingest": {
         "instance_id": "fake",
         "mapping_name": "m",
@@ -2843,6 +2980,14 @@ MUTATING_TOOL_PAYLOADS = {
         "instance_id": "fake",
         "name": "c",
         "rule": "r.FROM.a == r.TO.b",
+    },
+    "cruxible_lock_workflow": {
+        "instance_id": "fake",
+    },
+    "cruxible_apply_workflow": {
+        "instance_id": "fake",
+        "workflow_name": "wf",
+        "expected_apply_digest": "sha256:preview",
     },
 }
 
