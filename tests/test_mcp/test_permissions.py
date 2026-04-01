@@ -81,6 +81,7 @@ class TestCheckPermission:
         check_permission("cruxible_schema")
         check_permission("cruxible_world_status")
         check_permission("cruxible_world_pull_preview")
+        check_permission("cruxible_plan_workflow")
 
     def test_graph_write_tool_in_read_only(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
@@ -95,6 +96,8 @@ class TestCheckPermission:
         init_permissions()
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_propose_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_run_workflow")
 
     def test_admin_tool_in_read_only(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
@@ -102,6 +105,10 @@ class TestCheckPermission:
         init_permissions()
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_ingest")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_lock_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_apply_workflow")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_world_publish")
         with pytest.raises(PermissionDeniedError):
@@ -119,6 +126,7 @@ class TestCheckPermission:
         init_permissions()
         check_permission("cruxible_feedback")
         check_permission("cruxible_feedback_batch")
+        check_permission("cruxible_run_workflow")
         check_permission("cruxible_propose_workflow")
 
     def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
@@ -136,9 +144,15 @@ class TestCheckPermission:
         init_permissions()
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_ingest")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_lock_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_apply_workflow")
 
     def test_admin_tool_in_admin(self):
         check_permission("cruxible_ingest")
+        check_permission("cruxible_lock_workflow")
+        check_permission("cruxible_apply_workflow")
         check_permission("cruxible_world_publish")
         check_permission("cruxible_world_fork")
         check_permission("cruxible_world_pull_apply")

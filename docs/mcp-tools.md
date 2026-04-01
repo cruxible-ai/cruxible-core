@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Cruxible Core exposes 19 tools through the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). AI agents (Claude Code, Cursor, Codex, etc.) use these tools to orchestrate the full decision lifecycle: validate configs, ingest data, run queries, provide feedback, and evaluate quality.
+Cruxible Core exposes MCP tools through the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). AI agents (Claude Code, Cursor, Codex, etc.) use these tools to orchestrate the full decision lifecycle: validate configs, lock and execute workflows, query the graph, provide feedback, and evaluate quality.
 
 ## Setup
 
@@ -34,8 +34,9 @@ Each tool requires a minimum permission tier. Set via the `CRUXIBLE_MODE` enviro
 | Mode | Env Value | Description |
 |------|-----------|-------------|
 | `READ_ONLY` | `read_only` | Query, inspect, validate — no mutations |
-| `GRAPH_WRITE` | `graph_write` | READ_ONLY + add entities/relationships, record feedback |
-| `ADMIN` | `admin` | All tools including ingest and config mutation |
+| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + receipt-persisting workflow runs, governed proposal, feedback |
+| `GRAPH_WRITE` | `graph_write` | GOVERNED_WRITE + raw graph mutation and proposal resolution |
+| `ADMIN` | `admin` | All tools including canonical workflow apply, ingest, and config mutation |
 
 Default is `ADMIN` if unset.
 
@@ -141,6 +142,66 @@ To create a new instance, provide exactly one of `config_path` or `config_yaml`.
 
 ---
 
+### cruxible_lock_workflow
+
+Generate the workflow lock file for the current instance config.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID from `cruxible_init` |
+
+Use this after changing workflow config, providers, or artifacts and before planning or executing workflows.
+
+---
+
+### cruxible_plan_workflow
+
+Compile a configured workflow into a concrete execution plan.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `workflow_name` | string | **yes** | Workflow name from config |
+| `input_payload` | dict | no | Structured workflow input |
+
+---
+
+### cruxible_run_workflow
+
+Execute a configured workflow and return its output, receipt, and traces.
+
+**Permission:** GOVERNED_WRITE
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `workflow_name` | string | **yes** | Workflow name from config |
+| `input_payload` | dict | no | Structured workflow input |
+
+Canonical workflows run in preview mode and return `apply_digest` plus `head_snapshot_id`. Pass those to `cruxible_apply_workflow` to commit.
+
+---
+
+### cruxible_apply_workflow
+
+Apply a canonical workflow after verifying the preview identity.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `workflow_name` | string | **yes** | Canonical workflow name |
+| `expected_apply_digest` | string | **yes** | Preview digest from `cruxible_run_workflow` |
+| `expected_head_snapshot_id` | string | no | Snapshot ID returned by preview |
+| `input_payload` | dict | no | Structured workflow input |
+
+---
+
 ### cruxible_ingest
 
 Ingest data through a named ingestion mapping.
@@ -156,6 +217,8 @@ Ingest data through a named ingestion mapping.
 | `data_json` | string or list | conditional | Inline JSON array of row objects |
 | `data_ndjson` | string | conditional | Inline NDJSON string (one JSON object per line) |
 | `upload_id` | string | conditional | Reserved for cloud mode |
+
+Deprecated for new configs: prefer workflow-based deterministic loading with `cruxible_lock_workflow`, `cruxible_run_workflow`, and `cruxible_apply_workflow`.
 
 Provide exactly one data source. Ingest entity mappings before relationship mappings.
 

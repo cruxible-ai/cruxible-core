@@ -112,6 +112,81 @@ def handle_world_fork(
     )
 
 
+def handle_workflow_lock(instance_id: str) -> contracts.WorkflowLockResult:
+    """Generate a workflow lock file for an instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.workflow_lock(instance_id),
+        lambda: local_api._handle_workflow_lock_local(instance_id),
+    )
+
+
+def handle_workflow_plan(
+    instance_id: str,
+    workflow_name: str,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowPlanResult:
+    """Compile a configured workflow plan."""
+    return _dispatch_remote_or_local(
+        lambda client: client.workflow_plan(
+            instance_id,
+            workflow_name=workflow_name,
+            input_payload=input_payload or {},
+        ),
+        lambda: local_api._handle_workflow_plan_local(
+            instance_id,
+            workflow_name,
+            input_payload,
+        ),
+    )
+
+
+def handle_workflow_run(
+    instance_id: str,
+    workflow_name: str,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowRunResult:
+    """Execute a configured workflow."""
+    return _dispatch_remote_or_local(
+        lambda client: client.workflow_run(
+            instance_id,
+            workflow_name=workflow_name,
+            input_payload=input_payload or {},
+        ),
+        lambda: local_api._handle_workflow_run_local(
+            instance_id,
+            workflow_name,
+            input_payload,
+        ),
+    )
+
+
+def handle_workflow_apply(
+    instance_id: str,
+    workflow_name: str,
+    *,
+    expected_apply_digest: str,
+    expected_head_snapshot_id: str | None = None,
+    input_payload: dict[str, Any] | None = None,
+) -> contracts.WorkflowApplyResult:
+    """Apply a canonical workflow after verifying preview identity."""
+    return _dispatch_remote_or_local(
+        lambda client: client.workflow_apply(
+            instance_id,
+            workflow_name=workflow_name,
+            expected_apply_digest=expected_apply_digest,
+            expected_head_snapshot_id=expected_head_snapshot_id,
+            input_payload=input_payload or {},
+        ),
+        lambda: local_api._handle_workflow_apply_local(
+            instance_id,
+            workflow_name,
+            expected_apply_digest,
+            expected_head_snapshot_id,
+            input_payload,
+        ),
+    )
+
+
 def handle_propose_workflow(
     instance_id: str,
     workflow_name: str,

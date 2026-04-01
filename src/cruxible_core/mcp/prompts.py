@@ -25,8 +25,9 @@ if TYPE_CHECKING:
 
 def _prepare_data(data_description: str) -> str:
     return f"""\
-You are preparing data for ingestion into Cruxible.
-Cruxible ingests and evaluates; cleaning and transforms are external.
+You are preparing data for loading into Cruxible.
+Cruxible executes workflows, legacy ingestion mappings, and evaluates graph quality;
+cleaning and transforms are external.
 This prompt covers data cleaning only — profiling, deduplication, key validation.
 Cross-dataset matching (linking entities across different source files) happens
 later via `find_candidates` in the onboard workflow.
@@ -66,16 +67,16 @@ Data description: {data_description}
 
 ## Step 8 — Validate Against Config (if applicable)
 - Compare CSV columns to ingestion mapping fields
-  (`id_column`, `from_column`, `to_column`, `column_map`)
-- Flag mismatches before attempting ingest
+  (`id_column`, `from_column`, `to_column`, `column_map`) or workflow loader expectations
+- Flag mismatches before attempting workflow execution or ingest
 
 ## Step 9 — Report
 Fix issues using external tools, then report:
 
 - **readiness**: `ready` | `ready_with_warnings` | `blocked`
-- **blocking_issues**: list of issues that prevent ingestion
+- **blocking_issues**: list of issues that prevent loading
 - **warnings**: list of non-blocking concerns
-- **cleaned_files**: paths to cleaned files for ingestion
+- **cleaned_files**: paths to cleaned files for loading
 """
 
 
@@ -117,7 +118,7 @@ Before writing any config, understand the domain and the data.
   - _(plain-language question the graph should answer)_
 
 Wait for user confirmation before proceeding. Adjustments here are cheap;
-adjustments after ingestion are expensive.
+adjustments after workflow execution are expensive.
 
 ## Step 2 — Prepare Data
 
@@ -141,7 +142,9 @@ Define the required sections:
 - `named_queries`: leave this section empty for now. You'll design queries in Step 7
   after seeing what's actually in the graph.
 - `constraints`: validation expressions with severity.
-- `ingestion`: mappings for entity files and deterministic relationship files only.
+- Prefer deterministic loading via `contracts`, `artifacts`, `providers`, and `workflows`.
+- Use `ingestion` only for legacy compatibility when you are intentionally keeping an
+  older mapping-based config.
 
 Write `description` on every section — the config should be understandable
 without external docs:
@@ -149,7 +152,8 @@ without external docs:
 - Named query descriptions: the question in plain language
   (e.g. "Is this company connected to any sanctioned entity?").
 - Ingestion mapping descriptions: what data the mapping expects
-  (e.g. "CSV of SDN entities with sdn_id, name, country columns").
+  (e.g. "CSV of SDN entities with sdn_id, name, country columns" or
+  "canonical workflow that loads the reference bundle").
 
 ## Step 4 — Validate and Initialize
 
@@ -157,12 +161,18 @@ without external docs:
 2. `cruxible_init` only after validation passes.
 3. Keep the returned `instance_id` for all later calls.
 
-## Step 5 — Ingest Source Data
+## Step 5 — Load Source Data
 
-1. Ingest **entities** from cleaned data files.
-2. Ingest **deterministic relationships** that exist explicitly in source data
-   (e.g. known fitments, explicit FK mappings).
-3. Stop and handle tool errors from MCP before continuing.
+Preferred path for new configs:
+1. `cruxible_lock_workflow` after the config is stable.
+2. `cruxible_run_workflow` for deterministic loader workflows.
+3. If the workflow is canonical, capture `apply_digest` and `head_snapshot_id`,
+   then call `cruxible_apply_workflow` to commit it.
+4. Stop and handle tool errors from MCP before continuing.
+
+Legacy compatibility path:
+1. Use `cruxible_ingest` only if the config intentionally defines old ingestion mappings.
+2. Ingest **entities** before **deterministic relationships**.
 
 ## Step 6 — Create Cross-Dataset Relationships
 
@@ -563,7 +573,7 @@ Common cruxible tool sequences.
 1. Run `prepare_data` prompt with file descriptions.
 2. Fix blocking issues using external tools.
 3. Re-run until readiness is `ready` or `ready_with_warnings`.
-4. Proceed to `onboard_domain` or `cruxible_ingest`.
+4. Proceed to `onboard_domain`, then use workflow lock/run/apply to load data.
 """
 
 
@@ -574,7 +584,8 @@ Common cruxible tool sequences.
 PROMPT_REGISTRY: dict[str, tuple[Callable[..., str], str]] = {
     "prepare_data": (
         _prepare_data,
-        "Checklist for profiling and cleaning data files before ingestion.",
+        "Checklist for profiling and cleaning data files before workflow "
+        "loading or legacy ingestion.",
     ),
     "onboard_domain": (
         _onboard_domain,

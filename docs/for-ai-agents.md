@@ -13,6 +13,8 @@ Permission modes are enforced at the daemon boundary. If an agent can import `cr
 
 If trust levels matter, keep the agent on `cruxible-client` only and run `cruxible-core` in a separate daemon environment.
 
+For a concrete hardened setup, see [Isolated Deployment](isolated-deployment.md).
+
 ## Role Separation
 
 **You (the AI agent):**
@@ -86,7 +88,7 @@ Cruxible includes guided workflow prompts that provide step-by-step instructions
 | Prompt | Args | Description |
 |--------|------|-------------|
 | `onboard_domain` | `domain` | Full workflow from raw data to working graph (11 steps) |
-| `prepare_data` | `data_description` | Checklist for profiling and cleaning data before ingestion |
+| `prepare_data` | `data_description` | Checklist for profiling and cleaning data before workflow loading or legacy ingestion |
 | `review_graph` | `instance_id` | Review and improve an existing graph's quality |
 | `user_review` | `instance_id` | Collaborative edge review session with a human |
 | `analyze_feedback` | `instance_id`, `relationship_type` | Discover rejection patterns worth encoding as constraints |
@@ -103,16 +105,18 @@ cruxible_prompt("onboard_domain", {"domain": "drug interactions"})
 The standard lifecycle follows this order:
 
 ```
-validate → init → ingest → add entities/relationships → query → feedback → outcome → evaluate
+validate → init → lock workflow → run/apply deterministic workflows → query → feedback → outcome → evaluate
 ```
 
 ### Ordering Rules
 
 1. `cruxible_validate` before `cruxible_init` — fail fast on bad config
-2. Ingest entities before relationships — edges reference entity IDs
-3. For inferred relationships, use `cruxible_add_relationship` after ingestion
-4. For entities from free text, use `cruxible_add_entity` (entities must exist before adding relationships to them)
-5. Use the `instance_id` from `cruxible_init` in all subsequent calls
+2. Run `cruxible_lock_workflow` before planning or executing workflows after config/provider changes
+3. Apply canonical workflows only after a preview returns `apply_digest` and `head_snapshot_id`
+4. For inferred relationships, use `cruxible_add_relationship` after deterministic loading
+5. Legacy `cruxible_ingest` is still available for older configs, but workflows are the preferred path for new configs
+6. For entities from free text, use `cruxible_add_entity` (entities must exist before adding relationships to them)
+7. Use the `instance_id` from `cruxible_init` in all subsequent calls
 
 ## Onboarding a New Domain
 
@@ -128,7 +132,7 @@ Before writing any config, understand the domain and the data:
 
 ### Step 2 — Prepare Data
 
-Profile and clean data files before ingestion:
+Profile and clean data files before workflow loading:
 - Check row counts, column types, null counts
 - Validate primary key uniqueness (duplicates = wrong grain)
 - Validate foreign keys (orphan FKs = broken edges)
@@ -146,7 +150,8 @@ Define all required sections:
 - **relationships**: `from`/`to` entity types, optional edge properties, cardinality. Include cross-dataset relationship types — but do NOT create ingestion mappings for them. They'll be populated via `cruxible_find_candidates` in Step 6.
 - **named_queries**: Leave this section empty for now. You'll design queries in Step 7 after seeing what's actually in the graph.
 - **constraints**: Validation rules with severity levels.
-- **ingestion**: Mappings for entity files and deterministic relationship files only.
+- Prefer **contracts**, **artifacts**, **providers**, and **workflows** for deterministic loading.
+- Use **ingestion** only for legacy compatibility when you intentionally keep a mapping-based config.
 
 See the [Config Reference](config-reference.md) for the full schema.
 
@@ -158,17 +163,24 @@ See the [Config Reference](config-reference.md) for the full schema.
 3. Save the instance_id for all subsequent calls
 ```
 
-### Step 5 — Ingest Source Data
+### Step 5 — Load Source Data
 
-Load entities first, then relationships. Ingestion mappings are defined in the config — use the mapping name, not the filename:
+For new configs, prefer workflow-based deterministic loading:
+
+```
+1. cruxible_lock_workflow(instance_id)
+2. cruxible_run_workflow(instance_id, "load_<dataset>", input_payload={...})
+3. If canonical: cruxible_apply_workflow(instance_id, "load_<dataset>", expected_apply_digest=..., expected_head_snapshot_id=..., input_payload={...})
+```
+
+Legacy compatibility path for older configs:
 
 ```
 1. cruxible_ingest(instance_id, "<entity_mapping>", file_path="data/<entities>.csv")
-2. cruxible_ingest(instance_id, "<another_entity_mapping>", file_path="data/<other_entities>.csv")
-3. cruxible_ingest(instance_id, "<relationship_mapping>", file_path="data/<relationships>.csv")
+2. cruxible_ingest(instance_id, "<relationship_mapping>", file_path="data/<relationships>.csv")
 ```
 
-Check for errors after each ingestion step before continuing. Use `cruxible_schema` to see available mapping names if unsure.
+Check for errors after each load step before continuing.
 
 ### Step 6 — Discover Cross-References
 
