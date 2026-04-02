@@ -10,9 +10,11 @@ from fastapi.testclient import TestClient
 from cruxible_core.errors import ConstraintViolationError, InstanceNotFoundError
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
+from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.app import create_app
-from cruxible_core.server.registry import reset_registry
+from cruxible_core.server.config import get_server_state_dir
+from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
@@ -81,7 +83,7 @@ def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 def _init_instance(client: TestClient, root: Path) -> str:
     response = client.post(
         "/api/v1/instances",
-        json={"root_dir": str(root), "config_path": "config.yaml"},
+        json={"root_dir": str(root), "config_yaml": (root / "config.yaml").read_text()},
     )
     assert response.status_code == 200
     payload = response.json()
@@ -185,13 +187,34 @@ def test_reload_config_route_updates_instance_path(
 
     response = app_client.post(
         f"/api/v1/{instance_id}/config/reload",
-        json={"config_path": str(new_config)},
+        json={"config_yaml": new_config.read_text()},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["updated"] is True
-    assert payload["config_path"] == str(new_config)
+    assert str(tmp_path / "alt-config.yaml") not in payload["config_path"]
+    assert ".cruxible" not in payload["config_path"]
+    assert payload["config_path"].endswith("/config.yaml")
+
+
+def test_server_init_creates_daemon_owned_governed_instance(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    record = get_registry().get(instance_id)
+    assert record is not None
+    assert record.location != str(server_project)
+    expected_root = get_server_state_dir() / "instances" / instance_id
+    assert Path(record.location) == expected_root
+
+    instance = get_manager().get(instance_id)
+    assert isinstance(instance, CruxibleInstance)
+    assert instance.is_governed_mode()
+    assert instance.get_root_path() == Path(record.location)
+    assert instance.get_config_path().parent == Path(record.location)
+    assert instance.load_config().name == "car_parts_compatibility"
 
 
 def test_repeated_init_returns_same_opaque_id(app_client: TestClient, server_project: Path):

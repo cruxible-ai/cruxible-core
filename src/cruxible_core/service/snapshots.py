@@ -28,10 +28,17 @@ def service_fork_snapshot(
     instance: InstanceProtocol,
     snapshot_id: str,
     root_dir: str | Path,
+    *,
+    instance_mode: str = CruxibleInstance.DEV_MODE,
 ) -> ForkSnapshotResult:
     """Create a new local instance from a selected snapshot."""
     if not isinstance(instance, CruxibleInstance):
         raise ConfigError("Snapshot fork currently supports only local filesystem instances")
 
-    forked, snapshot = CruxibleInstance.fork_from_snapshot(instance, snapshot_id, root_dir)
+    forked, snapshot = CruxibleInstance.fork_from_snapshot(
+        instance,
+        snapshot_id,
+        root_dir,
+        instance_mode=instance_mode,
+    )
     return ForkSnapshotResult(instance=forked, snapshot=snapshot)

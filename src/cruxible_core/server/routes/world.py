@@ -18,8 +18,8 @@ router = APIRouter(prefix="/api/v1", tags=["world"])
 
 @router.post("/worlds/fork", response_model=contracts.WorldForkResult)
 async def world_fork(req: WorldForkRequest) -> contracts.WorldForkResult:
-    """Create a new local fork from a published world release."""
-    return local_api._handle_world_fork_local(
+    """Create a new governed fork from a published world release."""
+    return local_api._handle_world_fork_governed(
         transport_ref=req.transport_ref,
         root_dir=req.root_dir,
     )

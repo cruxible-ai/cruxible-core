@@ -65,6 +65,7 @@ def service_fork_world(
     *,
     transport_ref: str,
     root_dir: str | Path,
+    instance_mode: str = CruxibleInstance.DEV_MODE,
 ) -> WorldForkResult:
     """Create a new local fork instance from a published world release."""
     root = Path(root_dir)
@@ -95,7 +96,11 @@ def service_fork_world(
         output_path=composed_path,
     )
 
-    instance = CruxibleInstance.init(root, ".cruxible/composed/config.yaml")
+    instance = CruxibleInstance.init(
+        root,
+        ".cruxible/composed/config.yaml",
+        instance_mode=instance_mode,
+    )
     instance.save_graph(_load_graph_from_bundle(upstream_dir))
     upstream = UpstreamMetadata(
         transport_ref=transport_ref,

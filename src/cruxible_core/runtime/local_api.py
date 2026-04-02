@@ -5,8 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TypeVar
 
+import yaml
+
 from cruxible_client import contracts
+from cruxible_core.config.composer import _rebase_artifact_uris, compose_configs
 from cruxible_core.config.constraint_rules import parse_constraint_rule
+from cruxible_core.config.loader import load_config, load_config_from_string
 from cruxible_core.config.schema import ConstraintSchema, DecisionPolicySchema
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -22,7 +26,7 @@ from cruxible_core.predicate import CONSTRAINT_RULE_SYNTAX
 from cruxible_core.query.candidates import MatchRule
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
-from cruxible_core.server.registry import get_registry
+from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     EntityUpsertInput,
     RelationshipUpsertInput,
@@ -127,6 +131,37 @@ def _build_workflow_execution_contract(
     )
 
 
+def _normalize_governed_config_yaml(config_yaml: str, *, workspace_root: Path) -> str:
+    """Normalize uploaded config content for daemon-owned execution.
+
+    Relative extends and artifact URIs are resolved against the caller workspace root so
+    the daemon-owned active config can still execute correctly after being materialized
+    under server-owned storage.
+
+    V1 assumption: the local daemon can still read files in the caller workspace when
+    resolving relative extends paths. A fully isolated daemon will need callers to upload
+    fully resolved config content instead of relying on workspace filesystem access here.
+    """
+    overlay_path = workspace_root / "config.yaml"
+    config = load_config_from_string(config_yaml)
+    if config.extends is not None:
+        base_path = Path(config.extends)
+        if not base_path.is_absolute():
+            base_path = overlay_path.parent / base_path
+        if not base_path.exists():
+            raise ConfigError(f"Base config for extends not found: {base_path}")
+        base = load_config(base_path)
+        config = compose_configs(
+            base,
+            config,
+            base_config_path=base_path,
+            overlay_config_path=overlay_path,
+        )
+    data = config.model_dump(mode="python", by_alias=True, exclude_none=True)
+    data = _rebase_artifact_uris(data, overlay_path.parent)
+    return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+
+
 def _handle_init_local(
     root_dir: str,
     config_path: str | None = None,
@@ -172,6 +207,67 @@ def _handle_init_local(
     instance_id = str(root)
     get_manager().register(instance_id, result.instance)
     return contracts.InitResult(instance_id=instance_id, status="initialized")
+
+
+def _handle_init_governed(
+    root_dir: str,
+    config_path: str | None = None,
+    config_yaml: str | None = None,
+    data_dir: str | None = None,
+) -> contracts.InitResult:
+    """Initialize or reload a daemon-owned governed instance."""
+    check_permission("cruxible_init")
+
+    has_config = config_path is not None or config_yaml is not None
+    if has_config:
+        check_permission(
+            "cruxible_init",
+            instance_id=root_dir,
+            required_mode=PermissionMode.ADMIN,
+        )
+
+    validate_root_dir(root_dir)
+    registered = get_registry().get_or_create_governed_instance(root_dir)
+    governed_root = Path(registered.record.location)
+    instance_json = governed_root / CruxibleInstance.INSTANCE_DIR / "instance.json"
+
+    if instance_json.exists():
+        if has_config:
+            raise ConfigError(
+                "Governed instance already exists for this workspace root. "
+                "Edit the config locally, then use reload-config in server mode to sync it."
+            )
+        instance = CruxibleInstance.load(governed_root)
+        get_manager().register(registered.record.instance_id, instance)
+        warnings = _check_config_compatibility(instance)
+        return contracts.InitResult(
+            instance_id=registered.record.instance_id,
+            status="loaded",
+            warnings=warnings,
+        )
+
+    if config_path is not None and config_yaml is None:
+        raise ConfigError(
+            "Direct server init requires uploaded config content. "
+            "CLI and MCP callers should read the config locally and send config_yaml "
+            "instead of passing config_path."
+        )
+    if config_yaml is not None:
+        config_yaml = _normalize_governed_config_yaml(config_yaml, workspace_root=Path(root_dir))
+
+    result = service_init(
+        governed_root,
+        config_path=None,
+        config_yaml=config_yaml,
+        data_dir=data_dir,
+        instance_mode=CruxibleInstance.GOVERNED_MODE,
+    )
+    get_manager().register(registered.record.instance_id, result.instance)
+    return contracts.InitResult(
+        instance_id=registered.record.instance_id,
+        status="initialized",
+        warnings=result.warnings,
+    )
 
 
 def _handle_validate_local(
@@ -374,6 +470,33 @@ def _handle_fork_snapshot_local(
     instance = get_manager().get(instance_id)
     result = service_fork_snapshot(instance, snapshot_id, root_dir)
     registered = get_registry().get_or_create_local_instance(Path(root_dir))
+    get_manager().register(registered.record.instance_id, result.instance)
+    return contracts.ForkSnapshotResult(
+        instance_id=registered.record.instance_id,
+        snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json")),
+    )
+
+
+def _handle_fork_snapshot_governed(
+    instance_id: str,
+    snapshot_id: str,
+    root_dir: str,
+) -> contracts.ForkSnapshotResult:
+    """Create a new daemon-owned governed instance from a selected snapshot."""
+    check_permission(
+        "snapshot_fork",
+        instance_id=instance_id,
+        required_mode=PermissionMode.ADMIN,
+    )
+    validate_root_dir(root_dir)
+    instance = get_manager().get(instance_id)
+    registered = get_registry().create_governed_instance(workspace_root=root_dir)
+    result = service_fork_snapshot(
+        instance,
+        snapshot_id,
+        registered.record.location,
+        instance_mode=CruxibleInstance.GOVERNED_MODE,
+    )
     get_manager().register(registered.record.instance_id, result.instance)
     return contracts.ForkSnapshotResult(
         instance_id=registered.record.instance_id,
@@ -1068,6 +1191,7 @@ def _handle_inspect_entity_local(
 def _handle_reload_config_local(
     instance_id: str,
     config_path: str | None = None,
+    config_yaml: str | None = None,
 ) -> contracts.ReloadConfigResult:
     """Validate the current config or repoint the instance to a new config path."""
     check_permission(
@@ -1075,8 +1199,19 @@ def _handle_reload_config_local(
         instance_id=instance_id,
         required_mode=PermissionMode.ADMIN,
     )
+    if config_yaml is not None:
+        record = get_registry().get(instance_id)
+        if (
+            record is not None
+            and record.backend == GOVERNED_DAEMON_BACKEND
+            and record.workspace_root is not None
+        ):
+            config_yaml = _normalize_governed_config_yaml(
+                config_yaml,
+                workspace_root=Path(record.workspace_root),
+            )
     instance = get_manager().get(instance_id)
-    result = service_reload_config(instance, config_path=config_path)
+    result = service_reload_config(instance, config_path=config_path, config_yaml=config_yaml)
     return contracts.ReloadConfigResult(
         config_path=result.config_path,
         updated=result.updated,
@@ -1524,6 +1659,32 @@ def _handle_world_fork_local(
     validate_root_dir(root_dir)
     result = service_fork_world(transport_ref=transport_ref, root_dir=root_dir)
     registered = get_registry().get_or_create_local_instance(Path(root_dir))
+    get_manager().register(registered.record.instance_id, result.instance)
+    return contracts.WorldForkResult(
+        instance_id=registered.record.instance_id,
+        manifest=contracts.PublishedWorldManifest.model_validate(
+            result.manifest.model_dump(mode="json")
+        ),
+    )
+
+
+def _handle_world_fork_governed(
+    transport_ref: str,
+    root_dir: str,
+) -> contracts.WorldForkResult:
+    """Create a daemon-owned governed fork from a published world release."""
+    check_permission(
+        "cruxible_world_fork",
+        instance_id=root_dir,
+        required_mode=PermissionMode.ADMIN,
+    )
+    validate_root_dir(root_dir)
+    registered = get_registry().create_governed_instance(workspace_root=root_dir)
+    result = service_fork_world(
+        transport_ref=transport_ref,
+        root_dir=registered.record.location,
+        instance_mode=CruxibleInstance.GOVERNED_MODE,
+    )
     get_manager().register(registered.record.instance_id, result.instance)
     return contracts.WorldForkResult(
         instance_id=registered.record.instance_id,

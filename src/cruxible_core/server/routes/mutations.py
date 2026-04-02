@@ -165,4 +165,5 @@ async def reload_config(
     return local_api._handle_reload_config_local(
         instance_id=resolve_server_instance_id(instance_id),
         config_path=req.config_path,
+        config_yaml=req.config_yaml,
     )

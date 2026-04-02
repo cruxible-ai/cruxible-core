@@ -445,10 +445,11 @@ class CruxibleClient:
         instance_id: str,
         *,
         config_path: str | None = None,
+        config_yaml: str | None = None,
     ) -> contracts.ReloadConfigResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/config/reload",
-            json={"config_path": config_path},
+            json={"config_path": config_path, "config_yaml": config_yaml},
         )
         return self._parse_model(response, contracts.ReloadConfigResult)
 

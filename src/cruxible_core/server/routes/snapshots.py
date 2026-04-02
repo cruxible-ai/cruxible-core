@@ -33,7 +33,7 @@ async def fork_snapshot(
     req: ForkSnapshotRequest,
 ) -> contracts.ForkSnapshotResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_fork_snapshot_local(
+    return local_api._handle_fork_snapshot_governed(
         resolved_instance_id,
         req.snapshot_id,
         req.root_dir,

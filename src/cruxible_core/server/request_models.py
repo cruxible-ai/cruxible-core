@@ -174,6 +174,7 @@ class WorkflowTestRequest(BaseModel):
 
 class ReloadConfigRequest(BaseModel):
     config_path: str | None = None
+    config_yaml: str | None = None
 
 
 class SnapshotCreateRequest(BaseModel):

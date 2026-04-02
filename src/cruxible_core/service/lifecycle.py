@@ -6,10 +6,11 @@ from pathlib import Path
 
 from cruxible_core.config.composer import (
     compose_configs,
+    compose_runtime_configs,
     write_composed_config,
     write_runtime_composed_config,
 )
-from cruxible_core.config.loader import load_config, load_config_from_string
+from cruxible_core.config.loader import load_config, load_config_from_string, save_config
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -71,6 +72,8 @@ def service_init(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
+    *,
+    instance_mode: str = CruxibleInstance.DEV_MODE,
 ) -> InitResult:
     """Initialize a new cruxible instance (create-only).
 
@@ -136,7 +139,12 @@ def service_init(
         config_path = "config.yaml"
 
     try:
-        instance = CruxibleInstance.init(root, config_path, data_dir)
+        instance = CruxibleInstance.init(
+            root,
+            config_path,
+            data_dir,
+            instance_mode=instance_mode,
+        )
     except Exception:
         if wrote_inline or config.extends is not None:
             try:
@@ -154,22 +162,42 @@ def service_init(
 def service_reload_config(
     instance: InstanceProtocol,
     config_path: str | None = None,
+    config_yaml: str | None = None,
 ) -> ReloadConfigResult:
     """Validate the active config or repoint the instance to a new config path."""
+    if config_path is not None and config_yaml is not None:
+        raise ConfigError("Provide config_path or config_yaml, not both")
+
     upstream = instance.get_upstream_metadata()
     if upstream is not None:
         root = instance.get_root_path()
         overlay_path = root / (config_path or upstream.overlay_config_path)
         if not overlay_path.is_absolute():
             overlay_path = root / overlay_path
-        if not overlay_path.exists():
+        if config_yaml is None and not overlay_path.exists():
             raise ConfigError(f"Overlay config not found: {overlay_path}")
 
-        composed = write_runtime_composed_config(
-            base_path=root / upstream.config_path,
-            overlay_path=overlay_path,
-            output_path=root / upstream.active_config_path,
-        )
+        base_path = root / upstream.config_path
+        active_path = root / upstream.active_config_path
+        if config_yaml is not None:
+            overlay = load_config_from_string(config_yaml)
+            base = load_config(base_path)
+            composed = compose_runtime_configs(
+                base,
+                overlay,
+                base_config_path=base_path,
+                overlay_config_path=overlay_path,
+            )
+            overlay_path.parent.mkdir(parents=True, exist_ok=True)
+            overlay_path.write_text(config_yaml)
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            save_config(composed, active_path)
+        else:
+            composed = write_runtime_composed_config(
+                base_path=base_path,
+                overlay_path=overlay_path,
+                output_path=active_path,
+            )
         warnings = validate_config(composed)
         if config_path is not None:
             try:
@@ -185,6 +213,17 @@ def service_reload_config(
             config_path=str(instance.get_config_path()),
             updated=True,
             warnings=warnings,
+        )
+
+    if config_yaml is not None:
+        validation = service_validate(config_yaml=config_yaml)
+        target_path = instance.get_config_path()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        save_config(validation.config, target_path)
+        return ReloadConfigResult(
+            config_path=str(target_path),
+            updated=True,
+            warnings=validation.warnings,
         )
 
     if config_path is not None:
