@@ -11,6 +11,7 @@ from pathlib import Path
 from cruxible_core.server.config import get_server_state_dir
 
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
+GOVERNED_DAEMON_BACKEND = "governed_daemon"
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class InstanceRecord:
     instance_id: str
     backend: str
     location: str
+    workspace_root: str | None
     created_at: str
 
 
@@ -52,9 +54,27 @@ class InstanceRegistry:
                     instance_id TEXT PRIMARY KEY,
                     backend TEXT NOT NULL,
                     location TEXT NOT NULL,
+                    workspace_root TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE(backend, location)
                 )
+                """
+            )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(instances)").fetchall()
+            }
+            if "workspace_root" not in columns:
+                try:
+                    conn.execute("ALTER TABLE instances ADD COLUMN workspace_root TEXT")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_instances_backend_workspace_root
+                ON instances(backend, workspace_root)
+                WHERE workspace_root IS NOT NULL
                 """
             )
 
@@ -62,7 +82,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at
                 FROM instances
                 WHERE instance_id = ?
                 """,
@@ -70,12 +90,7 @@ class InstanceRegistry:
             ).fetchone()
         if row is None:
             return None
-        return InstanceRecord(
-            instance_id=row["instance_id"],
-            backend=row["backend"],
-            location=row["location"],
-            created_at=row["created_at"],
-        )
+        return self._row_to_record(row)
 
     def get_or_create_local_instance(self, location: str | Path) -> RegisteredInstance:
         resolved_location = str(Path(location).expanduser().resolve())
@@ -83,19 +98,72 @@ class InstanceRegistry:
         if existing is not None:
             return RegisteredInstance(record=existing, created=False)
 
-        created_at = datetime.now(timezone.utc).isoformat()
+        return self._insert_instance(
+            backend=LOCAL_FILESYSTEM_BACKEND,
+            location=resolved_location,
+            workspace_root=None,
+        )
+
+    def get_or_create_governed_instance(
+        self,
+        workspace_root: str | Path,
+    ) -> RegisteredInstance:
+        resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+        existing = self._get_by_backend_workspace_root(
+            GOVERNED_DAEMON_BACKEND,
+            resolved_workspace_root,
+        )
+        if existing is not None:
+            return RegisteredInstance(record=existing, created=False)
+        return self._create_governed_instance(workspace_root=resolved_workspace_root)
+
+    def create_governed_instance(
+        self, workspace_root: str | Path | None = None,
+    ) -> RegisteredInstance:
+        resolved_workspace_root: str | None = None
+        if workspace_root is not None:
+            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+        return self._create_governed_instance(workspace_root=resolved_workspace_root)
+
+    def _create_governed_instance(self, *, workspace_root: str | None) -> RegisteredInstance:
         instance_id = f"inst_{uuid.uuid4().hex[:16]}"
+        location = str((get_server_state_dir() / "instances" / instance_id).resolve())
+        return self._insert_instance(
+            backend=GOVERNED_DAEMON_BACKEND,
+            location=location,
+            workspace_root=workspace_root,
+            preferred_instance_id=instance_id,
+        )
+
+    def _insert_instance(
+        self,
+        *,
+        backend: str,
+        location: str,
+        workspace_root: str | None,
+        preferred_instance_id: str | None = None,
+    ) -> RegisteredInstance:
+        created_at = datetime.now(timezone.utc).isoformat()
+        instance_id = preferred_instance_id or f"inst_{uuid.uuid4().hex[:16]}"
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO instances(instance_id, backend, location, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT OR IGNORE INTO instances(
+                    instance_id,
+                    backend,
+                    location,
+                    workspace_root,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (instance_id, LOCAL_FILESYSTEM_BACKEND, resolved_location, created_at),
+                (instance_id, backend, location, workspace_root, created_at),
             )
 
-        # Another process may have inserted first; re-read canonical row.
-        record = self._get_by_backend_location(LOCAL_FILESYSTEM_BACKEND, resolved_location)
+        if workspace_root is not None:
+            record = self._get_by_backend_workspace_root(backend, workspace_root)
+        else:
+            record = self._get_by_backend_location(backend, location)
         assert record is not None
         return RegisteredInstance(record=record, created=record.instance_id == instance_id)
 
@@ -103,7 +171,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at
                 FROM instances
                 WHERE backend = ? AND location = ?
                 """,
@@ -111,10 +179,31 @@ class InstanceRegistry:
             ).fetchone()
         if row is None:
             return None
+        return self._row_to_record(row)
+
+    def _get_by_backend_workspace_root(
+        self, backend: str, workspace_root: str,
+    ) -> InstanceRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT instance_id, backend, location, workspace_root, created_at
+                FROM instances
+                WHERE backend = ? AND workspace_root = ?
+                """,
+                (backend, workspace_root),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_record(row)
+
+    @staticmethod
+    def _row_to_record(row: sqlite3.Row) -> InstanceRecord:
         return InstanceRecord(
             instance_id=row["instance_id"],
             backend=row["backend"],
             location=row["location"],
+            workspace_root=row["workspace_root"],
             created_at=row["created_at"],
         )
 

@@ -7,7 +7,12 @@ from pathlib import Path
 from cruxible_core.errors import InstanceNotFoundError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.server.registry import LOCAL_FILESYSTEM_BACKEND, get_registry
+from cruxible_core.server.registry import (
+    GOVERNED_DAEMON_BACKEND,
+    LOCAL_FILESYSTEM_BACKEND,
+    InstanceRecord,
+    get_registry,
+)
 
 
 class InstanceManager:
@@ -25,8 +30,8 @@ class InstanceManager:
             return instance
 
         record = get_registry().get(instance_id)
-        if record is not None and record.backend == LOCAL_FILESYSTEM_BACKEND:
-            loaded = CruxibleInstance.load(Path(record.location))
+        if record is not None:
+            loaded = self._load_from_record(record)
             self.register(instance_id, loaded)
             return loaded
 
@@ -34,6 +39,8 @@ class InstanceManager:
             loaded = CruxibleInstance.load(Path(instance_id))
         except InstanceNotFoundError as exc:
             raise InstanceNotFoundError(instance_id) from exc
+        if not loaded.is_dev_mode():
+            raise InstanceNotFoundError(instance_id)
         self.register(instance_id, loaded)
         return loaded
 
@@ -42,6 +49,21 @@ class InstanceManager:
 
     def clear(self) -> None:
         self._instances.clear()
+
+    @staticmethod
+    def _load_from_record(record: InstanceRecord) -> InstanceProtocol:
+        loaded = CruxibleInstance.load(Path(record.location))
+        if record.backend == LOCAL_FILESYSTEM_BACKEND and not loaded.is_dev_mode():
+            raise InstanceNotFoundError(record.instance_id)
+        if record.backend == GOVERNED_DAEMON_BACKEND and not loaded.is_governed_mode():
+            raise InstanceNotFoundError(record.instance_id)
+        known_backends = {
+            LOCAL_FILESYSTEM_BACKEND,
+            GOVERNED_DAEMON_BACKEND,
+        }
+        if record.backend not in known_backends:
+            raise InstanceNotFoundError(record.instance_id)
+        return loaded
 
 
 _manager = InstanceManager()

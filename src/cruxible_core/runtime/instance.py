@@ -43,6 +43,8 @@ class CruxibleInstance:
     """Manages a .cruxible/ project instance."""
 
     INSTANCE_DIR = ".cruxible"
+    DEV_MODE = "dev"
+    GOVERNED_MODE = "governed"
 
     def __init__(self, root: Path, metadata: dict[str, Any]) -> None:
         self.root = root
@@ -56,12 +58,15 @@ class CruxibleInstance:
         root: Path,
         config_path: str,
         data_dir: str | None = None,
+        *,
+        instance_mode: str = DEV_MODE,
     ) -> CruxibleInstance:
         """Initialize a new .cruxible/ instance directory.
 
         Validates the config file exists and is loadable before creating
         the instance directory.
         """
+        cls._validate_instance_mode(instance_mode)
         resolved_config = Path(config_path)
         if not resolved_config.is_absolute():
             resolved_config = root / resolved_config
@@ -74,6 +79,7 @@ class CruxibleInstance:
         metadata: dict[str, Any] = {
             "config_path": str(config_path),
             "data_dir": data_dir or ".",
+            "instance_mode": instance_mode,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "version": __version__,
         }
@@ -118,6 +124,21 @@ class CruxibleInstance:
     def save_config(self, config: CoreConfig) -> None:
         """Save the CoreConfig back to the YAML file on disk."""
         save_config(config, self.get_config_path())
+
+    def get_instance_mode(self) -> str:
+        """Return the persisted instance mode, defaulting legacy instances to dev."""
+        mode = self.metadata.get("instance_mode")
+        if not isinstance(mode, str):
+            return self.DEV_MODE
+        return mode
+
+    def is_dev_mode(self) -> bool:
+        """Return whether the instance is a workspace-rooted dev instance."""
+        return self.get_instance_mode() == self.DEV_MODE
+
+    def is_governed_mode(self) -> bool:
+        """Return whether the instance is a daemon-owned governed instance."""
+        return self.get_instance_mode() == self.GOVERNED_MODE
 
     def set_config_path(self, config_path: str) -> None:
         """Update the config path recorded in instance metadata."""
@@ -297,8 +318,11 @@ class CruxibleInstance:
         source_instance: CruxibleInstance,
         snapshot_id: str,
         root_dir: str | Path,
+        *,
+        instance_mode: str = DEV_MODE,
     ) -> tuple[CruxibleInstance, WorldSnapshot]:
         """Create a new local instance rooted at a chosen snapshot."""
+        cls._validate_instance_mode(instance_mode)
         snapshot = source_instance.get_snapshot(snapshot_id)
         if snapshot is None:
             raise ConfigError(f"Snapshot '{snapshot_id}' not found")
@@ -315,7 +339,7 @@ class CruxibleInstance:
 
         snapshot_dir = source_instance._snapshot_dir(snapshot_id)
         shutil.copy2(snapshot_dir / "config.yaml", config_target)
-        instance = cls.init(root, "config.yaml")
+        instance = cls.init(root, "config.yaml", instance_mode=instance_mode)
 
         graph_data = json.loads((snapshot_dir / "graph.json").read_text())
         instance.save_graph(EntityGraph.from_dict(graph_data))
@@ -331,6 +355,11 @@ class CruxibleInstance:
         instance._write_metadata()
         return instance, snapshot
 
+    # NOTE: graph.json, receipts.db, and feedback.db are independent stores with
+    # no cross-store transactions. A crash between sequential writes (e.g. graph
+    # saved but receipt not recorded) can leave stores inconsistent. Acceptable
+    # for a single-user local tool; revisit if the runtime moves server-side.
+
     def get_receipt_store(self) -> SQLiteStore:
         """Get or create the receipt SQLite store."""
         return SQLiteStore(self.instance_dir / "receipts.db")
@@ -342,3 +371,11 @@ class CruxibleInstance:
     def get_group_store(self) -> GroupStore:
         """Get or create the group SQLite store (shares feedback.db)."""
         return GroupStore(self.instance_dir / "feedback.db")
+
+    @classmethod
+    def _validate_instance_mode(cls, instance_mode: str) -> None:
+        if instance_mode not in {cls.DEV_MODE, cls.GOVERNED_MODE}:
+            raise ConfigError(
+                f"Unsupported instance_mode '{instance_mode}'. "
+                f"Expected one of: {cls.DEV_MODE}, {cls.GOVERNED_MODE}"
+            )

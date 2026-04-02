@@ -64,7 +64,7 @@ def get_server_state_dir(environ: Mapping[str, str] | None = None) -> Path:
     raw = env.get("CRUXIBLE_SERVER_STATE_DIR")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (Path.cwd() / ".cruxible-server").resolve()
+    return (Path.home() / ".cruxible" / "server").resolve()
 
 
 def is_server_auth_enabled(environ: Mapping[str, str] | None = None) -> bool:
