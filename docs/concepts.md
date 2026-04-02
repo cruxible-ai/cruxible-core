@@ -33,8 +33,6 @@ In practice this creates three different coherence problems:
 
 Without an external shared substrate, each agent is effectively carrying a lossy private replica of reality. That is acceptable for lightweight tasks. It breaks down for repeated, collaborative, or high-stakes work.
 
-The same problem shows up between humans and agents. A human may think a fact, policy interpretation, or prior decision is already settled while the model, under a different framing, acts as if it is softer, different, or missing entirely. Because LLM judgments are frame-sensitive and transient, "what the model thinks" is too unstable to serve as operational truth on its own.
-
 Cruxible addresses this by externalizing the parts that should not live only in prompt-local context:
 
 - accepted facts and relationships
@@ -52,27 +50,16 @@ Cruxible inverts the typical AI architecture. Instead of embedding an LLM inside
 ┌──────────────────────────────────────────────────────────────┐
 │  AI Agent (Claude Code, Cursor, Codex, ...)                  │
 │                                                              │
-│  1. Reads docs → understands user's domain                   │
-│  2. Generates config YAML → validates via cruxible_validate  │
-│  3. Reads raw data → reasons about relationships             │
-│  4. Uses cruxible_find_candidates for mechanical matching    │
-│  5. Calls cruxible_ingest to populate graph                  │
-│  6. Calls cruxible_evaluate → self-reviews, surfaces low     │
-│     confidence edges to human with receipts                  │
-│  7. Human: review / accept all / defer / reject              │
-│  8. Calls cruxible_query → presents results to human         │
-│  9. Collects human feedback → calls cruxible_feedback        │
-│  10. Records outcomes → calls cruxible_outcome               │
+│  Writes configs, orchestrates workflows, reasons about       │
+│  relationships, interprets results, proposes governed edges  │
 │                                                              │
 ├──────────────────────────────────────────────────────────────┤
 │  Cruxible Core (the runtime)                                 │
 │                                                              │
 │  Deterministic. No LLM. No opinions. No API keys.            │
-│  Config → Graph → Query → Receipt → Feedback                 │
+│  Config → Workflow → Graph → Query → Receipt → Feedback      │
 └──────────────────────────────────────────────────────────────┘
 ```
-
-The AI agent (Claude Code, Cursor, Codex, or any MCP-capable agent) provides all intelligence: understanding domains, generating configs, inferring relationships, and interpreting results. Core provides deterministic execution with full provenance.
 
 This means:
 - **No API keys** in the runtime — no LLM calls, no token costs during execution
@@ -80,30 +67,27 @@ This means:
 - **Auditable decisions** — every answer includes a receipt showing exactly how it was derived
 - **Domain-agnostic** — the agent adapts to any vertical by reading the config
 
-## Four Primitives
-
-Everything in Cruxible flows through four primitives:
+## Six Primitives
 
 ### Config
 
-A YAML file that defines the decision domain: entity types with typed properties, relationships between entities, declarative named queries, validation constraints, and ingestion mappings for loading data.
+A YAML file that defines the decision domain: entity types with typed properties, relationships between entities, declarative named queries, validation constraints, ingestion mappings, workflows, providers, integrations, quality checks, feedback profiles, outcome profiles, and decision policies.
 
 The config is the single source of truth for a shared domain/world model. AI agents write it; Core validates and executes against it. See [Config Reference](config-reference.md) for the full schema.
 
 ### Ingest
 
-Loading data into the entity graph. Two paths:
+Loading data into the entity graph. Three paths:
 
-- **Deterministic ingestion** (`cruxible_ingest`): Bulk load from CSV/JSON through config-defined mappings. For data that explicitly exists in source files — entity records and known relationships.
-- **Inferred proposals** (`cruxible_add_entity`, `cruxible_add_relationship`): For entities from free text or relationships that require judgment (classification, matching, inference). The AI agent reasons about the data and proposes edges with confidence scores and evidence.
-
-Entity ingestion always comes before relationship ingestion — edges reference entity IDs that must exist.
+- **Deterministic ingestion** (`cruxible_ingest`): Bulk load from CSV/JSON through config-defined mappings.
+- **Canonical workflows** (`cruxible_apply_workflow`): Declarative step-based pipelines that build graph state from provider outputs with lock-file reproducibility.
+- **Direct mutations** (`cruxible_add_entity`, `cruxible_add_relationship`): For individual entities and relationships proposed by AI agents.
 
 ### Query
 
 Named queries are declarative traversal patterns defined in the config. Each query has an entry point (entity type), a sequence of traversal steps (follow relationships, apply filters), and a return type.
 
-Every query produces a **receipt** — a structured proof of the traversal path, filters applied, and entities visited. Receipts are stored in SQLite and can be retrieved later for auditing.
+Every query produces a **receipt** — a structured proof of the traversal path, filters applied, and entities visited.
 
 ### Feedback
 
@@ -114,23 +98,127 @@ Edge-level feedback tied to specific receipts:
 - **correct** — Edge needs property corrections (provide a corrections dict)
 - **flag** — Edge needs review; no behavior change
 
-**Outcomes** are separate from feedback — they track whether the overall query result was correct, incorrect, partial, or unknown. Use outcomes for calibration and accuracy measurement over time.
+### Workflow
 
-Together, feedback and outcomes let Cruxible accumulate accepted judgment state without turning the graph into an unreviewed scratch memory layer.
+Declarative step-based execution plans that combine reads, provider calls, graph construction, and governed proposals into reproducible pipelines. Canonical workflows produce immutable snapshots with digest verification. See [Workflows](#workflows) below.
+
+### World Publishing
+
+Immutable release bundles published to OCI registries. Forkable by downstream consumers who add their own data, workflows, and governed judgment on top. See [World Publishing](#world-publishing) below.
+
+## Workflows
+
+Workflows are the primary execution mechanism. A workflow is a sequence of typed steps defined in the config:
+
+### Step Types
+
+| Phase | Steps | Purpose |
+|-------|-------|---------|
+| **Read** | `query`, `list_entities`, `list_relationships` | Pull data from the graph |
+| **Compute** | `provider`, `assert` | Call external providers, guard conditions |
+| **Build** | `make_candidates`, `map_signals`, `propose_relationship_group`, `make_entities`, `make_relationships` | Structure results for graph mutation |
+| **Write** | `apply_entities`, `apply_relationships` | Mutate the graph (canonical apply mode only) |
+
+### Execution Modes
+
+- **`run`** — Non-canonical execution. Runs all steps, produces receipts and traces, but does not create snapshots or require digest verification.
+- **`preview`** — Canonical dry-run. Computes what would change and returns an `apply_digest`.
+- **`apply`** — Canonical execution with mutations. Requires a matching `apply_digest` from a prior preview, verifies the lock file and head snapshot haven't changed, then commits.
+
+### Lock Files
+
+`cruxible.lock.yaml` pins provider versions, artifact hashes, and config digests. Canonical workflows verify the lock before execution. If any dependency changes, the lock must be regenerated with `cruxible lock`.
+
+### Providers
+
+Providers are external callables (Python functions, HTTP endpoints, shell commands) that execute with full tracing. Each call produces an `ExecutionTrace` recording input, output, duration, status, and artifact hash.
+
+## Governed Proposals
+
+For relationships that require judgment (not just mechanical matching), Cruxible provides a governed proposal flow:
+
+1. **Propose** — A workflow or agent creates a `CandidateGroup` with members and integration signals (support/contradict/unsure).
+2. **Review** — Based on the relationship's `matching` config, groups may auto-resolve (if all required integration signals support) or require manual review.
+3. **Resolve** — A human or AI reviewer approves or rejects the group, materializing the edges into the graph.
+4. **Trust** — Resolution history builds trust profiles per integration, adjusting future auto-resolve thresholds.
+
+Each step produces receipts. The entire lifecycle is auditable.
+
+## Loop 1: Feedback Analysis
+
+Structured feedback on governed decisions feeds into pattern analysis:
+
+1. Reviewers attach **reason codes** from `feedback_profiles` when providing feedback (e.g., `jurisdiction_mismatch`, `holding_misread`).
+2. `analyze_feedback` scans accumulated feedback and proposes operational improvements:
+   - **Constraints** — from repeated structural violations
+   - **Decision policies** — from repeated review patterns
+   - **Quality checks** — from repeated data quality issues
+   - **Provider fixes** — from repeated provider errors
+
+Suggestions are proposed, not auto-applied. They become operational rules only after review.
+
+## Loop 2: Outcome Analysis
+
+Structured outcomes on prior resolutions and query results feed into trust calibration:
+
+1. Reviewers record **outcome codes** from `outcome_profiles` when assessing whether a prior decision was correct (e.g., `overstated_impact`, `missed_material_opinion`).
+2. `analyze_outcomes` scans accumulated outcomes and produces:
+   - **Trust adjustments** — lower or raise auto-resolve confidence for specific integrations in specific contexts
+   - **Review requirements** — flag integration/context combinations that need manual review
+   - **Provider fix suggestions** — identify providers producing systematically wrong signals
+
+This is the compounding loop: each resolved case that gets an outcome assessment makes future governed decisions more precise.
+
+## World Publishing
+
+Cruxible supports publishing immutable world releases to OCI registries and forking them for downstream customization:
+
+### Reference Worlds
+
+A published world is an immutable release bundle containing:
+- `manifest.json` — world_id, release_id, owned types, compatibility level
+- `config.yaml` — the full config at publish time
+- `graph.json` — the complete entity graph
+- `cruxible.lock.yaml` — locked provider/artifact hashes
+- `snapshot.json` — snapshot metadata with digests
+
+### Forks
+
+A fork creates a new instance from a published release:
+- The upstream graph becomes read-only reference data
+- The fork adds an overlay config with new entity types, relationships, workflows, and providers
+- Ownership is type-level: upstream-owned types cannot be mutated by the fork
+- Fork-owned relationships can reference upstream-owned entities (this is the primary use case)
+
+### Pull Updates
+
+When the upstream publishes a new release, forks can pull updates:
+1. **Preview** — compare current and target releases, check for conflicts
+2. **Apply** — create a pre-pull snapshot, replace upstream state, recompose config, merge graphs
+
+Fork-owned data is preserved across pulls. The upstream and fork layers compose cleanly because type-level ownership prevents conflicts.
+
+### Fork Runtime Composition
+
+When a fork is created, the config composer:
+- Strips upstream canonical workflows (build-time concerns, not fork runtime)
+- Strips providers only used by those canonical workflows
+- Strips tests targeting those canonical workflows
+- Merges the remaining upstream config with the fork's overlay
+
+This means forks read upstream data from the published graph (via `list_entities`/`list_relationships` steps), not from upstream raw build artifacts.
 
 ## The Entity Graph
 
 Cruxible stores entities and relationships in a directed graph (NetworkX DiGraph). Each node is an entity with a type and properties. Each edge is a typed relationship with its own properties.
 
-The graph is persisted to disk and loaded on init. All mutations (ingest, add_entity, add_relationship, feedback) update the graph deterministically.
-
 ### Edge Properties
 
-Every edge carries a `properties` dict. Properties come from three sources:
+Every edge carries a `properties` dict from three sources:
 
-**Config-defined properties** are declared in the relationship schema and set at creation time — either via ingestion mappings or explicit `add_relationship` calls. Examples: `verified`, `confidence`, `source`, `evidence`. See [Config Reference](config-reference.md) for property type definitions.
+**Config-defined properties** are declared in the relationship schema. Examples: `verified`, `confidence`, `source`, `evidence`.
 
-**`review_status`** is set by feedback actions, not declared in the config schema:
+**`review_status`** is set by feedback actions:
 
 | Feedback action | Source | review_status |
 |-----------------|--------|---------------|
@@ -140,31 +228,18 @@ Every edge carries a `properties` dict. Properties come from three sources:
 | reject | ai_review | `ai_rejected` |
 | flag | any | `pending_review` |
 
-Absent until the first feedback action is applied to an edge. `correct` additionally merges a corrections dict into the edge properties before setting approved status.
-
-**`_provenance`** is internal metadata tracking edge origin. Stamped automatically on any relationship creation or update — via ingestion, MCP `add_relationship`, or CLI `add-relationship`. Fields:
-
+**`_provenance`** is internal metadata tracking edge origin:
 - `source` — origin system (e.g. `"ingest"`, `"mcp_add"`, `"cli_add"`)
-- `created_at` — ISO 8601 timestamp of edge creation
-- `source_ref` — reference identifier (e.g. mapping name, tool name)
-- `last_modified_at` — updated on edge replacement or feedback (absent until first modification)
-- `last_modified_by` — what modified it (e.g. `"feedback:approve"`, `"ingest"`)
-
-Prefixed with `_` to signal it is system-managed — do not set it manually.
-
-Tools like `cruxible list edges` strip `_provenance` from display. Export tools like `cruxible export edges` include it raw.
+- `created_at` — ISO 8601 timestamp
+- `source_ref` — reference identifier
+- `last_modified_at` — updated on edge replacement or feedback
+- `last_modified_by` — what modified it
 
 ## Receipts: Provenance as a DAG
 
-Every query produces a receipt — a directed acyclic graph of evidence nodes showing:
+Every operation produces a receipt — a directed acyclic graph of evidence nodes. Query receipts show traversal paths, filters, and visited entities. Mutation receipts track what was changed and why. Workflow receipts include execution traces for every provider call.
 
-- Which entity was the entry point
-- Which traversal steps were executed
-- Which filters were applied at each step
-- Which entities were visited and returned
-- Timestamps for the entire operation
-
-Receipts are stored in SQLite and can be exported as JSON, Markdown, or Mermaid diagrams. They enable full auditability: given a receipt ID, you can reconstruct exactly why a particular answer was returned.
+Receipts are stored in SQLite and can be exported as JSON, Markdown, or Mermaid diagrams.
 
 ## Constraints and Evaluation
 
@@ -175,67 +250,31 @@ constraints:
   - name: replacement_same_category
     rule: "replaces.FROM.category == replaces.TO.category"
     severity: warning
-    description: "Replacement parts should be in the same category"
 ```
 
-Run `cruxible_evaluate` to check the graph for:
-- **Orphan entities** — entities with no relationships
-- **Coverage gaps** — expected relationships that are missing
-- **Constraint violations** — edges that violate defined rules
-- **Low-confidence edges** — edges below the confidence threshold
-
-### Feedback-to-Constraint Workflow
-
-When rejection patterns emerge from feedback, encode them as constraints:
-
-1. Use the `analyze_feedback` prompt or manually review feedback records
-2. Identify repeated property mismatches in rejected edges
-3. Call `cruxible_add_constraint` to encode the pattern as a rule
-4. Run `cruxible_evaluate` to verify constraints flag expected violations
-
-This creates a virtuous cycle: human feedback trains the constraint system, which then catches similar issues automatically.
+Run `cruxible_evaluate` to check the graph for orphan entities, coverage gaps, constraint violations, low-confidence edges, unreviewed co-members, and config-defined quality checks.
 
 ## Permission Modes
 
-The MCP server runs in one of three cumulative permission tiers, controlled by the `CRUXIBLE_MODE` environment variable:
+MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers:
 
 | Mode | Tools Available |
 |------|----------------|
-| **READ_ONLY** | `validate`, `init` (reload only), `schema`, `query`, `receipt`, `list`, `sample`, `evaluate`, `find_candidates`, `get_entity`, `get_relationship` |
-| **GRAPH_WRITE** | Everything in READ_ONLY + `add_entity`, `add_relationship`, `feedback`, `outcome` |
-| **ADMIN** | Everything including `init` (create), `ingest`, `add_constraint` |
+| **READ_ONLY** | version, prompt, init (reload), validate, schema, query, receipt, list, sample, evaluate, find_candidates, get_entity, get_relationship, get_group, list_groups, list_resolutions, get_feedback_profile, get_outcome_profile, analyze_feedback, analyze_outcomes, world_status, world_pull_preview, plan_workflow |
+| **GOVERNED_WRITE** | READ_ONLY + feedback, feedback_batch, outcome, run_workflow, propose_workflow, propose_group |
+| **GRAPH_WRITE** | GOVERNED_WRITE + add_entity, add_relationship, resolve_group, update_trust_status |
+| **ADMIN** | All tools including init (create), ingest, add_constraint, add_decision_policy, lock_workflow, apply_workflow, world_publish, world_fork, world_pull_apply |
 
-Default is `ADMIN`. Use `CRUXIBLE_ALLOWED_ROOTS` to restrict which directories `cruxible_init` can access.
-
-These modes are enforced at the daemon boundary. They are meaningful when agents talk to Cruxible through the daemon/API surface, not when an agent can import `cruxible-core` runtime modules directly in the same environment.
-
-## Candidate Detection
-
-Two strategies for discovering missing relationships at scale:
-
-### Property Match
-
-Rules-based matching on entity properties. Define match rules that compare properties between potential source and target entities:
-
-- `equals` — Type-strict hash-join (O(n+m))
-- `iequals` — Case-insensitive hash-join (O(n+m))
-- `contains` — Substring match (brute-force, fails fast on large sets)
-
-Set `min_confidence` to control the minimum fraction of rules that must match.
-
-### Shared Neighbors
-
-Graph-structure matching via common connections. Finds entity pairs that share neighbors through a specified relationship. Set `min_overlap` to control the minimum neighbor overlap ratio.
-
-**Bootstrapping pattern:** Create initial edges with `cruxible_add_relationship`, then use `shared_neighbors` to discover more entities sharing those same neighbors.
+Default is `ADMIN`. Use `CRUXIBLE_ALLOWED_ROOTS` to restrict which directories init can access. Use `CRUXIBLE_REQUIRE_SERVER` to force server-mode transport.
 
 ## Technology Stack
 
 - **Pydantic** for all models — config schema, runtime types, receipts, MCP contracts
 - **Polars** for data operations — ingestion and candidate detection use DataFrames
 - **NetworkX** for the entity graph — DiGraph for entity/relationship storage
-- **SQLite** for persistence — receipts, feedback, and outcomes
+- **SQLite** for persistence — receipts, feedback, outcomes, groups
 - **YAML** for config — the single source of truth for a decision domain
 - **Click + Rich** for the CLI — terminal interface with formatted tables
 - **FastMCP** for the MCP server — primary interface for AI agents
+- **FastAPI** for the HTTP server — REST API with bearer-token auth, UDS support
 - **structlog** for audit logging — JSON-formatted logs to stderr

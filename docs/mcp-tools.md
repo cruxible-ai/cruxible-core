@@ -33,10 +33,10 @@ Each tool requires a minimum permission tier. Set via the `CRUXIBLE_MODE` enviro
 
 | Mode | Env Value | Description |
 |------|-----------|-------------|
-| `READ_ONLY` | `read_only` | Query, inspect, validate — no mutations |
-| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + receipt-persisting workflow runs, governed proposal, feedback |
+| `READ_ONLY` | `read_only` | Query, inspect, validate, plan workflows — no mutations |
+| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + receipt-persisting workflow runs, governed proposals, feedback |
 | `GRAPH_WRITE` | `graph_write` | GOVERNED_WRITE + raw graph mutation and proposal resolution |
-| `ADMIN` | `admin` | All tools including canonical workflow apply, ingest, and config mutation |
+| `ADMIN` | `admin` | All tools including canonical workflow apply, ingest, config mutation, world publishing |
 
 Default is `ADMIN` if unset.
 
@@ -139,66 +139,7 @@ To create a new instance, provide exactly one of `config_path` or `config_yaml`.
 |-------|------|-------------|
 | `instance_id` | string | Unique instance identifier (use in all subsequent calls) |
 | `status` | string | `"initialized"` or `"loaded"` |
-
----
-
-### cruxible_lock_workflow
-
-Generate the workflow lock file for the current instance config.
-
-**Permission:** ADMIN
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID from `cruxible_init` |
-
-Use this after changing workflow config, providers, or artifacts and before planning or executing workflows.
-
----
-
-### cruxible_plan_workflow
-
-Compile a configured workflow into a concrete execution plan.
-
-**Permission:** READ_ONLY
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `workflow_name` | string | **yes** | Workflow name from config |
-| `input_payload` | dict | no | Structured workflow input |
-
----
-
-### cruxible_run_workflow
-
-Execute a configured workflow and return its output, receipt, and traces.
-
-**Permission:** GOVERNED_WRITE
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `workflow_name` | string | **yes** | Workflow name from config |
-| `input_payload` | dict | no | Structured workflow input |
-
-Canonical workflows run in preview mode and return `apply_digest` plus `head_snapshot_id`. Pass those to `cruxible_apply_workflow` to commit.
-
----
-
-### cruxible_apply_workflow
-
-Apply a canonical workflow after verifying the preview identity.
-
-**Permission:** ADMIN
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `workflow_name` | string | **yes** | Canonical workflow name |
-| `expected_apply_digest` | string | **yes** | Preview digest from `cruxible_run_workflow` |
-| `expected_head_snapshot_id` | string | no | Snapshot ID returned by preview |
-| `input_payload` | dict | no | Structured workflow input |
+| `warnings` | list[string] | Non-fatal warnings |
 
 ---
 
@@ -227,9 +168,155 @@ Provide exactly one data source. Ingest entity mappings before relationship mapp
 | Field | Type | Description |
 |-------|------|-------------|
 | `records_ingested` | int | Number of records loaded |
+| `records_updated` | int | Number of records updated |
 | `mapping` | string | Mapping name used |
 | `entity_type` | string or null | Entity type (if entity mapping) |
 | `relationship_type` | string or null | Relationship type (if relationship mapping) |
+| `receipt_id` | string or null | Receipt ID for provenance tracking |
+
+---
+
+## Workflow Execution Tools
+
+### cruxible_lock_workflow
+
+Generate the workflow lock file for the current instance config.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID from `cruxible_init` |
+
+Use this after changing workflow config, providers, or artifacts and before planning or executing workflows.
+
+**Returns:** `WorkflowLockResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `lock_path` | string | Path to the generated lock file |
+| `config_digest` | string | SHA256 digest of the config |
+| `providers_locked` | int | Number of providers locked |
+| `artifacts_locked` | int | Number of artifacts locked |
+
+---
+
+### cruxible_plan_workflow
+
+Compile a configured workflow into a concrete execution plan.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `workflow_name` | string | **yes** | Workflow name from config |
+| `input_payload` | dict | no | Structured workflow input |
+
+**Returns:** `WorkflowPlanResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `plan` | dict | Compiled execution plan |
+
+---
+
+### cruxible_run_workflow
+
+Execute a configured workflow and return its output, receipt, and traces.
+
+**Permission:** GOVERNED_WRITE
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `workflow_name` | string | **yes** | Workflow name from config |
+| `input_payload` | dict | no | Structured workflow input |
+
+Canonical workflows run in preview mode and return `apply_digest` plus `head_snapshot_id`. Pass those to `cruxible_apply_workflow` to commit.
+
+**Returns:** `WorkflowRunResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `workflow` | string | Workflow name |
+| `output` | any | Workflow output |
+| `receipt_id` | string | Receipt ID |
+| `mode` | string | Execution mode (`"run"`) |
+| `canonical` | bool | Whether the workflow is canonical |
+| `apply_digest` | string or null | Digest for canonical apply verification |
+| `head_snapshot_id` | string or null | Current head snapshot ID |
+| `apply_previews` | dict | Preview of mutations to apply |
+| `query_receipt_ids` | list[string] | Receipt IDs for queries executed during the workflow |
+| `trace_ids` | list[string] | Provider execution trace IDs |
+| `receipt` | dict or null | Inline receipt data |
+| `traces` | list[dict] | Provider execution traces |
+
+---
+
+### cruxible_apply_workflow
+
+Apply a canonical workflow after verifying the preview identity.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `workflow_name` | string | **yes** | Canonical workflow name |
+| `expected_apply_digest` | string | **yes** | Preview digest from `cruxible_run_workflow` |
+| `expected_head_snapshot_id` | string | no | Snapshot ID returned by preview |
+| `input_payload` | dict | no | Structured workflow input |
+
+**Returns:** `WorkflowApplyResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `workflow` | string | Workflow name |
+| `output` | any | Workflow output |
+| `receipt_id` | string | Receipt ID |
+| `mode` | string | Execution mode (`"apply"`) |
+| `canonical` | bool | Always `true` |
+| `committed_snapshot_id` | string or null | Snapshot ID created by the apply |
+| `apply_previews` | dict | Applied mutations |
+| `query_receipt_ids` | list[string] | Receipt IDs for queries executed during the workflow |
+| `trace_ids` | list[string] | Provider execution trace IDs |
+| `receipt` | dict or null | Inline receipt data |
+| `traces` | list[dict] | Provider execution traces |
+
+---
+
+### cruxible_propose_workflow
+
+Execute a configured workflow and bridge its output into a governed relationship group.
+
+**Permission:** GOVERNED_WRITE
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `workflow_name` | string | **yes** | Workflow name from config |
+| `input_payload` | dict | no | Structured workflow input |
+
+Use this when a repeated decision procedure should propose relationship state through Cruxible's proposal/review/trust boundary instead of writing edges directly. The workflow must return a relationship proposal artifact from a `propose_relationship_group` step.
+
+**Returns:** `WorkflowProposeResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `workflow` | string | Workflow name |
+| `output` | any | Workflow output |
+| `receipt_id` | string | Receipt ID |
+| `group_id` | string or null | Proposed group ID (null if suppressed) |
+| `group_status` | string | Group lifecycle status |
+| `review_priority` | string | Review priority level |
+| `suppressed` | bool | Whether the proposal was suppressed by a decision policy |
+| `query_receipt_ids` | list[string] | Receipt IDs for queries executed during the workflow |
+| `trace_ids` | list[string] | Provider execution trace IDs |
+| `prior_resolution` | dict or null | Prior resolution if auto-resolved |
+| `policy_summary` | dict | Decision policy match counts |
+| `receipt` | dict or null | Inline receipt data |
+| `traces` | list[dict] | Provider execution traces |
 
 ---
 
@@ -256,7 +343,9 @@ Run a named query and return results with a receipt.
 | `receipt_id` | string or null | Receipt ID for provenance tracking |
 | `receipt` | dict or null | Inline receipt data |
 | `total_results` | int | Total number of results |
+| `truncated` | bool | Whether results were truncated by limit |
 | `steps_executed` | int | Number of traversal steps executed |
+| `policy_summary` | dict | Decision policy match counts |
 
 ---
 
@@ -315,7 +404,7 @@ Find missing-relationship candidates using deterministic strategies.
 
 Record edge-level feedback tied to a receipt.
 
-**Permission:** GRAPH_WRITE
+**Permission:** GOVERNED_WRITE
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -330,7 +419,10 @@ Record edge-level feedback tied to a receipt.
 | `to_id` | string | **yes** | Target entity ID |
 | `edge_key` | int | no | Edge key for multi-edge disambiguation |
 | `reason` | string | no | Reason for the feedback (default: `""`) |
+| `reason_code` | string | no | Structured reason code for analysis |
+| `scope_hints` | dict | no | Contextual scope hints for analysis |
 | `corrections` | dict | no | Property corrections (for `action="correct"`) |
+| `group_override` | bool | no | Stamp edge with group_override property (default: `false`) |
 
 **Returns:** `FeedbackResult`
 
@@ -338,6 +430,7 @@ Record edge-level feedback tied to a receipt.
 |-------|------|-------------|
 | `feedback_id` | string | Unique feedback record ID |
 | `applied` | bool | Whether the feedback was applied to the graph edge |
+| `receipt_id` | string or null | Mutation receipt ID |
 
 **Behavior:**
 - `reject`: Excluded from future query results
@@ -345,19 +438,74 @@ Record edge-level feedback tied to a receipt.
 - `correct`: Updates edge properties (pass `corrections` dict)
 - `flag`: Marks for review without changing behavior
 
+Set `group_override=true` to stamp the edge with a group_override property, marking it as pre-approved for group resolve. The edge must already exist in the graph.
+
 ---
 
-### cruxible_outcome
+### cruxible_feedback_batch
 
-Record the outcome of a decision (query result accuracy).
+Record batch edge feedback under one top-level mutation receipt.
 
-**Permission:** GRAPH_WRITE
+**Permission:** GOVERNED_WRITE
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `instance_id` | string | **yes** | Instance ID |
-| `receipt_id` | string | **yes** | Receipt ID |
+| `items` | list[FeedbackBatchItemInput] | **yes** | Batch of feedback items |
+| `source` | string | no | `"human"`, `"ai_review"`, or `"system"` (default: `"human"`) |
+
+Each `FeedbackBatchItemInput`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `receipt_id` | string | **yes** | Receipt ID the feedback applies to |
+| `action` | string | **yes** | `"approve"`, `"reject"`, `"correct"`, or `"flag"` |
+| `target` | EdgeTargetInput | **yes** | Edge target (see below) |
+| `reason` | string | no | Reason for the feedback (default: `""`) |
+| `reason_code` | string | no | Structured reason code |
+| `scope_hints` | dict | no | Contextual scope hints |
+| `corrections` | dict | no | Property corrections (for `action="correct"`) |
+| `group_override` | bool | no | Stamp edge with group_override property (default: `false`) |
+
+Each `EdgeTargetInput`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `from_type` | string | **yes** | Source entity type |
+| `from_id` | string | **yes** | Source entity ID |
+| `relationship` | string | **yes** | Relationship type |
+| `to_type` | string | **yes** | Target entity type |
+| `to_id` | string | **yes** | Target entity ID |
+| `edge_key` | int | no | Edge key for multi-edge disambiguation |
+
+**Returns:** `FeedbackBatchResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `feedback_ids` | list[string] | Feedback record IDs |
+| `applied_count` | int | Number of feedback items applied to the graph |
+| `total` | int | Total items processed |
+| `receipt_id` | string or null | Mutation receipt ID |
+
+---
+
+### cruxible_outcome
+
+Record the outcome of a decision (query result accuracy or resolution result).
+
+**Permission:** GOVERNED_WRITE
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
 | `outcome` | string | **yes** | `"correct"`, `"incorrect"`, `"partial"`, or `"unknown"` |
+| `receipt_id` | string | no | Receipt ID (convenience alias for `anchor_id` when `anchor_type="receipt"`) |
+| `anchor_type` | string | no | `"receipt"` or `"resolution"` (default: `"receipt"`) |
+| `anchor_id` | string | no | Anchor ID (receipt ID or resolution ID) |
+| `source` | string | no | `"human"`, `"ai_review"`, or `"system"` (default: `"human"`) |
+| `outcome_code` | string | no | Structured outcome code for analysis |
+| `scope_hints` | dict | no | Contextual scope hints for analysis |
+| `outcome_profile_key` | string | no | Outcome profile key for matching config profiles |
 | `detail` | dict | no | Additional outcome details |
 
 **Returns:** `OutcomeResult`
@@ -365,6 +513,479 @@ Record the outcome of a decision (query result accuracy).
 | Field | Type | Description |
 |-------|------|-------------|
 | `outcome_id` | string | Unique outcome record ID |
+
+---
+
+## Feedback Analysis Tools
+
+### cruxible_get_feedback_profile
+
+Return the configured feedback profile for one relationship type.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `relationship_type` | string | **yes** | Relationship type |
+
+**Returns:** `FeedbackProfileResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `found` | bool | Whether a profile was found |
+| `relationship_type` | string | Relationship type |
+| `profile` | dict | Feedback profile configuration |
+
+---
+
+### cruxible_get_outcome_profile
+
+Return the configured outcome profile for one anchor context.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `anchor_type` | string | **yes** | `"receipt"` or `"resolution"` |
+| `relationship_type` | string | no | Relationship type filter |
+| `workflow_name` | string | no | Workflow name filter |
+| `surface_type` | string | no | Decision surface type filter |
+| `surface_name` | string | no | Decision surface name filter |
+
+**Returns:** `OutcomeProfileResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `found` | bool | Whether a profile was found |
+| `profile_key` | string or null | Matched profile key |
+| `anchor_type` | string | `"receipt"` or `"resolution"` |
+| `profile` | dict | Outcome profile configuration |
+
+---
+
+### cruxible_analyze_feedback
+
+Analyze structured feedback into deterministic remediation suggestions.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `relationship_type` | string | **yes** | Relationship type to analyze |
+| `limit` | int | no | Maximum feedback records to analyze (default: `200`) |
+| `min_support` | int | no | Minimum occurrences for a suggestion (default: `5`) |
+| `decision_surface_type` | string | no | Filter by decision surface type |
+| `decision_surface_name` | string | no | Filter by decision surface name |
+| `property_pairs` | list[PropertyPairInput] | no | Property pairs for constraint suggestion mining |
+
+Each `PropertyPairInput`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `from_property` | string | **yes** | Source entity property name |
+| `to_property` | string | **yes** | Target entity property name |
+
+**Returns:** `AnalyzeFeedbackResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `relationship_type` | string | Relationship type analyzed |
+| `feedback_count` | int | Total feedback records analyzed |
+| `action_counts` | dict | Counts by action type |
+| `source_counts` | dict | Counts by feedback source |
+| `reason_code_counts` | dict | Counts by reason code |
+| `coded_groups` | list[FeedbackGroupSummary] | Grouped feedback by reason code |
+| `uncoded_feedback_count` | int | Feedback records without reason codes |
+| `uncoded_examples` | list[UncodedFeedbackExample] | Sample uncoded feedback for labeling |
+| `constraint_suggestions` | list[ConstraintSuggestion] | Suggested constraints based on rejection patterns |
+| `decision_policy_suggestions` | list[DecisionPolicySuggestion] | Suggested decision policies |
+| `quality_check_candidates` | list[QualityCheckCandidate] | Potential quality check additions |
+| `provider_fix_candidates` | list[ProviderFixCandidate] | Provider issues to investigate |
+| `warnings` | list[string] | Non-fatal warnings |
+
+---
+
+### cruxible_analyze_outcomes
+
+Analyze structured outcomes into trust and debugging suggestions.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `anchor_type` | string | **yes** | `"receipt"` or `"resolution"` |
+| `relationship_type` | string | no | Relationship type filter |
+| `workflow_name` | string | no | Workflow name filter |
+| `query_name` | string | no | Query name filter |
+| `surface_type` | string | no | Decision surface type filter |
+| `surface_name` | string | no | Decision surface name filter |
+| `limit` | int | no | Maximum outcome records to analyze (default: `200`) |
+| `min_support` | int | no | Minimum occurrences for a suggestion (default: `5`) |
+
+**Returns:** `AnalyzeOutcomesResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `anchor_type` | string | Anchor type analyzed |
+| `outcome_count` | int | Total outcome records analyzed |
+| `outcome_counts` | dict | Counts by outcome value |
+| `outcome_code_counts` | dict | Counts by outcome code |
+| `coded_groups` | list[OutcomeGroupSummary] | Grouped outcomes by code |
+| `uncoded_outcome_count` | int | Outcomes without codes |
+| `uncoded_examples` | list[UncodedOutcomeExample] | Sample uncoded outcomes for labeling |
+| `trust_adjustment_suggestions` | list[TrustAdjustmentSuggestion] | Suggested trust status changes |
+| `workflow_review_policy_suggestions` | list[OutcomeDecisionPolicySuggestion] | Suggested workflow review policies |
+| `query_policy_suggestions` | list[QueryPolicySuggestion] | Suggested query-level policies |
+| `provider_fix_candidates` | list[OutcomeProviderFixCandidate] | Provider issues to investigate |
+| `debug_packages` | list[DebugPackage] | Debug packages for failing anchors |
+| `workflow_debug_packages` | list[DebugPackage] | Debug packages for workflow anchors |
+| `warnings` | list[string] | Non-fatal warnings |
+
+---
+
+### cruxible_add_decision_policy
+
+Add a decision policy to the config for query/workflow execution.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `name` | string | **yes** | Unique policy name |
+| `applies_to` | string | **yes** | `"query"` or `"workflow"` |
+| `relationship_type` | string | **yes** | Relationship type the policy targets |
+| `effect` | string | **yes** | `"suppress"` or `"require_review"` |
+| `match` | DecisionPolicyMatchInput | no | Match conditions (see below) |
+| `description` | string | no | Human-readable description |
+| `rationale` | string | no | Rationale for the policy (default: `""`) |
+| `query_name` | string | no | Scope to a specific query (when `applies_to="query"`) |
+| `workflow_name` | string | no | Scope to a specific workflow (when `applies_to="workflow"`) |
+| `expires_at` | string | no | ISO 8601 expiration timestamp |
+
+`DecisionPolicyMatchInput` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `from` | dict | Match conditions on the source entity properties |
+| `to` | dict | Match conditions on the target entity properties |
+| `edge` | dict | Match conditions on edge properties |
+| `context` | dict | Match conditions on execution context |
+
+**Returns:** `AddDecisionPolicyResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Policy name |
+| `added` | bool | Whether the policy was added |
+| `config_updated` | bool | Whether the YAML file was updated |
+| `warnings` | list[string] | Non-fatal warnings |
+
+---
+
+## Group / Proposal Tools
+
+### cruxible_propose_group
+
+Propose a candidate group of edges for batch review.
+
+**Permission:** GOVERNED_WRITE
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `relationship_type` | string | **yes** | Relationship type for the group |
+| `members` | list[MemberInput] | **yes** | Member edges with signals |
+| `thesis_text` | string | no | Human-readable thesis (default: `""`) |
+| `thesis_facts` | dict | no | Structured facts hashed into the deterministic signature |
+| `analysis_state` | dict | no | Opaque agent data (NOT hashed into signature) |
+| `integrations_used` | list[string] | no | Integration names used to produce signals |
+| `proposed_by` | string | no | `"human"` or `"ai_review"` (default: `"ai_review"`) |
+| `suggested_priority` | string | no | Agent-suggested review priority |
+
+Each `MemberInput`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `from_type` | string | **yes** | Source entity type |
+| `from_id` | string | **yes** | Source entity ID |
+| `to_type` | string | **yes** | Target entity type |
+| `to_id` | string | **yes** | Target entity ID |
+| `relationship_type` | string | **yes** | Relationship type |
+| `signals` | list[SignalInput] | no | Tri-state signals from integrations |
+| `properties` | dict | no | Edge properties |
+
+Each `SignalInput`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `integration` | string | **yes** | Integration name |
+| `signal` | string | **yes** | `"support"`, `"contradict"`, or `"unsure"` |
+| `evidence` | string | no | Supporting evidence (default: `""`) |
+
+If a prior trusted resolution exists for the same thesis signature and all signals meet the auto-resolve policy, the group is auto-resolved. Otherwise it enters `pending_review` with a Cruxible-derived review priority.
+
+**Returns:** `ProposeGroupToolResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `group_id` | string or null | Group ID (null if suppressed) |
+| `signature` | string | Deterministic thesis signature |
+| `status` | string | Group status |
+| `review_priority` | string | Assigned review priority |
+| `member_count` | int | Number of members in the group |
+| `prior_resolution` | dict or null | Prior resolution if auto-resolved |
+| `suppressed` | bool | Whether the proposal was suppressed by a decision policy |
+| `policy_summary` | dict | Decision policy match counts |
+
+---
+
+### cruxible_resolve_group
+
+Resolve a candidate group by approving or rejecting it.
+
+**Permission:** GRAPH_WRITE
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `group_id` | string | **yes** | Candidate group ID |
+| `action` | string | **yes** | `"approve"` or `"reject"` |
+| `rationale` | string | no | Resolution rationale (default: `""`) |
+| `resolved_by` | string | no | `"human"` or `"ai_review"` (default: `"human"`) |
+
+Approve creates edges in the graph for valid members (skipping members whose edges already exist). Reject records the resolution without graph mutation. Both persist the resolution for audit and future auto-resolve precedent.
+
+**Returns:** `ResolveGroupToolResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `group_id` | string | Group ID |
+| `action` | string | Resolution action |
+| `edges_created` | int | Number of edges created (approve only) |
+| `edges_skipped` | int | Number of edges skipped (already existed) |
+| `resolution_id` | string or null | Resolution record ID |
+| `receipt_id` | string or null | Mutation receipt ID |
+
+---
+
+### cruxible_get_group
+
+Get a candidate group by ID, including its members and resolution.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `group_id` | string | **yes** | Candidate group ID |
+
+Returns the group metadata (thesis, status, review_priority) and the full list of members with their signals. If the group has been resolved, includes the resolution details (action, trust_status, rationale).
+
+**Returns:** `GetGroupToolResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `group` | dict | Group metadata |
+| `members` | list[dict] | Member edges with signals |
+
+---
+
+### cruxible_list_groups
+
+List candidate groups with optional filters.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `relationship_type` | string | no | Filter by relationship type |
+| `status` | string | no | Filter by status: `"pending_review"`, `"auto_resolved"`, `"applying"`, `"resolved"`, or `"suppressed"` |
+| `limit` | int | no | Maximum groups to return (default: `50`) |
+
+Results are sorted by review_priority descending (critical first).
+
+**Returns:** `ListGroupsToolResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `groups` | list[dict] | Group summaries |
+| `total` | int | Total groups matching filters |
+
+---
+
+### cruxible_list_resolutions
+
+List group resolutions with optional filters.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `relationship_type` | string | no | Filter by relationship type |
+| `action` | string | no | Filter by action: `"approve"` or `"reject"` |
+| `limit` | int | no | Maximum resolutions to return (default: `50`) |
+
+Returns stored resolutions including analysis_state (for agent reuse), thesis_facts, trust_status, and trust_reason.
+
+**Returns:** `ListResolutionsToolResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `resolutions` | list[dict] | Resolution records |
+| `total` | int | Total resolutions matching filters |
+
+---
+
+### cruxible_update_trust_status
+
+Update the trust status on a confirmed approved resolution.
+
+**Permission:** GRAPH_WRITE
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `resolution_id` | string | **yes** | Resolution ID |
+| `trust_status` | string | **yes** | `"trusted"`, `"watch"`, or `"invalidated"` |
+| `reason` | string | no | Reason for the trust change (default: `""`) |
+
+Trust is thesis-scoped: the latest confirmed approval for a signature governs auto-resolve eligibility. Promote `watch` to `trusted` to enable auto-resolve. Set `invalidated` to block auto-resolve and escalate future proposals to critical priority.
+
+**Returns:** `UpdateTrustStatusToolResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `resolution_id` | string | Resolution ID |
+| `trust_status` | string | Updated trust status |
+
+---
+
+## World Publishing Tools
+
+### cruxible_world_publish
+
+Publish a root world-model instance as an immutable release bundle.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `transport_ref` | string | **yes** | Transport reference (e.g., directory path for local transport) |
+| `world_id` | string | **yes** | World identifier |
+| `release_id` | string | **yes** | Release identifier |
+| `compatibility` | string | **yes** | `"data_only"`, `"additive_schema"`, or `"breaking"` |
+
+**Returns:** `WorldPublishResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `manifest` | PublishedWorldManifest | Published release manifest |
+
+`PublishedWorldManifest` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `format_version` | int | Manifest format version |
+| `world_id` | string | World identifier |
+| `release_id` | string | Release identifier |
+| `snapshot_id` | string | Snapshot ID at time of publish |
+| `compatibility` | string | Compatibility level |
+| `owned_entity_types` | list[string] | Entity types owned by this world |
+| `owned_relationship_types` | list[string] | Relationship types owned by this world |
+| `parent_release_id` | string or null | Previous release in the chain |
+
+---
+
+### cruxible_world_fork
+
+Create a new local fork from a published world release.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `transport_ref` | string | **yes** | Transport reference to the published release |
+| `root_dir` | string | **yes** | Directory for the new forked instance |
+
+**Returns:** `WorldForkResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `instance_id` | string | New instance ID for the fork |
+| `manifest` | PublishedWorldManifest | Manifest of the upstream release |
+
+---
+
+### cruxible_world_status
+
+Return upstream tracking metadata for a release-backed fork.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+
+**Returns:** `WorldStatusResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `upstream` | UpstreamMetadataResult or null | Upstream tracking metadata (null if not a fork) |
+
+---
+
+### cruxible_world_pull_preview
+
+Preview pulling a newer upstream release into a release-backed fork.
+
+**Permission:** READ_ONLY
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+
+**Returns:** `WorldPullPreviewResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `current_release_id` | string or null | Currently tracked release |
+| `target_release_id` | string | Release to pull |
+| `compatibility` | string | Compatibility level of the target release |
+| `apply_digest` | string | Digest for verifying the apply |
+| `warnings` | list[string] | Non-fatal warnings |
+| `conflicts` | list[string] | Detected conflicts |
+| `lock_changed` | bool | Whether the lock file changed |
+| `upstream_entity_delta` | int | Net entity count change |
+| `upstream_edge_delta` | int | Net edge count change |
+
+---
+
+### cruxible_world_pull_apply
+
+Apply a previewed upstream release into a release-backed fork.
+
+**Permission:** ADMIN
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `instance_id` | string | **yes** | Instance ID |
+| `expected_apply_digest` | string | **yes** | Digest from `cruxible_world_pull_preview` |
+
+**Returns:** `WorldPullApplyResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `release_id` | string | Applied release ID |
+| `apply_digest` | string | Applied digest |
+| `pre_pull_snapshot_id` | string | Snapshot ID before the pull |
 
 ---
 
@@ -386,6 +1007,7 @@ List entities, edges, receipts, feedback, or outcomes with optional filters.
 | `receipt_id` | string | no | Filter feedback/outcomes by receipt |
 | `limit` | int | no | Maximum items (default: `50`) |
 | `property_filter` | dict | no | Exact property matches, AND semantics (entities and edges only) |
+| `operation_type` | string | no | Filter receipts by operation type (e.g., `"query"`, `"add_entity"`, `"ingest"`) |
 
 **Returns:** `ListResult`
 
@@ -465,6 +1087,8 @@ Run graph quality checks: orphan entities, coverage gaps, and constraint violati
 | `edge_count` | int | Total edges in graph |
 | `findings` | list[dict] | Quality findings (orphans, gaps, violations) |
 | `summary` | dict | Counts by finding category |
+| `constraint_summary` | dict | Counts by constraint name |
+| `quality_summary` | dict | Counts by quality check |
 
 ---
 
@@ -553,6 +1177,7 @@ Re-submitting an existing entity replaces all its properties (full overwrite, no
 |-------|------|-------------|
 | `entities_added` | int | New entities created |
 | `entities_updated` | int | Existing entities updated |
+| `receipt_id` | string or null | Mutation receipt ID |
 
 ---
 
@@ -586,6 +1211,7 @@ Entities must already exist. Re-submitting an existing edge replaces its propert
 |-------|------|-------------|
 | `added` | int | New relationships created |
 | `updated` | int | Existing relationships updated |
+| `receipt_id` | string or null | Mutation receipt ID |
 
 ---
 
