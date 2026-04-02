@@ -1,0 +1,1288 @@
+version: "1.0"
+name: case_law_monitoring
+kind: world_model
+extends: courtlistener-reference.yaml
+description: >
+  Fork of the CourtListener reference world model for law firm case
+  monitoring. The reference layer (Court, Judge, Docket, Opinion, Filing,
+  Statute) comes from public feeds and is read-only. This fork adds
+  internal matters, clients, attorneys, positions, deadlines, and case
+  outcomes, plus governed judgment relationships that link public legal
+  updates to internal operational impact.
+
+# ─── Fork: internal entity types ─────────────────────────────────────
+
+entity_types:
+  Matter:
+    description: Active or historical legal matter tracked by the firm.
+    properties:
+      matter_id: {type: string, primary_key: true}
+      title: {type: string, indexed: true}
+      status:
+        type: string
+        optional: true
+        description: "active, resolved, settled, dismissed, on_hold"
+      date_opened: {type: string, optional: true}
+      date_closed: {type: string, optional: true}
+      jurisdiction: {type: string, optional: true}
+      court_id: {type: string, optional: true}
+
+  Client:
+    description: Firm client associated with one or more matters.
+    properties:
+      client_id: {type: string, primary_key: true}
+      name: {type: string, indexed: true}
+      industry: {type: string, optional: true}
+
+  Attorney:
+    description: Firm attorney assigned to matters.
+    properties:
+      attorney_id: {type: string, primary_key: true}
+      name: {type: string, indexed: true}
+      practice_area_id: {type: string, optional: true}
+      seniority:
+        type: string
+        optional: true
+        description: "partner, associate, counsel, paralegal"
+
+  PracticeArea:
+    description: Practice area or specialization within the firm.
+    properties:
+      practice_area_id: {type: string, primary_key: true}
+      name: {type: string, indexed: true}
+
+  Position:
+    description: Specific legal argument or position taken in a matter.
+    properties:
+      position_id: {type: string, primary_key: true}
+      matter_id: {type: string}
+      description: {type: string}
+      type:
+        type: string
+        optional: true
+        description: "claim, defense, counterclaim, affirmative_defense, motion"
+      status:
+        type: string
+        optional: true
+        description: "active, prevailed, rejected, withdrawn, moot"
+
+  Deadline:
+    description: Filing deadline or response obligation tied to a matter.
+    properties:
+      deadline_id: {type: string, primary_key: true}
+      matter_id: {type: string}
+      description: {type: string}
+      due_date: {type: string}
+      type:
+        type: string
+        optional: true
+        description: "filing, response, discovery, hearing, statute_of_limitations"
+      status:
+        type: string
+        optional: true
+        description: "pending, met, missed, extended, waived"
+
+  CaseOutcome:
+    description: >
+      Resolved case result recording what happened. Distinct from Cruxible
+      platform outcomes (Loop 2) which record whether the system's governed
+      judgments were correct.
+    properties:
+      outcome_id: {type: string, primary_key: true}
+      matter_id: {type: string}
+      result:
+        type: string
+        description: "won, lost, settled, dismissed, default_judgment"
+      date_resolved: {type: string, optional: true}
+      court_id: {type: string, optional: true}
+      judge_id: {type: string, optional: true}
+      notes: {type: string, optional: true}
+
+# ─── Fork: deterministic internal relationships ──────────────────────
+
+relationships:
+  - name: matter_for_client
+    description: Matter belongs to a client.
+    from: Matter
+    to: Client
+
+  - name: matter_assigned_to
+    description: Matter is assigned to an attorney.
+    from: Matter
+    to: Attorney
+
+  - name: matter_in_practice_area
+    description: Matter falls within a practice area.
+    from: Matter
+    to: PracticeArea
+
+  - name: matter_has_position
+    description: Matter includes a specific legal position or argument.
+    from: Matter
+    to: Position
+
+  - name: matter_has_deadline
+    description: Matter has a filing deadline or response obligation.
+    from: Matter
+    to: Deadline
+
+  - name: outcome_of_matter
+    description: Case outcome resolves a matter.
+    from: CaseOutcome
+    to: Matter
+
+  - name: outcome_resolved_position
+    description: >
+      Case outcome resolved a specific position. Properties capture whether
+      the position prevailed, its role, and the court's treatment.
+    from: CaseOutcome
+    to: Position
+    properties:
+      role:
+        type: string
+        optional: true
+        description: "primary_argument, alternative_argument, defensive, amicus"
+      prevailed:
+        type: bool
+        optional: true
+        description: Whether the position was accepted by the court
+      weight:
+        type: string
+        optional: true
+        description: "adopted, distinguished, rejected, not_reached"
+      notes:
+        type: string
+        optional: true
+
+  # ─── Governed judgment relationships ─────────────────────────────
+
+  - name: matter_turns_on_statute
+    description: >
+      Governed: matter's legal scope depends on this statute or doctrine.
+      Proposed by extract_matter_statutes workflow.
+    from: Matter
+    to: Statute
+    matching:
+      integrations:
+        matter_statute_match:
+          role: required
+      auto_resolve_when: all_support
+
+  - name: opinion_affects_matter
+    description: >
+      Governed: a new opinion materially affects a tracked matter.
+      Proposed by propose_opinion_impact workflow.
+    from: Opinion
+    to: Matter
+    properties:
+      impact_level:
+        type: string
+        optional: true
+        description: "binding, persuasive, distinguishable, irrelevant"
+      urgency:
+        type: string
+        optional: true
+        description: "immediate, routine, informational"
+    matching:
+      integrations:
+        opinion_matter_impact:
+          role: required
+        jurisdiction_overlap:
+          role: advisory
+      auto_resolve_when: all_support
+
+  - name: opinion_supports_position
+    description: >
+      Governed: an opinion supports, distinguishes, or weakens a tracked
+      legal position. Proposed by propose_position_authority workflow.
+    from: Opinion
+    to: Position
+    properties:
+      relationship_to_position:
+        type: string
+        optional: true
+        description: "supports, distinguishes, weakens, overrules"
+      authority_weight:
+        type: string
+        optional: true
+        description: "binding, persuasive, dicta"
+    matching:
+      integrations:
+        position_authority_review:
+          role: required
+      auto_resolve_when: all_support
+
+  - name: filing_requires_response
+    description: >
+      Governed: a filing creates a response obligation or deadline for
+      a tracked matter. Proposed by propose_filing_response workflow.
+    from: Filing
+    to: Matter
+    properties:
+      response_type:
+        type: string
+        optional: true
+        description: "answer, opposition, reply, motion_to_dismiss, no_action"
+      deadline_date: {type: string, optional: true}
+    matching:
+      integrations:
+        filing_obligation_review:
+          role: required
+        docket_matter_match:
+          role: required
+      auto_resolve_when: all_support
+
+# ─── Integrations ────────────────────────────────────────────────────
+
+integrations:
+  matter_statute_match:
+    kind: matter_issue_scope_match
+    notes: >
+      Link tracked matters to statutes or doctrines referenced in
+      pleadings and briefs.
+
+  opinion_matter_impact:
+    kind: opinion_impact_assessment
+    notes: >
+      Assess whether a new opinion materially affects a tracked matter
+      based on holdings, statute overlap, and factual similarity.
+
+  jurisdiction_overlap:
+    kind: authority_weighting
+    notes: >
+      Weight whether the opinion is binding, persuasive, or irrelevant
+      in the target matter's jurisdiction.
+
+  position_authority_review:
+    kind: position_authority_assessment
+    notes: >
+      Determine whether an opinion supports, distinguishes, or weakens
+      a tracked legal position.
+
+  filing_obligation_review:
+    kind: filing_obligation_assessment
+    notes: >
+      Determine whether a filing creates a response obligation or
+      deadline for a tracked matter.
+
+  docket_matter_match:
+    kind: docket_matter_resolution
+    notes: >
+      Match an external docket event to the correct tracked matter.
+
+# ─── Named queries (cross-layer traversals) ──────────────────────────
+
+named_queries:
+  impacted_matters:
+    description: >
+      Starting from a new opinion, find matters it materially affects.
+    entry_point: Opinion
+    returns: Matter
+    traversal:
+      - relationship: opinion_affects_matter
+        direction: outgoing
+
+  matter_authority_chain:
+    description: >
+      Starting from a matter, follow its statute scope to find
+      interpreting opinions and their citation chains.
+    entry_point: Matter
+    returns: Opinion
+    traversal:
+      - relationship: matter_turns_on_statute
+        direction: outgoing
+      - relationship: interprets
+        direction: incoming
+      - relationship: cites
+        direction: incoming
+
+  judge_opinion_history:
+    description: Starting from a judge, find opinions they authored.
+    entry_point: Judge
+    returns: Opinion
+    traversal:
+      - relationship: decided_by
+        direction: incoming
+
+  circuit_split_watch:
+    description: >
+      Starting from a statute, find opinions interpreting it across
+      different courts to identify potential circuit splits.
+    entry_point: Statute
+    returns: Opinion
+    traversal:
+      - relationship: interprets
+        direction: incoming
+      - relationship: opinion_on_docket
+        direction: outgoing
+      - relationship: docket_in_court
+        direction: outgoing
+
+  client_impact_watch:
+    description: >
+      Starting from a client, traverse through their matters to find
+      opinions that affect them.
+    entry_point: Client
+    returns: Opinion
+    traversal:
+      - relationship: matter_for_client
+        direction: incoming
+      - relationship: opinion_affects_matter
+        direction: incoming
+
+  deadline_watch:
+    description: >
+      Starting from an attorney, find upcoming deadlines across their
+      assigned matters.
+    entry_point: Attorney
+    returns: Deadline
+    traversal:
+      - relationship: matter_assigned_to
+        direction: incoming
+      - relationship: matter_has_deadline
+        direction: outgoing
+
+  position_track_record:
+    description: >
+      Starting from a position, find case outcomes where it was argued.
+    entry_point: Position
+    returns: CaseOutcome
+    traversal:
+      - relationship: outcome_resolved_position
+        direction: incoming
+
+# ─── Quality checks ──────────────────────────────────────────────────
+
+quality_checks:
+  - name: matters_have_one_client
+    kind: cardinality
+    severity: warning
+    entity_type: Matter
+    relationship_type: matter_for_client
+    direction: outgoing
+    min_count: 1
+    max_count: 1
+
+  - name: matters_have_one_attorney
+    kind: cardinality
+    severity: warning
+    entity_type: Matter
+    relationship_type: matter_assigned_to
+    direction: outgoing
+    min_count: 1
+
+  - name: deadlines_have_matter
+    kind: cardinality
+    severity: warning
+    entity_type: Deadline
+    relationship_type: matter_has_deadline
+    direction: incoming
+    min_count: 1
+
+  - name: outcomes_have_matter
+    kind: cardinality
+    severity: error
+    entity_type: CaseOutcome
+    relationship_type: outcome_of_matter
+    direction: outgoing
+    min_count: 1
+    max_count: 1
+
+  - name: outcomes_have_position
+    kind: cardinality
+    severity: warning
+    entity_type: CaseOutcome
+    relationship_type: outcome_resolved_position
+    direction: outgoing
+    min_count: 1
+
+# ─── Feedback profiles (Loop 1) ──────────────────────────────────────
+
+feedback_profiles:
+  matter_turns_on_statute:
+    version: 1
+    reason_codes:
+      wrong_statute_link:
+        description: The statute is not relevant to this matter's legal issues.
+        remediation_hint: provider_fix
+        required_scope_keys: [matter, statute]
+      issue_not_in_case:
+        description: The legal issue referenced is not part of this case.
+        remediation_hint: quality_check
+        required_scope_keys: [matter]
+      duplicate_scope:
+        description: This statute link duplicates an existing scope entry.
+        remediation_hint: constraint
+        required_scope_keys: [matter, statute]
+    scope_keys:
+      matter: FROM.matter_id
+      statute: TO.statute_id
+
+  opinion_affects_matter:
+    version: 1
+    reason_codes:
+      non_material_authority:
+        description: The opinion does not materially affect the matter.
+        remediation_hint: decision_policy
+        required_scope_keys: [opinion, matter]
+      jurisdiction_mismatch:
+        description: The opinion is from a non-binding jurisdiction.
+        remediation_hint: constraint
+        required_scope_keys: [court]
+      holding_misread:
+        description: The opinion's holding was incorrectly interpreted.
+        remediation_hint: provider_fix
+        required_scope_keys: [opinion, matter]
+    scope_keys:
+      opinion: FROM.opinion_id
+      matter: TO.matter_id
+      court: FROM.court_id
+
+  opinion_supports_position:
+    version: 1
+    reason_codes:
+      actually_adverse:
+        description: The opinion actually weakens this position.
+        remediation_hint: provider_fix
+        required_scope_keys: [position, opinion]
+      distinguished_on_facts:
+        description: The opinion is distinguishable on the facts.
+        remediation_hint: decision_policy
+        required_scope_keys: [opinion, matter]
+      position_outdated:
+        description: The position has been superseded or withdrawn.
+        remediation_hint: quality_check
+        required_scope_keys: [position]
+    scope_keys:
+      position: TO.position_id
+      matter: TO.matter_id
+      opinion: FROM.opinion_id
+
+  filing_requires_response:
+    version: 1
+    reason_codes:
+      no_response_required:
+        description: This filing type does not require a response.
+        remediation_hint: constraint
+        required_scope_keys: [filing_type]
+      deadline_extraction_error:
+        description: The deadline was incorrectly extracted from the filing.
+        remediation_hint: provider_fix
+        required_scope_keys: [docket, filing_type]
+      wrong_matter_routing:
+        description: The filing was routed to the wrong matter.
+        remediation_hint: quality_check
+        required_scope_keys: [docket, matter]
+    scope_keys:
+      docket: FROM.docket_id
+      filing_type: FROM.filing_type
+      matter: TO.matter_id
+
+# ─── Outcome profiles (Loop 2) ───────────────────────────────────────
+
+outcome_profiles:
+  # Resolution-anchored: was this governed resolution correct?
+
+  matter_turns_on_statute_resolution:
+    anchor_type: resolution
+    relationship_type: matter_turns_on_statute
+    version: 1
+    outcome_codes:
+      wrong_statute_scope:
+        description: The statute scope was too broad or too narrow.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      missed_core_statute:
+        description: A key statute was missed during scoping.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  opinion_affects_matter_resolution:
+    anchor_type: resolution
+    relationship_type: opinion_affects_matter
+    version: 1
+    outcome_codes:
+      overstated_impact:
+        description: The opinion's impact was overstated.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      missed_material_opinion:
+        description: A material opinion was not flagged.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      jurisdiction_weight_error:
+        description: The jurisdiction weighting was incorrect.
+        remediation_hint: provider_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  opinion_supports_position_resolution:
+    anchor_type: resolution
+    relationship_type: opinion_supports_position
+    version: 1
+    outcome_codes:
+      supporting_authority_was_adverse:
+        description: The cited authority actually weakened the position.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      persuasive_only:
+        description: Authority was only persuasive, not binding as assessed.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  filing_requires_response_resolution:
+    anchor_type: resolution
+    relationship_type: filing_requires_response
+    version: 1
+    outcome_codes:
+      false_deadline:
+        description: The deadline was incorrect or did not apply.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      missed_deadline:
+        description: A real deadline was not flagged.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      calendar_parse_error:
+        description: The date was incorrectly extracted from the filing.
+        remediation_hint: provider_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  # Receipt-anchored: did this query or workflow give a good answer?
+
+  impacted_matters_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: impacted_matters
+    version: 1
+    outcome_codes:
+      missing_results:
+        description: Relevant matters were not returned.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      overstated_impact:
+        description: Non-impacted matters were included in results.
+        remediation_hint: workflow_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  deadline_watch_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: deadline_watch
+    version: 1
+    outcome_codes:
+      missed_deadline:
+        description: A real deadline was not returned.
+        remediation_hint: workflow_fix
+        required_scope_keys: [query]
+      stale_deadline:
+        description: Returned deadlines include expired or resolved items.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  opinion_impact_review_workflow:
+    anchor_type: receipt
+    surface_type: workflow
+    surface_name: propose_opinion_impact
+    version: 1
+    outcome_codes:
+      missed_authority:
+        description: The workflow missed a relevant opinion.
+        remediation_hint: workflow_fix
+        required_scope_keys: [query]
+      bad_case_routing:
+        description: The opinion was matched to the wrong matter.
+        remediation_hint: provider_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  position_track_record_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: position_track_record
+    version: 1
+    outcome_codes:
+      authority_chain_incomplete:
+        description: The outcome history is missing relevant cases.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      winning_pattern_not_reused:
+        description: A successful argument pattern was not surfaced.
+        remediation_hint: workflow_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+# ─── Contracts ────────────────────────────────────────────────────────
+
+contracts:
+  FirmCaseSeedData:
+    fields:
+      matters: {type: json}
+      clients: {type: json}
+      attorneys: {type: json}
+      practice_areas: {type: json}
+      positions: {type: json}
+      deadlines: {type: json}
+      matter_client: {type: json}
+      matter_attorney: {type: json}
+      matter_practice_area: {type: json}
+      matter_position: {type: json}
+      matter_deadline: {type: json}
+
+  CaseOutcomeData:
+    fields:
+      outcomes: {type: json}
+      outcome_matter: {type: json}
+      outcome_position: {type: json}
+
+  MatterStatuteInput:
+    fields:
+      matters: {type: json}
+
+  MatterStatuteResults:
+    fields:
+      candidates: {type: json}
+      signals: {type: json}
+
+  OpinionImpactInput:
+    fields:
+      opinions: {type: json}
+      matters: {type: json}
+      matter_statutes: {type: json}
+
+  OpinionImpactResults:
+    fields:
+      candidates: {type: json}
+      signals: {type: json}
+
+  PositionAuthorityInput:
+    fields:
+      opinions: {type: json}
+      positions: {type: json}
+
+  PositionAuthorityResults:
+    fields:
+      candidates: {type: json}
+      signals: {type: json}
+
+  FilingObligationInput:
+    fields:
+      filings: {type: json}
+      matters: {type: json}
+
+  FilingObligationResults:
+    fields:
+      candidates: {type: json}
+      signals: {type: json}
+
+# ─── Artifacts ────────────────────────────────────────────────────────
+
+artifacts:
+  firm_case_bundle:
+    kind: directory
+    uri: ./data/seed
+    sha256: sha256:placeholder
+
+  case_outcome_bundle:
+    kind: directory
+    uri: ./data/outcomes
+    sha256: sha256:placeholder
+
+# ─── Providers ────────────────────────────────────────────────────────
+
+providers:
+  load_firm_seed_data:
+    kind: function
+    description: >
+      Load matters, clients, attorneys, practice areas, positions, and
+      deadlines from firm case-management seed data.
+    contract_in: EmptyInput
+    contract_out: FirmCaseSeedData
+    ref: cruxible_core.demo_providers.case_law.load_firm_seed_data
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: firm_case_bundle
+
+  load_case_outcomes:
+    kind: function
+    description: >
+      Load resolved case outcomes and position results from
+      case-management exports.
+    contract_in: EmptyInput
+    contract_out: CaseOutcomeData
+    ref: cruxible_core.demo_providers.case_law.load_case_outcomes
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: case_outcome_bundle
+
+  extract_matter_statutes:
+    kind: function
+    description: >
+      Extract or normalize statutes and doctrines referenced by tracked
+      matters. Uses matter descriptions, pleadings, and brief references.
+    contract_in: MatterStatuteInput
+    contract_out: MatterStatuteResults
+    ref: cruxible_core.demo_providers.case_law.extract_matter_statutes
+    version: "1.0.0"
+    deterministic: false
+    runtime: python
+
+  assess_opinion_matter_impact:
+    kind: function
+    description: >
+      Compare an opinion's holdings to approved matter-statute links and
+      authority weight. Produces candidates and integration signals.
+    contract_in: OpinionImpactInput
+    contract_out: OpinionImpactResults
+    ref: cruxible_core.demo_providers.case_law.assess_opinion_matter_impact
+    version: "1.0.0"
+    deterministic: false
+    runtime: python
+
+  assess_position_authority:
+    kind: function
+    description: >
+      Determine whether an opinion supports, distinguishes, or undermines
+      a tracked legal position.
+    contract_in: PositionAuthorityInput
+    contract_out: PositionAuthorityResults
+    ref: cruxible_core.demo_providers.case_law.assess_position_authority
+    version: "1.0.0"
+    deterministic: false
+    runtime: python
+
+  classify_filing_obligation:
+    kind: function
+    description: >
+      Classify filing type, extract deadlines, and determine response
+      obligations for tracked matters.
+    contract_in: FilingObligationInput
+    contract_out: FilingObligationResults
+    ref: cruxible_core.demo_providers.case_law.classify_filing_obligation
+    version: "1.0.0"
+    deterministic: false
+    runtime: python
+
+# ─── Workflows ────────────────────────────────────────────────────────
+
+workflows:
+  # --- Canonical seed-load workflows ---
+
+  build_firm_case_state:
+    canonical: true
+    description: >
+      Load deterministic firm entities and internal edges from seed data.
+    contract_in: EmptyInput
+    steps:
+      - id: seed
+        provider: load_firm_seed_data
+        input: {}
+        as: seed
+
+      - id: matters
+        make_entities:
+          entity_type: Matter
+          items: $steps.seed.matters
+          entity_id: $item.matter_id
+          properties:
+            matter_id: $item.matter_id
+            title: $item.title
+            status: $item.status
+            date_opened: $item.date_opened
+            jurisdiction: $item.jurisdiction
+            court_id: $item.court_id
+        as: matters
+
+      - id: clients
+        make_entities:
+          entity_type: Client
+          items: $steps.seed.clients
+          entity_id: $item.client_id
+          properties:
+            client_id: $item.client_id
+            name: $item.name
+            industry: $item.industry
+        as: clients
+
+      - id: attorneys
+        make_entities:
+          entity_type: Attorney
+          items: $steps.seed.attorneys
+          entity_id: $item.attorney_id
+          properties:
+            attorney_id: $item.attorney_id
+            name: $item.name
+            practice_area_id: $item.practice_area_id
+            seniority: $item.seniority
+        as: attorneys
+
+      - id: practice_areas
+        make_entities:
+          entity_type: PracticeArea
+          items: $steps.seed.practice_areas
+          entity_id: $item.practice_area_id
+          properties:
+            practice_area_id: $item.practice_area_id
+            name: $item.name
+        as: practice_areas
+
+      - id: positions
+        make_entities:
+          entity_type: Position
+          items: $steps.seed.positions
+          entity_id: $item.position_id
+          properties:
+            position_id: $item.position_id
+            matter_id: $item.matter_id
+            description: $item.description
+            type: $item.type
+            status: $item.status
+        as: positions
+
+      - id: deadlines
+        make_entities:
+          entity_type: Deadline
+          items: $steps.seed.deadlines
+          entity_id: $item.deadline_id
+          properties:
+            deadline_id: $item.deadline_id
+            matter_id: $item.matter_id
+            description: $item.description
+            due_date: $item.due_date
+            type: $item.type
+            status: $item.status
+        as: deadlines
+
+      - id: matter_client_edges
+        make_relationships:
+          relationship_type: matter_for_client
+          items: $steps.seed.matter_client
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Client
+          to_id: $item.client_id
+        as: matter_client_edges
+
+      - id: matter_attorney_edges
+        make_relationships:
+          relationship_type: matter_assigned_to
+          items: $steps.seed.matter_attorney
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Attorney
+          to_id: $item.attorney_id
+        as: matter_attorney_edges
+
+      - id: matter_practice_area_edges
+        make_relationships:
+          relationship_type: matter_in_practice_area
+          items: $steps.seed.matter_practice_area
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: PracticeArea
+          to_id: $item.practice_area_id
+        as: matter_practice_area_edges
+
+      - id: matter_position_edges
+        make_relationships:
+          relationship_type: matter_has_position
+          items: $steps.seed.matter_position
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Position
+          to_id: $item.position_id
+        as: matter_position_edges
+
+      - id: matter_deadline_edges
+        make_relationships:
+          relationship_type: matter_has_deadline
+          items: $steps.seed.matter_deadline
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Deadline
+          to_id: $item.deadline_id
+        as: matter_deadline_edges
+
+      - id: apply_matters
+        apply_entities: {entities_from: matters}
+        as: apply_matters
+      - id: apply_clients
+        apply_entities: {entities_from: clients}
+        as: apply_clients
+      - id: apply_attorneys
+        apply_entities: {entities_from: attorneys}
+        as: apply_attorneys
+      - id: apply_practice_areas
+        apply_entities: {entities_from: practice_areas}
+        as: apply_practice_areas
+      - id: apply_positions
+        apply_entities: {entities_from: positions}
+        as: apply_positions
+      - id: apply_deadlines
+        apply_entities: {entities_from: deadlines}
+        as: apply_deadlines
+      - id: apply_matter_client
+        apply_relationships: {relationships_from: matter_client_edges}
+        as: apply_matter_client
+      - id: apply_matter_attorney
+        apply_relationships: {relationships_from: matter_attorney_edges}
+        as: apply_matter_attorney
+      - id: apply_matter_practice_area
+        apply_relationships: {relationships_from: matter_practice_area_edges}
+        as: apply_matter_practice_area
+      - id: apply_matter_position
+        apply_relationships: {relationships_from: matter_position_edges}
+        as: apply_matter_position
+      - id: apply_matter_deadline
+        apply_relationships: {relationships_from: matter_deadline_edges}
+        as: apply_matter_deadline
+    returns: apply_matter_deadline
+
+  record_case_outcomes:
+    canonical: true
+    description: >
+      Load resolved case outcomes and link to matters and positions.
+    contract_in: EmptyInput
+    steps:
+      - id: data
+        provider: load_case_outcomes
+        input: {}
+        as: data
+
+      - id: outcomes
+        make_entities:
+          entity_type: CaseOutcome
+          items: $steps.data.outcomes
+          entity_id: $item.outcome_id
+          properties:
+            outcome_id: $item.outcome_id
+            matter_id: $item.matter_id
+            result: $item.result
+            date_resolved: $item.date_resolved
+            court_id: $item.court_id
+            judge_id: $item.judge_id
+            notes: $item.notes
+        as: outcomes
+
+      - id: outcome_matter_edges
+        make_relationships:
+          relationship_type: outcome_of_matter
+          items: $steps.data.outcome_matter
+          from_type: CaseOutcome
+          from_id: $item.outcome_id
+          to_type: Matter
+          to_id: $item.matter_id
+        as: outcome_matter_edges
+
+      - id: outcome_position_edges
+        make_relationships:
+          relationship_type: outcome_resolved_position
+          items: $steps.data.outcome_position
+          from_type: CaseOutcome
+          from_id: $item.outcome_id
+          to_type: Position
+          to_id: $item.position_id
+          properties:
+            role: $item.role
+            prevailed: $item.prevailed
+            weight: $item.weight
+            notes: $item.notes
+        as: outcome_position_edges
+
+      - id: apply_outcomes
+        apply_entities: {entities_from: outcomes}
+        as: apply_outcomes
+      - id: apply_outcome_matter
+        apply_relationships: {relationships_from: outcome_matter_edges}
+        as: apply_outcome_matter
+      - id: apply_outcome_position
+        apply_relationships: {relationships_from: outcome_position_edges}
+        as: apply_outcome_position
+    returns: apply_outcome_position
+
+  # --- Non-canonical proposal workflows ---
+
+  propose_matter_statutes:
+    description: >
+      Extract or normalize statutory scope for tracked matters and
+      propose governed matter_turns_on_statute edges.
+    contract_in: EmptyInput
+    steps:
+      - id: matters
+        list_entities:
+          entity_type: Matter
+        as: matters
+
+      - id: statutes
+        list_entities:
+          entity_type: Statute
+        as: statutes
+
+      - id: extraction
+        provider: extract_matter_statutes
+        input:
+          matters: $steps.matters
+        as: extraction
+
+      - id: candidates
+        make_candidates:
+          relationship_type: matter_turns_on_statute
+          items: $steps.extraction.candidates
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Statute
+          to_id: $item.statute_id
+        as: candidates
+
+      - id: signals
+        map_signals:
+          integration: matter_statute_match
+          items: $steps.extraction.signals
+          from_id: $item.matter_id
+          to_id: $item.statute_id
+          enum:
+            path: signal
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: signals
+
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: matter_turns_on_statute
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            Statutory and doctrinal scope extraction for tracked matters.
+        as: proposal
+    returns: proposal
+
+  propose_opinion_impact:
+    description: >
+      Compare new opinions against approved matter-statute links and
+      jurisdictions, then propose opinion_affects_matter edges.
+    contract_in: EmptyInput
+    steps:
+      - id: opinions
+        list_entities:
+          entity_type: Opinion
+        as: opinions
+
+      - id: matters
+        list_entities:
+          entity_type: Matter
+        as: matters
+
+      - id: matter_statutes
+        list_relationships:
+          relationship_type: matter_turns_on_statute
+        as: matter_statutes
+
+      - id: assessment
+        provider: assess_opinion_matter_impact
+        input:
+          opinions: $steps.opinions
+          matters: $steps.matters
+          matter_statutes: $steps.matter_statutes
+        as: assessment
+
+      - id: candidates
+        make_candidates:
+          relationship_type: opinion_affects_matter
+          items: $steps.assessment.candidates
+          from_type: Opinion
+          from_id: $item.opinion_id
+          to_type: Matter
+          to_id: $item.matter_id
+        as: candidates
+
+      - id: impact_signals
+        map_signals:
+          integration: opinion_matter_impact
+          items: $steps.assessment.signals
+          from_id: $item.opinion_id
+          to_id: $item.matter_id
+          enum:
+            path: impact_signal
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: impact_signals
+
+      - id: jurisdiction_signals
+        map_signals:
+          integration: jurisdiction_overlap
+          items: $steps.assessment.signals
+          from_id: $item.opinion_id
+          to_id: $item.matter_id
+          enum:
+            path: jurisdiction_signal
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: jurisdiction_signals
+
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: opinion_affects_matter
+          candidates_from: candidates
+          signals_from: [impact_signals, jurisdiction_signals]
+          thesis_text: >
+            Opinion impact assessment against approved matter-statute scope.
+        as: proposal
+    returns: proposal
+
+  propose_position_authority:
+    description: >
+      Assess whether a new opinion supports, distinguishes, or weakens
+      a tracked argument, then propose opinion_supports_position edges.
+    contract_in: EmptyInput
+    steps:
+      - id: opinions
+        list_entities:
+          entity_type: Opinion
+        as: opinions
+
+      - id: positions
+        list_entities:
+          entity_type: Position
+        as: positions
+
+      - id: assessment
+        provider: assess_position_authority
+        input:
+          opinions: $steps.opinions
+          positions: $steps.positions
+        as: assessment
+
+      - id: candidates
+        make_candidates:
+          relationship_type: opinion_supports_position
+          items: $steps.assessment.candidates
+          from_type: Opinion
+          from_id: $item.opinion_id
+          to_type: Position
+          to_id: $item.position_id
+        as: candidates
+
+      - id: signals
+        map_signals:
+          integration: position_authority_review
+          items: $steps.assessment.signals
+          from_id: $item.opinion_id
+          to_id: $item.position_id
+          enum:
+            path: signal
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: signals
+
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: opinion_supports_position
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            Position authority assessment for tracked legal arguments.
+        as: proposal
+    returns: proposal
+
+  propose_filing_response:
+    description: >
+      Classify new filings, extract deadlines and obligations, route to
+      the correct matter, and propose filing_requires_response edges.
+    contract_in: EmptyInput
+    steps:
+      - id: filings
+        list_entities:
+          entity_type: Filing
+        as: filings
+
+      - id: matters
+        list_entities:
+          entity_type: Matter
+        as: matters
+
+      - id: classification
+        provider: classify_filing_obligation
+        input:
+          filings: $steps.filings
+          matters: $steps.matters
+        as: classification
+
+      - id: candidates
+        make_candidates:
+          relationship_type: filing_requires_response
+          items: $steps.classification.candidates
+          from_type: Filing
+          from_id: $item.filing_id
+          to_type: Matter
+          to_id: $item.matter_id
+        as: candidates
+
+      - id: obligation_signals
+        map_signals:
+          integration: filing_obligation_review
+          items: $steps.classification.signals
+          from_id: $item.filing_id
+          to_id: $item.matter_id
+          enum:
+            path: obligation_signal
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: obligation_signals
+
+      - id: match_signals
+        map_signals:
+          integration: docket_matter_match
+          items: $steps.classification.signals
+          from_id: $item.filing_id
+          to_id: $item.matter_id
+          enum:
+            path: match_signal
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: match_signals
+
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: filing_requires_response
+          candidates_from: candidates
+          signals_from: [obligation_signals, match_signals]
+          thesis_text: >
+            Filing obligation classification and matter routing.
+        as: proposal
+    returns: proposal
+
+# ─── Workflow tests ───────────────────────────────────────────────────
+
+tests:
+  - name: build_firm_state_smoke
+    workflow: build_firm_case_state
+
+  - name: record_outcomes_smoke
+    workflow: record_case_outcomes

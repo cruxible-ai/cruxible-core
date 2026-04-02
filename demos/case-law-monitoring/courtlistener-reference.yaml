@@ -1,0 +1,493 @@
+version: "1.0"
+name: courtlistener_reference
+kind: world_model
+description: >
+  Published legal reference graph built from public CourtListener data.
+  Courts, judges, dockets, opinions, filings, and statutes with deterministic
+  reference relationships. Read-only to forks; updated from public feeds.
+
+entity_types:
+  Court:
+    description: Federal or state court identified by CourtListener court ID.
+    properties:
+      court_id: {type: string, primary_key: true}
+      name: {type: string, indexed: true}
+      jurisdiction: {type: string, optional: true}
+      level:
+        type: string
+        optional: true
+        description: "Court level: supreme, appellate, district, bankruptcy, etc."
+      circuit: {type: string, optional: true}
+      state: {type: string, optional: true}
+
+  Judge:
+    description: Judge identified by CourtListener person ID.
+    properties:
+      judge_id: {type: string, primary_key: true}
+      name: {type: string, indexed: true}
+      court_id: {type: string, optional: true}
+      active: {type: boolean, optional: true}
+
+  Docket:
+    description: Court docket (case filing) identified by CourtListener docket ID.
+    properties:
+      docket_id: {type: string, primary_key: true}
+      case_name: {type: string, indexed: true}
+      docket_number: {type: string, optional: true}
+      court_id: {type: string}
+      date_filed: {type: string, optional: true}
+      date_terminated: {type: string, optional: true}
+      nature_of_suit: {type: string, optional: true}
+
+  Opinion:
+    description: Published judicial opinion from CourtListener.
+    properties:
+      opinion_id: {type: string, primary_key: true}
+      case_name: {type: string, indexed: true}
+      citation: {type: string, optional: true}
+      date_filed: {type: string, optional: true}
+      court_id: {type: string, optional: true}
+      docket_id: {type: string, optional: true}
+      type:
+        type: string
+        optional: true
+        description: "Opinion type: lead, concurrence, dissent, per_curiam, etc."
+      summary: {type: string, optional: true}
+
+  Filing:
+    description: Docket entry or filing event from CourtListener.
+    properties:
+      filing_id: {type: string, primary_key: true}
+      docket_id: {type: string}
+      description: {type: string, optional: true}
+      date_filed: {type: string, optional: true}
+      entry_number: {type: integer, optional: true}
+      filing_type:
+        type: string
+        optional: true
+        description: "motion, order, brief, notice, etc."
+
+  Statute:
+    description: Federal or state statute, regulation, or constitutional provision.
+    properties:
+      statute_id: {type: string, primary_key: true}
+      title: {type: string, indexed: true}
+      citation: {type: string, optional: true}
+      jurisdiction: {type: string, optional: true}
+      category:
+        type: string
+        optional: true
+        description: "statute, regulation, constitutional, doctrine"
+
+relationships:
+  - name: docket_in_court
+    description: Deterministic docket-to-court assignment from CourtListener metadata.
+    from: Docket
+    to: Court
+
+  - name: opinion_on_docket
+    description: Opinion issued on a specific docket.
+    from: Opinion
+    to: Docket
+
+  - name: filed_on_docket
+    description: Filing event on a specific docket.
+    from: Filing
+    to: Docket
+
+  - name: decided_by
+    description: Opinion authored or decided by a specific judge.
+    from: Opinion
+    to: Judge
+
+  - name: interprets
+    description: Opinion interprets, applies, or construes a statute or doctrine.
+    from: Opinion
+    to: Statute
+    properties:
+      treatment:
+        type: string
+        optional: true
+        description: "applied, construed, distinguished, cited, overruled"
+
+  - name: cites
+    description: Opinion cites another opinion as authority.
+    from: Opinion
+    to: Opinion
+    properties:
+      depth:
+        type: integer
+        optional: true
+        description: "Citation depth from CourtListener: 1=discussed, 2=cited, 3=mentioned"
+
+named_queries:
+  vulnerability_products:
+    description: Starting from an opinion, find the docket it was issued on.
+    entry_point: Opinion
+    returns: Docket
+    traversal:
+      - relationship: opinion_on_docket
+        direction: outgoing
+
+  opinion_court:
+    description: Starting from an opinion, find the court that issued it.
+    entry_point: Opinion
+    returns: Court
+    traversal:
+      - relationship: opinion_on_docket
+        direction: outgoing
+      - relationship: docket_in_court
+        direction: outgoing
+
+  judge_opinions:
+    description: Starting from a judge, find opinions they authored.
+    entry_point: Judge
+    returns: Opinion
+    traversal:
+      - relationship: decided_by
+        direction: incoming
+
+  statute_opinions:
+    description: Starting from a statute, find opinions that interpret it.
+    entry_point: Statute
+    returns: Opinion
+    traversal:
+      - relationship: interprets
+        direction: incoming
+
+  opinion_citations:
+    description: Starting from an opinion, find opinions it cites.
+    entry_point: Opinion
+    returns: Opinion
+    traversal:
+      - relationship: cites
+        direction: outgoing
+
+  cited_by:
+    description: Starting from an opinion, find opinions that cite it.
+    entry_point: Opinion
+    returns: Opinion
+    traversal:
+      - relationship: cites
+        direction: incoming
+
+  docket_filings:
+    description: Starting from a docket, find all filings.
+    entry_point: Docket
+    returns: Filing
+    traversal:
+      - relationship: filed_on_docket
+        direction: incoming
+
+quality_checks:
+  - name: opinions_have_citation
+    kind: property
+    severity: warning
+    target: entity
+    entity_type: Opinion
+    property: citation
+    rule: non_empty
+
+  - name: dockets_have_court
+    kind: cardinality
+    severity: error
+    entity_type: Docket
+    relationship_type: docket_in_court
+    direction: outgoing
+    min_count: 1
+    max_count: 1
+
+  - name: filings_have_docket
+    kind: cardinality
+    severity: error
+    entity_type: Filing
+    relationship_type: filed_on_docket
+    direction: outgoing
+    min_count: 1
+    max_count: 1
+
+  - name: opinions_have_docket
+    kind: cardinality
+    severity: warning
+    entity_type: Opinion
+    relationship_type: opinion_on_docket
+    direction: outgoing
+    min_count: 1
+    max_count: 1
+
+contracts:
+  EmptyInput:
+    fields: {}
+  CourtListenerRows:
+    fields:
+      courts:
+        type: json
+      judges:
+        type: json
+      dockets:
+        type: json
+      opinions:
+        type: json
+      filings:
+        type: json
+      statutes:
+        type: json
+      opinion_docket:
+        type: json
+      opinion_judge:
+        type: json
+      opinion_statute:
+        type: json
+      opinion_citation:
+        type: json
+      filing_docket:
+        type: json
+      docket_court:
+        type: json
+
+artifacts:
+  public_courtlistener_bundle:
+    kind: directory
+    uri: ./data
+    sha256: sha256:placeholder
+
+providers:
+  load_public_courtlistener_rows:
+    kind: function
+    description: >
+      Load normalized CourtListener data: courts, judges, dockets, opinions,
+      filings, statutes, and all deterministic reference edges.
+    contract_in: EmptyInput
+    contract_out: CourtListenerRows
+    ref: cruxible_core.demo_providers.case_law.load_public_courtlistener_rows
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: public_courtlistener_bundle
+
+workflows:
+  build_public_courtlistener_reference:
+    canonical: true
+    description: >
+      Build the canonical public legal reference graph from the bundled
+      CourtListener data artifact.
+    contract_in: EmptyInput
+    steps:
+      - id: rows
+        provider: load_public_courtlistener_rows
+        input: {}
+        as: rows
+
+      # --- Entity construction ---
+      - id: courts
+        make_entities:
+          entity_type: Court
+          items: $steps.rows.courts
+          entity_id: $item.court_id
+          properties:
+            court_id: $item.court_id
+            name: $item.name
+            jurisdiction: $item.jurisdiction
+            level: $item.level
+            circuit: $item.circuit
+            state: $item.state
+        as: courts
+
+      - id: judges
+        make_entities:
+          entity_type: Judge
+          items: $steps.rows.judges
+          entity_id: $item.judge_id
+          properties:
+            judge_id: $item.judge_id
+            name: $item.name
+            court_id: $item.court_id
+            active: $item.active
+        as: judges
+
+      - id: dockets
+        make_entities:
+          entity_type: Docket
+          items: $steps.rows.dockets
+          entity_id: $item.docket_id
+          properties:
+            docket_id: $item.docket_id
+            case_name: $item.case_name
+            docket_number: $item.docket_number
+            court_id: $item.court_id
+            date_filed: $item.date_filed
+            date_terminated: $item.date_terminated
+            nature_of_suit: $item.nature_of_suit
+        as: dockets
+
+      - id: opinions
+        make_entities:
+          entity_type: Opinion
+          items: $steps.rows.opinions
+          entity_id: $item.opinion_id
+          properties:
+            opinion_id: $item.opinion_id
+            case_name: $item.case_name
+            citation: $item.citation
+            date_filed: $item.date_filed
+            court_id: $item.court_id
+            docket_id: $item.docket_id
+            type: $item.type
+            summary: $item.summary
+        as: opinions
+
+      - id: filings
+        make_entities:
+          entity_type: Filing
+          items: $steps.rows.filings
+          entity_id: $item.filing_id
+          properties:
+            filing_id: $item.filing_id
+            docket_id: $item.docket_id
+            description: $item.description
+            date_filed: $item.date_filed
+            entry_number: $item.entry_number
+            filing_type: $item.filing_type
+        as: filings
+
+      - id: statutes
+        make_entities:
+          entity_type: Statute
+          items: $steps.rows.statutes
+          entity_id: $item.statute_id
+          properties:
+            statute_id: $item.statute_id
+            title: $item.title
+            citation: $item.citation
+            jurisdiction: $item.jurisdiction
+            category: $item.category
+        as: statutes
+
+      # --- Relationship construction ---
+      - id: docket_court_edges
+        make_relationships:
+          relationship_type: docket_in_court
+          items: $steps.rows.docket_court
+          from_type: Docket
+          from_id: $item.docket_id
+          to_type: Court
+          to_id: $item.court_id
+        as: docket_court_edges
+
+      - id: opinion_docket_edges
+        make_relationships:
+          relationship_type: opinion_on_docket
+          items: $steps.rows.opinion_docket
+          from_type: Opinion
+          from_id: $item.opinion_id
+          to_type: Docket
+          to_id: $item.docket_id
+        as: opinion_docket_edges
+
+      - id: filing_docket_edges
+        make_relationships:
+          relationship_type: filed_on_docket
+          items: $steps.rows.filing_docket
+          from_type: Filing
+          from_id: $item.filing_id
+          to_type: Docket
+          to_id: $item.docket_id
+        as: filing_docket_edges
+
+      - id: opinion_judge_edges
+        make_relationships:
+          relationship_type: decided_by
+          items: $steps.rows.opinion_judge
+          from_type: Opinion
+          from_id: $item.opinion_id
+          to_type: Judge
+          to_id: $item.judge_id
+        as: opinion_judge_edges
+
+      - id: opinion_statute_edges
+        make_relationships:
+          relationship_type: interprets
+          items: $steps.rows.opinion_statute
+          from_type: Opinion
+          from_id: $item.opinion_id
+          to_type: Statute
+          to_id: $item.statute_id
+          properties:
+            treatment: $item.treatment
+        as: opinion_statute_edges
+
+      - id: opinion_citation_edges
+        make_relationships:
+          relationship_type: cites
+          items: $steps.rows.opinion_citation
+          from_type: Opinion
+          from_id: $item.citing_opinion_id
+          to_type: Opinion
+          to_id: $item.cited_opinion_id
+          properties:
+            depth: $item.depth
+        as: opinion_citation_edges
+
+      # --- Apply entities ---
+      - id: apply_courts
+        apply_entities:
+          entities_from: courts
+        as: apply_courts
+
+      - id: apply_judges
+        apply_entities:
+          entities_from: judges
+        as: apply_judges
+
+      - id: apply_dockets
+        apply_entities:
+          entities_from: dockets
+        as: apply_dockets
+
+      - id: apply_opinions
+        apply_entities:
+          entities_from: opinions
+        as: apply_opinions
+
+      - id: apply_filings
+        apply_entities:
+          entities_from: filings
+        as: apply_filings
+
+      - id: apply_statutes
+        apply_entities:
+          entities_from: statutes
+        as: apply_statutes
+
+      # --- Apply relationships ---
+      - id: apply_docket_court
+        apply_relationships:
+          relationships_from: docket_court_edges
+        as: apply_docket_court
+
+      - id: apply_opinion_docket
+        apply_relationships:
+          relationships_from: opinion_docket_edges
+        as: apply_opinion_docket
+
+      - id: apply_filing_docket
+        apply_relationships:
+          relationships_from: filing_docket_edges
+        as: apply_filing_docket
+
+      - id: apply_opinion_judge
+        apply_relationships:
+          relationships_from: opinion_judge_edges
+        as: apply_opinion_judge
+
+      - id: apply_opinion_statute
+        apply_relationships:
+          relationships_from: opinion_statute_edges
+        as: apply_opinion_statute
+
+      - id: apply_opinion_citation
+        apply_relationships:
+          relationships_from: opinion_citation_edges
+        as: apply_opinion_citation
+
+    returns: apply_opinion_citation
