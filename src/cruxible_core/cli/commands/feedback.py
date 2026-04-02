@@ -116,6 +116,8 @@ def feedback_cmd(
             corrections=corrections_dict,
             group_override=group_override,
         ),
+        allow_local=False,
+        command_name="feedback",
     )
 
     if result.applied:
@@ -203,6 +205,8 @@ def feedback_batch_cmd(
             ],
             source=cast(contracts.FeedbackSource, source),
         ),
+        allow_local=False,
+        command_name="feedback-batch",
     )
 
     click.echo(f"Batch feedback recorded for {result.applied_count}/{result.total} item(s).")
@@ -244,6 +248,8 @@ def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None
             outcome=cast(contracts.OutcomeValue, outcome_value),
             detail=detail_dict,
         ),
+        allow_local=False,
+        command_name="outcome",
     )
     click.echo(f"Outcome {result.outcome_id} recorded.")
 

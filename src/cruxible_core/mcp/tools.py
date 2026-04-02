@@ -95,12 +95,12 @@ def register_tools(server: FastMCP) -> list[str]:
         config_yaml: str | None = None,
         data_dir: str | None = None,
     ) -> contracts.InitResult:
-        """Create a new instance or reload an existing one.
+        """Create or reload a governed daemon-backed instance.
 
-        For a new instance, pass `config_path` or `config_yaml`
-        (use `cruxible_validate` first). Provide exactly one — not both.
-        To reload after a restart, omit both — the existing instance
-        and graph are loaded from disk.
+        Provide `config_path` or `config_yaml` when creating a new
+        instance. In server mode, `config_path` is read locally and
+        uploaded as config content; the daemon stores its own active
+        copy. To reload after a restart, omit both.
         """
         return handlers.handle_init(root_dir, config_path, config_yaml, data_dir)
 
@@ -121,7 +121,7 @@ def register_tools(server: FastMCP) -> list[str]:
         transport_ref: str,
         root_dir: str,
     ) -> contracts.WorldForkResult:
-        """Create a new local fork from a published world release."""
+        """Create a new governed fork from a published world release."""
         return handlers.handle_world_fork(transport_ref, root_dir)
 
     @_tool

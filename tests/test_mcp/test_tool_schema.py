@@ -12,6 +12,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cruxible_core.mcp.server import create_server
+from cruxible_core.runtime.instance import CruxibleInstance
 
 
 @pytest.fixture
@@ -336,12 +337,7 @@ class TestErrorPropagation:
             asyncio.run(server.call_tool("cruxible_schema", {"instance_id": "/no/such/instance"}))
 
     def test_bad_receipt_raises(self, server, tmp_project):
-        asyncio.run(
-            server.call_tool(
-                "cruxible_init",
-                {"root_dir": str(tmp_project), "config_path": "config.yaml"},
-            )
-        )
+        CruxibleInstance.init(tmp_project, "config.yaml")
         with pytest.raises(ToolError, match="RCP-missing"):
             asyncio.run(
                 server.call_tool(
@@ -350,14 +346,19 @@ class TestErrorPropagation:
                 )
             )
 
-    def test_ingest_error_includes_details(self, server, tmp_project):
+    def test_ingest_error_includes_details(self, server, governed_client, tmp_project):
         """DataValidationError details survive MCP propagation."""
-        asyncio.run(
+        del governed_client
+        init_result = asyncio.run(
             server.call_tool(
                 "cruxible_init",
                 {"root_dir": str(tmp_project), "config_path": "config.yaml"},
             )
         )
+        if isinstance(init_result, tuple):
+            instance_id = init_result[1]["instance_id"]
+        else:
+            instance_id = init_result["instance_id"]
         bad_csv = tmp_project / "bad_vehicles.csv"
         bad_csv.write_text("wrong_col,another_col\nfoo,bar\n")
         with pytest.raises(ToolError) as exc_info:
@@ -365,7 +366,7 @@ class TestErrorPropagation:
                 server.call_tool(
                     "cruxible_ingest",
                     {
-                        "instance_id": str(tmp_project),
+                        "instance_id": instance_id,
                         "mapping_name": "vehicles",
                         "file_path": str(bad_csv),
                     },

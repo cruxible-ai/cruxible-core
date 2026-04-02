@@ -13,15 +13,10 @@ from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _get_client,
+    _read_validation_yaml_or_error,
     _require_instance_id,
 )
-from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.config.constraint_rules import parse_constraint_rule
-from cruxible_core.config.schema import ConstraintSchema, DecisionPolicySchema
-from cruxible_core.config.validator import validate_config
-from cruxible_core.errors import ConfigError
-from cruxible_core.predicate import CONSTRAINT_RULE_SYNTAX
 from cruxible_core.service import (
     EntityUpsertInput,
     RelationshipUpsertInput,
@@ -66,6 +61,8 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
                 )
             ],
         ),
+        allow_local=False,
+        command_name="add-entity",
     )
 
     label = f"{entity_type}:{entity_id}"
@@ -130,6 +127,8 @@ def add_relationship_cmd(
             source="cli_add",
             source_ref="add-relationship",
         ),
+        allow_local=False,
+        command_name="add-relationship",
     )
 
     edge_label = f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"
@@ -172,35 +171,7 @@ def add_constraint_cmd(
         for warning in result.warnings:
             click.secho(f"  Warning: {warning}", fg="yellow")
         return
-
-    instance = CruxibleInstance.load()
-    config = instance.load_config()
-
-    for existing in config.constraints:
-        if existing.name == name:
-            raise ConfigError(f"Constraint '{name}' already exists in config")
-
-    parsed = parse_constraint_rule(rule)
-    if parsed is None:
-        raise ConfigError(
-            f"Rule syntax not supported: {rule!r}. "
-            f"Expected: {CONSTRAINT_RULE_SYNTAX}"
-        )
-
-    constraint = ConstraintSchema(
-        name=name,
-        rule=rule,
-        severity=cast(contracts.ConstraintSeverity, severity),
-        description=description,
-    )
-    config.constraints.append(constraint)
-
-    warnings = validate_config(config)
-    instance.save_config(config)
-
-    click.echo(f"Constraint '{name}' added to config.")
-    for w in warnings:
-        click.secho(f"  Warning: {w}", fg="yellow")
+    raise click.UsageError("Local mutation disabled for add-constraint; use server mode.")
 
 
 @click.command("reload-config")
@@ -208,12 +179,25 @@ def add_constraint_cmd(
 @handle_errors
 def reload_config_cmd(config_path: str | None) -> None:
     """Validate the active config or repoint the instance to a new config file."""
+    remote = _common._get_client() is not None
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.reload_config(instance_id, config_path=config_path),
+        lambda client, instance_id: client.reload_config(
+            instance_id,
+            config_yaml=(
+                _read_validation_yaml_or_error(config_path)
+                if config_path is not None
+                else None
+            ),
+        ),
         lambda instance: service_reload_config(instance, config_path=config_path),
+        allow_local=False,
+        command_name="reload-config",
     )
     status = "updated" if result.updated else "validated"
-    click.echo(f"Config {status}: {result.config_path}")
+    if remote:
+        click.echo(f"Config {status} on server.")
+    else:
+        click.echo(f"Config {status}: {result.config_path}")
     for warning in result.warnings:
         click.secho(f"  Warning: {warning}", fg="yellow")
 
@@ -279,29 +263,4 @@ def add_decision_policy_cmd(
         for warning in result.warnings:
             click.secho(f"  Warning: {warning}", fg="yellow")
         return
-
-    instance = CruxibleInstance.load()
-    config = instance.load_config()
-    for existing in config.decision_policies:
-        if existing.name == name:
-            raise ConfigError(f"Decision policy '{name}' already exists in config")
-
-    config.decision_policies.append(
-        DecisionPolicySchema(
-            name=name,
-            description=description,
-            rationale=rationale,
-            applies_to=cast(contracts.DecisionPolicyAppliesTo, applies_to),
-            relationship_type=relationship_type,
-            effect=cast(contracts.DecisionPolicyEffect, effect),
-            query_name=query_name,
-            workflow_name=workflow_name,
-            match=match_dict,
-            expires_at=expires_at,
-        )
-    )
-    warnings = validate_config(config)
-    instance.save_config(config)
-    click.echo(f"Decision policy '{name}' added to config.")
-    for warning in warnings:
-        click.secho(f"  Warning: {warning}", fg="yellow")
+    raise click.UsageError("Local mutation disabled for add-decision-policy; use server mode.")

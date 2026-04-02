@@ -390,10 +390,11 @@ def test_stats_inspect_and_reload_use_expected_routes():
     assert inspect_result.found is True
     assert "/api/v1/inst_123/inspect/entity/Vehicle/V-1" in captured["path"]
 
-    reload_result = client.reload_config("inst_123", config_path="/srv/project/config.yaml")
+    reload_result = client.reload_config("inst_123", config_yaml='name: governed\nversion: "1.0"\n')
     assert reload_result.updated is True
     assert captured["path"].endswith("/api/v1/inst_123/config/reload")
-    assert captured["payload"]["config_path"] == "/srv/project/config.yaml"
+    assert captured["payload"]["config_path"] is None
+    assert captured["payload"]["config_yaml"] == 'name: governed\nversion: "1.0"\n'
 
 
 def test_feedback_analysis_and_policy_routes():

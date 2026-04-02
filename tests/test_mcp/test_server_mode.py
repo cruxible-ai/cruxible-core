@@ -149,3 +149,22 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
         input_payload={"id": "1"},
     )
     assert result.committed_snapshot_id == "snap_2"
+
+
+@pytest.mark.parametrize(
+    ("fn", "args", "label"),
+    [
+        (handlers.handle_init, ("./project", None, "name: demo", None), "cruxible_init"),
+        (handlers.handle_world_fork, ("file:///tmp/release", "./fork"), "cruxible_world_fork"),
+        (handlers.handle_workflow_run, ("inst_123", "wf", {"id": "1"}), "cruxible_run_workflow"),
+    ],
+)
+def test_local_mutation_handlers_require_server(
+    monkeypatch: pytest.MonkeyPatch,
+    fn,
+    args,
+    label: str,
+):
+    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    with pytest.raises(ConfigError, match=f"{label}"):
+        fn(*args)

@@ -97,7 +97,8 @@ def call_tool_expect_error(server, name: str, args: dict[str, Any]) -> str:
 
 
 @pytest.fixture
-def server():
+def server(governed_client):
+    del governed_client
     return create_server()
 
 
@@ -112,12 +113,12 @@ def group_project(tmp_path):
 @pytest.fixture
 def instance_id(server, group_project):
     """Initialize instance and add entities for group tests."""
-    iid = str(group_project)
-    call_tool(
+    result = call_tool(
         server,
         "cruxible_init",
-        {"root_dir": iid, "config_path": "config.yaml"},
+        {"root_dir": str(group_project), "config_path": "config.yaml"},
     )
+    iid = result["instance_id"]
     # Add entities
     call_tool(
         server,

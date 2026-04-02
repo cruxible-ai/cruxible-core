@@ -14,8 +14,9 @@ from cruxible_core.cli.commands._common import (
     _dispatch_cli,
     _dispatch_cli_instance,
     _emit_json,
+    _get_client,
     _print_apply_previews,
-    _read_text_or_error,
+    _remember_server_context,
     _resolve_workflow_input,
     json_option,
 )
@@ -103,33 +104,42 @@ def _load_preview_file(preview_path: Path) -> dict[str, Any]:
 
 @click.command()
 @click.option("--config", "config_path", required=True, help="Path to config YAML file.")
-@click.option("--root-dir", default=None, help="Root directory for the instance.")
+@click.option(
+    "--root-dir",
+    default=None,
+    help="Workspace root for config/artifact provenance (defaults to current directory).",
+)
 @click.option("--data-dir", default=None, help="Directory for data files.")
 @handle_errors
 def init(config_path: str, root_dir: str | None, data_dir: str | None) -> None:
-    """Initialize a new .cruxible/ instance in the current directory."""
-    if _common._get_client() is not None and root_dir is None:
-        raise click.UsageError("--root-dir is required in server mode")
+    """Initialize a new instance or governed server-backed workspace."""
+    client = _common._get_client()
+    effective_root_dir = root_dir
+    if client is not None and effective_root_dir is None:
+        effective_root_dir = str(Path.cwd())
     result = _dispatch_cli(
         lambda client: client.init(
-            root_dir=root_dir,
-            config_yaml=_read_text_or_error(config_path),
+            root_dir=effective_root_dir or str(Path.cwd()),
+            config_yaml=_common._read_validation_yaml_or_error(config_path),
             data_dir=data_dir,
         ),
         lambda: service_init(
-            Path(root_dir) if root_dir is not None else Path.cwd(),
+            Path(effective_root_dir) if effective_root_dir is not None else Path.cwd(),
             config_path=config_path,
             data_dir=data_dir,
         ),
+        allow_local=False,
+        command_name="init",
     )
     if isinstance(result, contracts.InitResult):
+        _remember_server_context(instance_id=result.instance_id)
         click.echo(f"Instance {result.status}.")
         click.echo(f"Instance ID: {result.instance_id}")
         for warning in result.warnings:
             click.secho(f"  Warning: {warning}", fg="yellow")
         return
 
-    root = Path(root_dir) if root_dir is not None else Path.cwd()
+    root = Path(effective_root_dir) if effective_root_dir is not None else Path.cwd()
     click.echo(f"Initialized .cruxible/ in {root}")
     for warning in result.warnings:
         click.secho(f"  Warning: {warning}", fg="yellow")
@@ -172,11 +182,15 @@ def validate(config_path: str) -> None:
 @handle_errors
 def lock_cmd() -> None:
     """Generate a workflow lock file for the current instance config."""
+    remote = _get_client() is not None
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.workflow_lock(instance_id),
         service_lock,
     )
-    click.echo(f"Wrote lock file to {result.lock_path}")
+    if remote:
+        click.echo("Workflow lock updated on server.")
+    else:
+        click.echo(f"Wrote lock file to {result.lock_path}")
     click.echo(
         f"  digest={result.config_digest} providers={result.providers_locked} "
         f"artifacts={result.artifacts_locked}"
@@ -225,6 +239,12 @@ def plan_cmd(workflow_name: str, input_text: str | None, input_file: str | None)
     type=click.Path(dir_okay=False, path_type=Path),
     help="Save preview state to a JSON file for use with apply --preview-file.",
 )
+@click.option(
+    "--apply/--no-apply",
+    "apply_now",
+    default=False,
+    help="Immediately apply a canonical workflow after preview verification.",
+)
 @json_option
 @handle_errors
 def run_cmd(
@@ -232,6 +252,7 @@ def run_cmd(
     input_text: str | None,
     input_file: str | None,
     save_preview: Path | None,
+    apply_now: bool,
     output_json: bool,
 ) -> None:
     """Execute a workflow for the current instance.
@@ -246,6 +267,8 @@ def run_cmd(
             input_payload=payload,
         ),
         lambda instance: service_run(instance, workflow_name, payload),
+        allow_local=False,
+        command_name="run",
     )
     if save_preview is not None:
         if not result.canonical or not result.apply_digest:
@@ -261,6 +284,55 @@ def run_cmd(
             head_snapshot_id=result.head_snapshot_id,
             apply_previews=result.apply_previews,
         )
+    if apply_now:
+        if not result.canonical or not result.apply_digest:
+            raise click.ClickException(
+                f"Workflow '{result.workflow}' did not produce applyable canonical preview state; "
+                "use 'cruxible propose' for governed relationship workflows."
+            )
+        applied = _dispatch_cli_instance(
+            lambda client, instance_id: client.workflow_apply(
+                instance_id,
+                workflow_name=result.workflow,
+                expected_apply_digest=result.apply_digest,
+                expected_head_snapshot_id=result.head_snapshot_id,
+                input_payload=payload,
+            ),
+            lambda instance: service_apply_workflow(
+                instance,
+                result.workflow,
+                payload,
+                expected_apply_digest=result.apply_digest or "",
+                expected_head_snapshot_id=result.head_snapshot_id,
+            ),
+            allow_local=False,
+            command_name="run --apply",
+        )
+        if output_json:
+            _emit_json(
+                {
+                    "workflow": applied.workflow,
+                    "mode": "applied",
+                    "preview_receipt_id": result.receipt_id,
+                    "apply_digest": result.apply_digest,
+                    "head_snapshot_id": result.head_snapshot_id,
+                    "committed_snapshot_id": applied.committed_snapshot_id,
+                    "receipt_id": applied.receipt_id,
+                    "trace_ids": applied.trace_ids or [],
+                    "output": applied.output,
+                }
+            )
+            return
+        click.echo(f"Workflow {applied.workflow} applied.")
+        if applied.committed_snapshot_id:
+            click.echo(f"Committed snapshot: {applied.committed_snapshot_id}")
+        _print_apply_previews(applied.apply_previews)
+        click.echo(f"Preview receipt ID: {result.receipt_id}")
+        click.echo(f"Apply receipt ID: {applied.receipt_id}")
+        if applied.trace_ids:
+            click.echo(f"Trace IDs: {', '.join(applied.trace_ids)}")
+        click.echo(json.dumps(applied.output, indent=2, sort_keys=True))
+        return
     if output_json:
         _emit_json({
             "workflow": result.workflow,
@@ -363,6 +435,8 @@ def apply_cmd(
             expected_apply_digest=apply_digest,
             expected_head_snapshot_id=head_snapshot,
         ),
+        allow_local=False,
+        command_name="apply",
     )
     if output_json:
         _emit_json({
@@ -427,6 +501,8 @@ def propose_cmd(
             input_payload=payload,
         ),
         lambda instance: service_propose_workflow(instance, workflow_name, payload),
+        allow_local=False,
+        command_name="propose",
     )
 
     if output_json:
@@ -434,10 +510,23 @@ def propose_cmd(
             "workflow": result.workflow,
             "group_id": result.group_id,
             "status": result.group_status,
+            "suppressed": result.suppressed,
             "receipt_id": result.receipt_id,
             "trace_ids": result.trace_ids or [],
             "output": result.output,
         })
+        return
+
+    if result.group_id is None or result.suppressed:
+        click.echo(f"Workflow {result.workflow} produced no reviewable group.")
+        click.echo(
+            "Check whether prerequisite canonical or previously approved governed "
+            "relationships exist before running this proposal workflow."
+        )
+        click.echo(f"Receipt ID: {result.receipt_id}")
+        if result.trace_ids:
+            click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
+        click.echo(json.dumps(result.output, indent=2, sort_keys=True))
         return
 
     click.echo(f"Workflow {result.workflow} proposed group {result.group_id}.")
@@ -461,6 +550,8 @@ def snapshot_create_cmd(label: str | None) -> None:
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.create_snapshot(instance_id, label=label),
         lambda instance: service_create_snapshot(instance, label=label),
+        allow_local=False,
+        command_name="snapshot create",
     )
 
     click.echo(f"Created snapshot {result.snapshot.snapshot_id}")
@@ -500,8 +591,11 @@ def fork_cmd(snapshot_id: str, root_dir: str) -> None:
             root_dir=root_dir,
         ),
         lambda instance: service_fork_snapshot(instance, snapshot_id, root_dir),
+        allow_local=False,
+        command_name="fork",
     )
     if isinstance(result, contracts.ForkSnapshotResult):
+        _remember_server_context(instance_id=result.instance_id)
         click.echo(
             f"Forked snapshot {result.snapshot.snapshot_id} into instance {result.instance_id}"
         )
@@ -520,6 +614,8 @@ def ingest(mapping: str, file_path: str) -> None:
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.ingest(instance_id, mapping, file_path=file_path),
         lambda instance: service_ingest(instance, mapping, file_path=file_path),
+        allow_local=False,
+        command_name="ingest",
     )
 
     parts = [f"{result.records_ingested} added"]

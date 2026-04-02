@@ -66,15 +66,18 @@ def call_tool_expect_error(server, name: str, args: dict[str, Any]) -> str:
 
 
 @pytest.fixture
-def server():
+def server(governed_client):
+    del governed_client
     return create_server()
 
 
 @pytest.fixture
 def instance_id(server, tmp_path):
     (tmp_path / "config.yaml").write_text(CONFIG_YAML)
-    iid = str(tmp_path)
-    call_tool(server, "cruxible_init", {"root_dir": iid, "config_path": "config.yaml"})
+    result = call_tool(
+        server, "cruxible_init", {"root_dir": str(tmp_path), "config_path": "config.yaml"},
+    )
+    iid = result["instance_id"]
     call_tool(
         server,
         "cruxible_add_entity",

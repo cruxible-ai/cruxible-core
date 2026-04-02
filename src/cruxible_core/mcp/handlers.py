@@ -7,9 +7,15 @@ configured. In local mode, they forward to the shared runtime local facade.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TypeVar
 
+import yaml
+
 from cruxible_client import CruxibleClient, contracts
+from cruxible_core.config.composer import compose_configs
+from cruxible_core.config.loader import load_config
+from cruxible_core.errors import ConfigError
 from cruxible_core.runtime import local_api
 from cruxible_core.runtime.instance import CruxibleInstance  # noqa: F401
 from cruxible_core.runtime.instance_manager import (
@@ -64,12 +70,46 @@ def _get_client() -> CruxibleClient | None:
 def _dispatch_remote_or_local(
     remote_call: Callable[[CruxibleClient], ResultT],
     local_call: Callable[[], ResultT],
+    *,
+    allow_local: bool = True,
+    operation_name: str | None = None,
 ) -> ResultT:
     """Route a handler to the configured HTTP client when server mode is enabled."""
     client = _get_client()
     if client is not None:
         return remote_call(client)
+    if not allow_local:
+        raise ConfigError(
+            f"Local mutation disabled for {operation_name or 'this operation'}; "
+            "configure a server."
+        )
     return local_call()
+
+
+def _config_yaml_for_upload(config_path: str, *, root_dir: str | None = None) -> str:
+    """Read a config file and compose overlays before uploading to the daemon."""
+    path = Path(config_path)
+    if not path.is_absolute() and root_dir is not None:
+        path = Path(root_dir) / path
+    config = load_config(path)
+    if config.extends is None:
+        return path.read_text()
+
+    base_path = Path(config.extends)
+    if not base_path.is_absolute():
+        base_path = path.resolve().parent / base_path
+    if not base_path.exists():
+        raise ConfigError(f"Base config for extends not found: {base_path}")
+
+    base = load_config(base_path)
+    composed = compose_configs(
+        base,
+        config,
+        base_config_path=base_path,
+        overlay_config_path=path.resolve(),
+    )
+    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
+    return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
 
 
 def handle_init(
@@ -79,14 +119,19 @@ def handle_init(
     data_dir: str | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
+    uploaded_yaml = config_yaml
+    if uploaded_yaml is None and config_path is not None:
+        uploaded_yaml = _config_yaml_for_upload(config_path, root_dir=root_dir)
     return _dispatch_remote_or_local(
         lambda client: client.init(
             root_dir=root_dir,
-            config_path=config_path,
-            config_yaml=config_yaml,
+            config_path=None,
+            config_yaml=uploaded_yaml,
             data_dir=data_dir,
         ),
         lambda: local_api._handle_init_local(root_dir, config_path, config_yaml, data_dir),
+        allow_local=False,
+        operation_name="cruxible_init",
     )
 
 
@@ -95,8 +140,11 @@ def handle_validate(
     config_yaml: str | None = None,
 ) -> contracts.ValidateResult:
     """Validate a config file or inline YAML string."""
+    uploaded_yaml = config_yaml
+    if uploaded_yaml is None and config_path is not None:
+        uploaded_yaml = _config_yaml_for_upload(config_path)
     return _dispatch_remote_or_local(
-        lambda client: client.validate(config_path=config_path, config_yaml=config_yaml),
+        lambda client: client.validate(config_path=None, config_yaml=uploaded_yaml),
         lambda: local_api._handle_validate_local(config_path, config_yaml),
     )
 
@@ -105,10 +153,12 @@ def handle_world_fork(
     transport_ref: str,
     root_dir: str,
 ) -> contracts.WorldForkResult:
-    """Create a new local fork from a published world release."""
+    """Create a new governed fork from a published world release."""
     return _dispatch_remote_or_local(
         lambda client: client.world_fork(transport_ref=transport_ref, root_dir=root_dir),
         lambda: local_api._handle_world_fork_local(transport_ref, root_dir),
+        allow_local=False,
+        operation_name="cruxible_world_fork",
     )
 
 
@@ -157,6 +207,8 @@ def handle_workflow_run(
             workflow_name,
             input_payload,
         ),
+        allow_local=False,
+        operation_name="cruxible_run_workflow",
     )
 
 
@@ -184,6 +236,8 @@ def handle_workflow_apply(
             expected_head_snapshot_id,
             input_payload,
         ),
+        allow_local=False,
+        operation_name="cruxible_apply_workflow",
     )
 
 
@@ -204,6 +258,8 @@ def handle_propose_workflow(
             workflow_name,
             input_payload,
         ),
+        allow_local=False,
+        operation_name="cruxible_propose_workflow",
     )
 
 
@@ -236,6 +292,8 @@ def handle_ingest(
             data_ndjson=data_ndjson,
             upload_id=upload_id,
         ),
+        allow_local=False,
+        operation_name="cruxible_ingest",
     )
 
 
@@ -313,6 +371,8 @@ def handle_feedback(
             corrections=corrections,
             group_override=group_override,
         ),
+        allow_local=False,
+        operation_name="cruxible_feedback",
     )
 
 
@@ -438,6 +498,8 @@ def handle_feedback_batch(
     return _dispatch_remote_or_local(
         lambda client: client.feedback_batch(instance_id, items=items, source=source),
         lambda: local_api._handle_feedback_batch_local(instance_id, items, source=source),
+        allow_local=False,
+        operation_name="cruxible_feedback_batch",
     )
 
 
@@ -479,6 +541,8 @@ def handle_outcome(
             outcome_profile_key=outcome_profile_key,
             detail=detail,
         ),
+        allow_local=False,
+        operation_name="cruxible_outcome",
     )
 
 
@@ -609,6 +673,8 @@ def handle_add_relationship(
     return _dispatch_remote_or_local(
         lambda client: client.add_relationships(instance_id, relationships),
         lambda: local_api._handle_add_relationship_local(instance_id, relationships),
+        allow_local=False,
+        operation_name="cruxible_add_relationship",
     )
 
 
@@ -620,6 +686,8 @@ def handle_add_entity(
     return _dispatch_remote_or_local(
         lambda client: client.add_entities(instance_id, entities),
         lambda: local_api._handle_add_entity_local(instance_id, entities),
+        allow_local=False,
+        operation_name="cruxible_add_entity",
     )
 
 
@@ -646,6 +714,8 @@ def handle_add_constraint(
             severity,
             description,
         ),
+        allow_local=False,
+        operation_name="cruxible_add_constraint",
     )
 
 
@@ -690,6 +760,8 @@ def handle_add_decision_policy(
             workflow_name=workflow_name,
             expires_at=expires_at,
         ),
+        allow_local=False,
+        operation_name="cruxible_add_decision_policy",
     )
 
 
@@ -772,6 +844,8 @@ def handle_propose_group(
             proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         ),
+        allow_local=False,
+        operation_name="cruxible_propose_group",
     )
 
 
@@ -798,6 +872,8 @@ def handle_resolve_group(
             rationale=rationale,
             resolved_by=resolved_by,
         ),
+        allow_local=False,
+        operation_name="cruxible_resolve_group",
     )
 
 
@@ -821,6 +897,8 @@ def handle_update_trust_status(
             trust_status,
             reason,
         ),
+        allow_local=False,
+        operation_name="cruxible_update_trust_status",
     )
 
 
@@ -904,6 +982,8 @@ def handle_world_publish(
             release_id,
             compatibility,
         ),
+        allow_local=False,
+        operation_name="cruxible_world_publish",
     )
 
 
@@ -937,4 +1017,6 @@ def handle_world_pull_apply(
             instance_id,
             expected_apply_digest,
         ),
+        allow_local=False,
+        operation_name="cruxible_world_pull_apply",
     )

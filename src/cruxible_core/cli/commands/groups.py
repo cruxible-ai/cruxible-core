@@ -142,6 +142,8 @@ def group_propose(
             analysis_state=state,
             integrations_used=list(integration) if integration else None,
         ),
+        allow_local=False,
+        command_name="group propose",
     )
 
     click.echo(f"Group {result.group_id} proposed.")
@@ -185,6 +187,8 @@ def group_resolve(group_id: str, action: str, rationale: str, source: str, outpu
             rationale=rationale,
             resolved_by=source,  # type: ignore[arg-type]
         ),
+        allow_local=False,
+        command_name="group resolve",
     )
 
     if output_json:
@@ -235,6 +239,8 @@ def group_trust(resolution_id: str, trust_status: str, reason: str) -> None:
             trust_status,  # type: ignore[arg-type]
             reason=reason,
         ),
+        allow_local=False,
+        command_name="group trust",
     )
     click.echo(f"Resolution {resolution_id} trust status set to '{trust_status}'.")
 

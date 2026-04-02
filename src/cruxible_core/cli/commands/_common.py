@@ -12,6 +12,12 @@ import yaml
 from rich.console import Console
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_core.cli.context import (
+    CliContextState,
+    clear_cli_context,
+    load_cli_context,
+    save_cli_context,
+)
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.composer import compose_configs
 from cruxible_core.config.loader import load_config
@@ -64,23 +70,81 @@ def _get_client() -> CruxibleClient | None:
     return client
 
 
+def _current_cli_context() -> CliContextState:
+    obj = _root_ctx_obj()
+    return CliContextState(
+        server_url=obj.get("server_url"),
+        server_socket=obj.get("server_socket"),
+        instance_id=obj.get("instance_id"),
+    )
+
+
+def _remember_server_context(*, instance_id: str | None = None) -> None:
+    """Persist the current governed transport and selected instance."""
+    state = _current_cli_context()
+    if not state.server_url and not state.server_socket:
+        return
+    save_cli_context(
+        CliContextState(
+            server_url=state.server_url,
+            server_socket=state.server_socket,
+            instance_id=instance_id if instance_id is not None else state.instance_id,
+        )
+    )
+
+
+def _persist_cli_context(
+    *,
+    server_url: str | None,
+    server_socket: str | None,
+    instance_id: str | None,
+) -> None:
+    save_cli_context(
+        CliContextState(
+            server_url=server_url,
+            server_socket=server_socket,
+            instance_id=instance_id,
+        )
+    )
+
+
+def _clear_persisted_cli_context() -> None:
+    clear_cli_context()
+
+
+def _load_persisted_cli_context() -> CliContextState:
+    return load_cli_context()
+
+
 def _dispatch_cli(
     remote_call: Callable[[CruxibleClient], ResultT],
     local_call: Callable[[], ResultT],
+    *,
+    allow_local: bool = True,
+    command_name: str | None = None,
 ) -> ResultT:
     client = _get_client()
     if client is not None:
         return remote_call(client)
+    if not allow_local:
+        raise click.UsageError(
+            f"Local mutation disabled for {command_name or 'this command'}; use server mode."
+        )
     return local_call()
 
 
 def _dispatch_cli_instance(
     remote_call: Callable[[CruxibleClient, str], ResultT],
     local_call: Callable[[CruxibleInstance], ResultT],
+    *,
+    allow_local: bool = True,
+    command_name: str | None = None,
 ) -> ResultT:
     return _dispatch_cli(
         lambda client: remote_call(client, _require_instance_id()),
         lambda: local_call(CruxibleInstance.load()),
+        allow_local=allow_local,
+        command_name=command_name,
     )
 
 

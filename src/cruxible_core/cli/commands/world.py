@@ -5,7 +5,11 @@ from __future__ import annotations
 import click
 
 from cruxible_client import contracts
-from cruxible_core.cli.commands._common import _dispatch_cli, _dispatch_cli_instance
+from cruxible_core.cli.commands._common import (
+    _dispatch_cli,
+    _dispatch_cli_instance,
+    _remember_server_context,
+)
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.service import (
     service_fork_world,
@@ -55,6 +59,8 @@ def world_publish_cmd(
             release_id=release_id,
             compatibility=compatibility,
         ),
+        allow_local=False,
+        command_name="world publish",
     )
     click.echo(f"Published {result.manifest.world_id}:{result.manifest.release_id}")
     click.echo(f"  snapshot={result.manifest.snapshot_id}")
@@ -70,10 +76,14 @@ def world_fork_cmd(transport_ref: str, root_dir: str) -> None:
     result = _dispatch_cli(
         lambda client: client.world_fork(transport_ref=transport_ref, root_dir=root_dir),
         lambda: service_fork_world(transport_ref=transport_ref, root_dir=root_dir),
+        allow_local=False,
+        command_name="world fork",
     )
     instance_id = result.instance_id if isinstance(result, contracts.WorldForkResult) else str(
         result.instance.get_root_path()
     )
+    if isinstance(result, contracts.WorldForkResult):
+        _remember_server_context(instance_id=result.instance_id)
     click.echo(f"Forked {result.manifest.world_id}:{result.manifest.release_id}")
     click.echo(f"Instance ID: {instance_id}")
 
@@ -130,6 +140,8 @@ def world_pull_apply_cmd(apply_digest: str) -> None:
             expected_apply_digest=apply_digest,
         ),
         lambda instance: service_pull_world_apply(instance, expected_apply_digest=apply_digest),
+        allow_local=False,
+        command_name="world pull-apply",
     )
     click.echo(f"Pulled release {result.release_id}")
     click.echo(f"Pre-pull snapshot: {result.pre_pull_snapshot_id}")

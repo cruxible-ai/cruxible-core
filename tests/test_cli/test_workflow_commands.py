@@ -13,6 +13,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
+from cruxible_core.service import service_create_snapshot
 
 
 @pytest.fixture
@@ -27,6 +28,17 @@ def _chdir_run(runner: CliRunner, directory: Path, args: list[str]) -> object:
         return runner.invoke(cli, args)
     finally:
         os.chdir(original)
+
+
+def _assert_local_mutation_disabled(
+    runner: CliRunner,
+    directory: Path,
+    args: list[str],
+    label: str,
+) -> None:
+    result = _chdir_run(runner, directory, args)
+    assert result.exit_code == 2
+    assert f"Local mutation disabled for {label}" in result.output
 
 
 @pytest.fixture
@@ -128,15 +140,12 @@ class TestWorkflowCli:
         workflow_input_file: Path,
     ) -> None:
         _chdir_run(runner, workflow_project.root, ["lock"])
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             workflow_project.root,
             ["run", "--workflow", "evaluate_promo", "--input-file", str(workflow_input_file)],
+            "run",
         )
-        assert result.exit_code == 0
-        assert "Receipt ID:" in result.output
-        assert "Trace IDs:" in result.output
-        assert '"decision": "approve"' in result.output
 
     def test_run_supports_inline_input(
         self,
@@ -144,7 +153,7 @@ class TestWorkflowCli:
         workflow_project: CruxibleInstance,
     ) -> None:
         _chdir_run(runner, workflow_project.root, ["lock"])
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             workflow_project.root,
             [
@@ -154,9 +163,8 @@ class TestWorkflowCli:
                 "--input",
                 '{"sku":"SKU-123","start_date":"2026-03-01","end_date":"2026-03-07"}',
             ],
+            "run",
         )
-        assert result.exit_code == 0
-        assert '"decision": "approve"' in result.output
 
     def test_run_uses_empty_input_by_default_for_empty_contract(
         self,
@@ -164,13 +172,12 @@ class TestWorkflowCli:
         canonical_workflow_instance: CruxibleInstance,
     ) -> None:
         _chdir_run(runner, canonical_workflow_instance.root, ["lock"])
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             canonical_workflow_instance.root,
             ["run", "--workflow", "build_reference"],
+            "run",
         )
-        assert result.exit_code == 0
-        assert "Apply digest:" in result.output
 
     def test_run_reports_clear_error_for_missing_required_input(
         self,
@@ -178,14 +185,12 @@ class TestWorkflowCli:
         workflow_project: CruxibleInstance,
     ) -> None:
         _chdir_run(runner, workflow_project.root, ["lock"])
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             workflow_project.root,
             ["run", "--workflow", "evaluate_promo"],
+            "run",
         )
-        assert result.exit_code == 1
-        assert "empty input payload provided" in result.output
-        assert "--input or --input-file" in result.output
 
     def test_test_executes_config_defined_tests(
         self,
@@ -205,7 +210,7 @@ class TestWorkflowCli:
         proposal_input_file: Path,
     ) -> None:
         _chdir_run(runner, proposal_workflow_project.root, ["lock"])
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             proposal_workflow_project.root,
             [
@@ -215,10 +220,8 @@ class TestWorkflowCli:
                 "--input-file",
                 str(proposal_input_file),
             ],
+            "propose",
         )
-        assert result.exit_code == 0
-        assert "proposed group GRP-" in result.output
-        assert "Group status: pending_review" in result.output
 
     def test_snapshot_create_list_and_fork(
         self,
@@ -226,31 +229,28 @@ class TestWorkflowCli:
         proposal_workflow_project: CruxibleInstance,
         tmp_path: Path,
     ) -> None:
-        create = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             proposal_workflow_project.root,
             ["snapshot", "create", "--label", "baseline"],
+            "snapshot create",
         )
-        assert create.exit_code == 0
-        assert "Created snapshot snap_" in create.output
-        snapshot_id = next(
-            line.split()[2]
-            for line in create.output.splitlines()
-            if line.startswith("Created snapshot ")
-        )
+        snapshot_id = service_create_snapshot(
+            proposal_workflow_project,
+            label="baseline",
+        ).snapshot.snapshot_id
 
         listed = _chdir_run(runner, proposal_workflow_project.root, ["snapshot", "list"])
         assert listed.exit_code == 0
         assert snapshot_id in listed.output
 
         fork_root = tmp_path / "forked-cli"
-        forked = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             proposal_workflow_project.root,
             ["fork", "--snapshot", snapshot_id, "--root-dir", str(fork_root)],
+            "fork",
         )
-        assert forked.exit_code == 0
-        assert str(fork_root) in forked.output
 
     def test_apply_commits_canonical_workflow(
         self,
@@ -259,19 +259,13 @@ class TestWorkflowCli:
         canonical_input_file: Path,
     ) -> None:
         _chdir_run(runner, canonical_workflow_instance.root, ["lock"])
-        preview = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             canonical_workflow_instance.root,
             ["run", "--workflow", "build_reference", "--input-file", str(canonical_input_file)],
+            "run",
         )
-        assert preview.exit_code == 0
-        digest = next(
-            line.split("Apply digest: ", 1)[1]
-            for line in preview.output.splitlines()
-            if line.startswith("Apply digest: ")
-        )
-
-        applied = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             canonical_workflow_instance.root,
             [
@@ -281,11 +275,10 @@ class TestWorkflowCli:
                 "--input-file",
                 str(canonical_input_file),
                 "--apply-digest",
-                digest,
+                "sha256:test",
             ],
+            "apply",
         )
-        assert applied.exit_code == 0
-        assert "Committed snapshot: snap_" in applied.output
 
     def test_run_save_preview_writes_file(
         self,
@@ -306,17 +299,9 @@ class TestWorkflowCli:
                 str(preview_file),
             ],
         )
-
-        assert result.exit_code == 0
-        assert preview_file.exists()
-        payload = json.loads(preview_file.read_text())
-        assert payload["kind"] == "workflow_preview"
-        assert payload["version"] == 1
-        assert payload["workflow"] == "build_reference"
-        assert payload["input"] == {}
-        assert payload["apply_digest"].startswith("sha256:")
-        assert "head_snapshot_id" in payload
-        assert "apply_previews" in payload
+        assert result.exit_code == 2
+        assert "Local mutation disabled for run" in result.output
+        assert not preview_file.exists()
 
     def test_run_save_preview_non_canonical_errors(
         self,
@@ -342,7 +327,7 @@ class TestWorkflowCli:
         )
 
         assert result.exit_code != 0
-        assert "did not produce preview state" in result.output
+        assert "Local mutation disabled for run" in result.output
         assert not preview_file.exists()
 
     def test_apply_from_preview_file(
@@ -350,35 +335,26 @@ class TestWorkflowCli:
         runner: CliRunner,
         canonical_workflow_instance: CruxibleInstance,
     ) -> None:
-        _chdir_run(runner, canonical_workflow_instance.root, ["lock"])
         preview_file = canonical_workflow_instance.root / "preview.json"
-
-        preview = _chdir_run(
-            runner,
-            canonical_workflow_instance.root,
-            [
-                "run",
-                "--workflow",
-                "build_reference",
-                "--save-preview",
-                str(preview_file),
-            ],
+        preview_file.write_text(
+            json.dumps(
+                {
+                    "kind": "workflow_preview",
+                    "version": 1,
+                    "workflow": "build_reference",
+                    "input": {},
+                    "apply_digest": "sha256:test",
+                    "head_snapshot_id": "snap_test",
+                }
+            )
         )
-        assert preview.exit_code == 0
-
         applied = _chdir_run(
             runner,
             canonical_workflow_instance.root,
             ["apply", "--preview-file", str(preview_file)],
         )
-        assert applied.exit_code == 0
-        assert "Committed snapshot: snap_" in applied.output
-
-        canonical_workflow_instance.invalidate_graph_cache()
-        graph = canonical_workflow_instance.load_graph()
-        assert graph.entity_count("Vendor") == 1
-        assert graph.entity_count("Product") == 2
-        assert graph.entity_count("Vulnerability") == 2
+        assert applied.exit_code == 2
+        assert "Local mutation disabled for apply" in applied.output
 
     @pytest.mark.parametrize(
         ("extra_args", "label"),
