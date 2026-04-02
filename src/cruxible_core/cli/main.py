@@ -3,13 +3,42 @@
 from __future__ import annotations
 
 import functools
+import os
 import sys
 from typing import Any
 
 import click
 
+from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.server.config import resolve_server_settings
+
+
+def _resolve_cli_transport(
+    *,
+    server_url: str | None,
+    server_socket: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve transport settings atomically across flags, env, and stored context."""
+    stored = load_cli_context()
+    env_server_url = os.environ.get("CRUXIBLE_SERVER_URL")
+    env_server_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
+
+    if server_url is not None or server_socket is not None:
+        return server_url, server_socket
+    if env_server_url is not None or env_server_socket is not None:
+        return env_server_url, env_server_socket
+    return stored.server_url, stored.server_socket
+
+
+def _resolve_cli_instance_id(instance_id: str | None) -> str | None:
+    """Resolve the selected governed instance ID."""
+    if instance_id is not None:
+        return instance_id
+    env_instance_id = os.environ.get("CRUXIBLE_INSTANCE_ID")
+    if env_instance_id is not None:
+        return env_instance_id
+    return load_cli_context().instance_id
 
 
 def handle_errors(f: Any) -> Any:
@@ -49,7 +78,15 @@ def cli(
 ) -> None:
     """Cruxible — deterministic decision engine with receipts."""
     try:
-        settings = resolve_server_settings(server_url=server_url, server_socket=server_socket)
+        resolved_url, resolved_socket = _resolve_cli_transport(
+            server_url=server_url,
+            server_socket=server_socket,
+        )
+        resolved_instance_id = _resolve_cli_instance_id(instance_id)
+        settings = resolve_server_settings(
+            server_url=resolved_url,
+            server_socket=resolved_socket,
+        )
     except ConfigError as exc:
         raise click.UsageError(str(exc)) from exc
 
@@ -58,7 +95,7 @@ def cli(
         {
             "server_url": settings.server_url,
             "server_socket": settings.server_socket,
-            "instance_id": instance_id,
+            "instance_id": resolved_instance_id,
             "require_server": settings.require_server,
         }
     )
@@ -73,6 +110,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     analyze_feedback_cmd,
     analyze_outcomes_cmd,
     apply_cmd,
+    connect_group,
     evaluate,
     explain,
     export_group,
@@ -107,6 +145,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
 
 cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]
+cli.add_command(connect_group, "context")  # type: ignore[has-type]
 cli.add_command(lock_cmd)  # type: ignore[has-type]
 cli.add_command(world_group, "world")  # type: ignore[has-type]
 cli.add_command(plan_cmd)  # type: ignore[has-type]

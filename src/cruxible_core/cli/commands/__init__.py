@@ -1,5 +1,8 @@
 """CLI command registration — re-exports all commands from domain submodules."""
 
+from cruxible_core.cli.commands.context import (
+    connect_group,
+)
 from cruxible_core.cli.commands.feedback import (
     feedback_batch_cmd,
     feedback_cmd,
@@ -58,6 +61,7 @@ __all__ = [
     "analyze_feedback_cmd",
     "analyze_outcomes_cmd",
     "apply_cmd",
+    "connect_group",
     "evaluate",
     "explain",
     "export_group",

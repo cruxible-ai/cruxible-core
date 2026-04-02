@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,11 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+
 def test_cli_fails_when_server_required_without_endpoint(monkeypatch, runner: CliRunner):
     monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
     result = runner.invoke(cli, ["query", "--query", "parts_for_vehicle"])
@@ -29,6 +35,7 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
     runner: CliRunner,
     tmp_path: Path,
 ):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
     config_path = tmp_path / "config.yaml"
     config_path.write_text(CAR_PARTS_YAML)
     captured: dict[str, object] = {}
@@ -60,6 +67,210 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
     assert captured["config_path"] is None
     assert isinstance(captured["config_yaml"], str)
     assert "Instance ID: inst_abc123" in result.output
+
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0
+    assert json.loads(shown.output) == {
+        "instance_id": "inst_abc123",
+        "server_url": "http://server",
+    }
+
+
+def test_server_mode_init_defaults_root_dir_to_cwd(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CAR_PARTS_YAML)
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None):
+            captured["root_dir"] = root_dir
+            return contracts.InitResult(instance_id="inst_abc123", status="initialized")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "init",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["root_dir"] == str(tmp_path)
+
+
+def test_context_commands_persist_and_show_governed_context(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    connect = runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+        ],
+    )
+    assert connect.exit_code == 0
+    assert "Remembered governed CLI context." in connect.output
+
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0
+    payload = json.loads(shown.output)
+    assert payload == {
+        "instance_id": "inst_123",
+        "server_url": "http://server",
+    }
+
+    used = runner.invoke(cli, ["context", "use", "inst_456"])
+    assert used.exit_code == 0
+    assert "Remembered instance: inst_456" in used.output
+
+    cleared = runner.invoke(cli, ["context", "clear"])
+    assert cleared.exit_code == 0
+    assert "Cleared remembered CLI context." in cleared.output
+
+
+def test_cli_uses_persisted_context_for_server_calls(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+        ],
+    )
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def __init__(self, *, base_url=None, socket_path=None, token=None):
+            captured["base_url"] = base_url
+            captured["socket_path"] = socket_path
+
+        def stats(self, instance_id):
+            captured["instance_id"] = instance_id
+            return contracts.StatsResult(
+                entity_count=1,
+                edge_count=2,
+                entity_counts={"Part": 1},
+                relationship_counts={"fits": 2},
+                head_snapshot_id=None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common.CruxibleClient", StubClient)
+    result = runner.invoke(cli, ["stats", "--json"])
+
+    assert result.exit_code == 0
+    assert captured["base_url"] == "http://server"
+    assert captured["instance_id"] == "inst_123"
+    payload = json.loads(result.output)
+    assert payload["entity_count"] == 1
+
+
+def test_explicit_transport_overrides_remembered_opposite_transport(
+    monkeypatch,
+    runner: CliRunner,
+):
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-socket",
+            "/tmp/cruxible.sock",
+            "--instance-id",
+            "inst_socket",
+        ],
+    )
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def __init__(self, *, base_url=None, socket_path=None, token=None):
+            captured["base_url"] = base_url
+            captured["socket_path"] = socket_path
+
+        def stats(self, instance_id):
+            captured["instance_id"] = instance_id
+            return contracts.StatsResult(
+                entity_count=1,
+                edge_count=0,
+                entity_counts={},
+                relationship_counts={},
+                head_snapshot_id=None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common.CruxibleClient", StubClient)
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_http",
+            "stats",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["base_url"] == "http://server"
+    assert captured["socket_path"] is None
+    assert captured["instance_id"] == "inst_http"
+
+
+def test_context_connect_clears_instance_when_transport_changes(
+    runner: CliRunner,
+):
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server-a",
+            "--instance-id",
+            "inst_a",
+        ],
+    )
+
+    switched = runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server-b",
+        ],
+    )
+    assert switched.exit_code == 0
+    assert "Server URL: http://server-b" in switched.output
+    assert "Instance ID:" not in switched.output
+
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0
+    assert json.loads(shown.output) == {"server_url": "http://server-b"}
 
 
 def test_server_mode_validate_composes_overlay_before_upload(
@@ -201,7 +412,9 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
         cli, ["--server-url", "http://server", "--instance-id", "inst_123", "lock"]
     )
     assert lock.exit_code == 0
+    assert "Workflow lock updated on server." in lock.output
     assert "digest=sha256:abc" in lock.output
+    assert "/srv/project/.cruxible/cruxible.lock.yaml" not in lock.output
 
     plan = runner.invoke(
         cli,
@@ -251,6 +464,84 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
     )
     assert test.exit_code == 0
     assert "1 passed, 0 failed, 1 total" in test.output
+
+
+def test_run_apply_shortcuts_preview_file_flow_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    input_path = tmp_path / "input.yaml"
+    input_path.write_text("sku: SKU-123\n")
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def workflow_run(self, instance_id, *, workflow_name, input_payload=None):
+            captured["run_instance_id"] = instance_id
+            captured["run_payload"] = input_payload
+            return contracts.WorkflowRunResult(
+                workflow=workflow_name,
+                output={"preview": True},
+                receipt_id="RCP-preview",
+                mode="preview",
+                canonical=True,
+                apply_digest="sha256:abc",
+                head_snapshot_id="snap-head",
+                apply_previews={},
+                trace_ids=["TRC-preview"],
+            )
+
+        def workflow_apply(
+            self,
+            instance_id,
+            *,
+            workflow_name,
+            expected_apply_digest,
+            expected_head_snapshot_id,
+            input_payload=None,
+        ):
+            captured["apply_instance_id"] = instance_id
+            captured["apply_digest"] = expected_apply_digest
+            captured["apply_head_snapshot_id"] = expected_head_snapshot_id
+            captured["apply_payload"] = input_payload
+            return contracts.WorkflowApplyResult(
+                workflow=workflow_name,
+                output={"applied": True},
+                receipt_id="RCP-apply",
+                mode="apply",
+                canonical=True,
+                apply_digest=expected_apply_digest,
+                head_snapshot_id=expected_head_snapshot_id,
+                committed_snapshot_id="snap-commit",
+                apply_previews={},
+                trace_ids=["TRC-apply"],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "run",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+            "--apply",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["run_instance_id"] == "inst_123"
+    assert captured["apply_instance_id"] == "inst_123"
+    assert captured["apply_digest"] == "sha256:abc"
+    assert captured["apply_head_snapshot_id"] == "snap-head"
+    assert captured["apply_payload"] == {"sku": "SKU-123"}
+    assert "Workflow wf applied." in result.output
+    assert "Committed snapshot: snap-commit" in result.output
 
 
 def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
@@ -443,3 +734,96 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     )
     assert feedback.exit_code == 0
     assert "Batch feedback recorded for 1/1 item(s)." in feedback.output
+
+
+def test_reload_config_uploads_composed_yaml_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    base = tmp_path / "base.yaml"
+    base.write_text(
+        'version: "1.0"\n'
+        "name: base\n"
+        "entity_types:\n"
+        "  Case:\n"
+        "    properties:\n"
+        "      case_id: {type: string, primary_key: true}\n"
+        "relationships:\n"
+        "  - name: cites\n"
+        "    from: Case\n"
+        "    to: Case\n"
+    )
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text(
+        'version: "1.0"\n'
+        "name: fork\n"
+        "extends: base.yaml\n"
+        "entity_types: {}\n"
+        "relationships:\n"
+        "  - name: follows\n"
+        "    from: Case\n"
+        "    to: Case\n"
+    )
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def reload_config(self, instance_id, *, config_path=None, config_yaml=None):
+            captured["instance_id"] = instance_id
+            captured["config_path"] = config_path
+            captured["config_yaml"] = config_yaml
+            return contracts.ReloadConfigResult(
+                config_path="/daemon/instances/inst_123/config.yaml",
+                updated=True,
+                warnings=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "reload-config",
+            "--config",
+            str(overlay),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["instance_id"] == "inst_123"
+    assert captured["config_path"] is None
+    assert isinstance(captured["config_yaml"], str)
+    assert "extends:" not in captured["config_yaml"]
+    assert "follows" in captured["config_yaml"]
+    assert "Config updated on server." in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "label"),
+    [
+        (["init", "--config", "config.yaml"], "init"),
+        (["run", "--workflow", "wf"], "run"),
+        (["add-entity", "--type", "Vehicle", "--id", "V-1"], "add-entity"),
+        (
+            ["world", "fork", "--transport-ref", "file:///tmp/release", "--root-dir", "/tmp/fork"],
+            "world fork",
+        ),
+    ],
+)
+def test_local_mutation_commands_require_server_mode(
+    runner: CliRunner,
+    tmp_path: Path,
+    args: list[str],
+    label: str,
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CAR_PARTS_YAML)
+    if args[:2] == ["init", "--config"]:
+        result = runner.invoke(cli, ["init", "--config", str(config_path)])
+    else:
+        result = runner.invoke(cli, args)
+    assert result.exit_code == 2
+    assert f"Local mutation disabled for {label}" in result.output
