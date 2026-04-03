@@ -10,6 +10,8 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, EdgeAmbiguityError, ReceiptNotFoundError
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
+    service_add_constraint,
+    service_add_decision_policy,
     service_get_entity,
     service_get_receipt,
     service_get_relationship,
@@ -176,7 +178,7 @@ class TestInit:
         overlay.write_text(
             'version: "1.0"\n'
             "name: fork\n"
-            f"extends: base.yaml\n"
+            "extends: base.yaml\n"
             "entity_types:\n"
             "  Case:\n"
             "    properties:\n"
@@ -230,12 +232,115 @@ class TestReloadConfigExtends:
         reload_result = service_reload_config(instance, config_path=str(overlay))
         assert reload_result.updated is True
 
-        # The reloaded config should have both base and overlay types
-        config = instance.load_config()
         # Note: reload with extends composes in memory but the instance
         # still points at the overlay file. The validation passed because
         # composition happened before validate_config.
         assert len(reload_result.warnings) == 0 or reload_result.warnings is not None
+
+
+# ---------------------------------------------------------------------------
+# config mutation services
+# ---------------------------------------------------------------------------
+
+
+class TestConfigMutationServices:
+    def test_add_constraint_persists_to_config(self, populated_instance: CruxibleInstance) -> None:
+        result = service_add_constraint(
+            populated_instance,
+            name="new_constraint",
+            rule="fits.FROM.category == fits.TO.make",
+            severity="warning",
+            description="test",
+        )
+
+        assert result.added is True
+        assert result.config_updated is True
+        config = populated_instance.load_config()
+        added = next(
+            constraint
+            for constraint in config.constraints
+            if constraint.name == "new_constraint"
+        )
+        assert added.rule == "fits.FROM.category == fits.TO.make"
+        assert added.description == "test"
+
+    def test_add_constraint_rejects_duplicate_names(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        service_add_constraint(
+            populated_instance,
+            name="duplicate_constraint",
+            rule="fits.FROM.category == fits.TO.make",
+        )
+
+        with pytest.raises(ConfigError, match="already exists"):
+            service_add_constraint(
+                populated_instance,
+                name="duplicate_constraint",
+                rule="fits.FROM.category == fits.TO.make",
+            )
+
+    def test_add_constraint_rejects_unsupported_rule(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(ConfigError, match="Rule syntax not supported"):
+            service_add_constraint(
+                populated_instance,
+                name="bad_constraint",
+                rule="not actually valid",
+            )
+
+    def test_add_decision_policy_persists_to_config(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = service_add_decision_policy(
+            populated_instance,
+            name="suppress_old_fitment",
+            applies_to="query",
+            relationship_type="fits",
+            effect="suppress",
+            query_name="parts_for_vehicle",
+            match={"context": {"make": "Honda"}},
+            rationale="test",
+        )
+
+        assert result.added is True
+        assert result.config_updated is True
+        config = populated_instance.load_config()
+        added = next(
+            policy
+            for policy in config.decision_policies
+            if policy.name == "suppress_old_fitment"
+        )
+        assert added.applies_to == "query"
+        assert added.query_name == "parts_for_vehicle"
+        assert added.match.context == {"make": "Honda"}
+
+    def test_add_decision_policy_rejects_duplicate_names(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        service_add_decision_policy(
+            populated_instance,
+            name="duplicate_policy",
+            applies_to="query",
+            relationship_type="fits",
+            effect="suppress",
+            query_name="parts_for_vehicle",
+        )
+
+        with pytest.raises(ConfigError, match="already exists"):
+            service_add_decision_policy(
+                populated_instance,
+                name="duplicate_policy",
+                applies_to="query",
+                relationship_type="fits",
+                effect="suppress",
+                query_name="parts_for_vehicle",
+            )
 
 
 # ---------------------------------------------------------------------------

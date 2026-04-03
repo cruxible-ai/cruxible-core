@@ -9,10 +9,7 @@ import yaml
 
 from cruxible_client import contracts
 from cruxible_core.config.composer import _rebase_artifact_uris, compose_configs
-from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.loader import load_config, load_config_from_string
-from cruxible_core.config.schema import ConstraintSchema, DecisionPolicySchema
-from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -22,7 +19,6 @@ from cruxible_core.mcp.permissions import (
     check_permission,
     validate_root_dir,
 )
-from cruxible_core.predicate import CONSTRAINT_RULE_SYNTAX
 from cruxible_core.query.candidates import MatchRule
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -30,6 +26,8 @@ from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     EntityUpsertInput,
     RelationshipUpsertInput,
+    service_add_constraint,
+    service_add_decision_policy,
     service_add_entities,
     service_add_relationships,
     service_analyze_feedback,
@@ -1317,35 +1315,18 @@ def _handle_add_constraint_local(
     """Add a constraint rule to the config and write back to YAML."""
     check_permission("cruxible_add_constraint", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    config = instance.load_config()
-
-    for existing in config.constraints:
-        if existing.name == name:
-            raise ConfigError(f"Constraint '{name}' already exists in config")
-
-    parsed = parse_constraint_rule(rule)
-    if parsed is None:
-        raise ConfigError(
-            f"Rule syntax not supported: {rule!r}. "
-            f"Expected: {CONSTRAINT_RULE_SYNTAX}"
-        )
-
-    constraint = ConstraintSchema(
+    result = service_add_constraint(
+        instance,
         name=name,
         rule=rule,
         severity=severity,
         description=description,
     )
-    config.constraints.append(constraint)
-
-    warnings = validate_config(config)
-    instance.save_config(config)
-
     return contracts.AddConstraintResult(
-        name=name,
-        added=True,
-        config_updated=True,
-        warnings=warnings,
+        name=result.name,
+        added=result.added,
+        config_updated=result.config_updated,
+        warnings=result.warnings,
     )
 
 
@@ -1366,32 +1347,24 @@ def _handle_add_decision_policy_local(
     """Add a decision policy to the config and write back to YAML."""
     check_permission("cruxible_add_decision_policy", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    config = instance.load_config()
-
-    for existing in config.decision_policies:
-        if existing.name == name:
-            raise ConfigError(f"Decision policy '{name}' already exists in config")
-
-    policy = DecisionPolicySchema(
+    result = service_add_decision_policy(
+        instance,
         name=name,
-        description=description,
-        rationale=rationale,
         applies_to=applies_to,
-        query_name=query_name,
-        workflow_name=workflow_name,
         relationship_type=relationship_type,
         effect=effect,
-        match=match.model_dump(mode="json", by_alias=True) if match is not None else {},
+        match=match.model_dump(mode="json", by_alias=True) if match is not None else None,
+        description=description,
+        rationale=rationale,
+        query_name=query_name,
+        workflow_name=workflow_name,
         expires_at=expires_at,
     )
-    config.decision_policies.append(policy)
-    warnings = validate_config(config)
-    instance.save_config(config)
     return contracts.AddDecisionPolicyResult(
-        name=name,
-        added=True,
-        config_updated=True,
-        warnings=warnings,
+        name=result.name,
+        added=result.added,
+        config_updated=result.config_updated,
+        warnings=result.warnings,
     )
 
 

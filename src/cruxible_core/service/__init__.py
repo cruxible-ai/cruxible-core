@@ -11,6 +11,10 @@ from cruxible_core.service.analysis import (
     service_evaluate,
     service_find_candidates,
 )
+from cruxible_core.service.config_mutations import (
+    service_add_constraint,
+    service_add_decision_policy,
+)
 from cruxible_core.service.execution import (
     service_apply_workflow,
     service_lock,
@@ -61,6 +65,8 @@ from cruxible_core.service.snapshots import (
     service_list_snapshots,
 )
 from cruxible_core.service.types import (
+    AddConstraintServiceResult,
+    AddDecisionPolicyServiceResult,
     AddEntityResult,
     AddRelationshipResult,
     AnalyzeFeedbackResult,
@@ -124,6 +130,8 @@ from cruxible_core.service.world import (
 __all__ = [
     # Types
     "AddEntityResult",
+    "AddConstraintServiceResult",
+    "AddDecisionPolicyServiceResult",
     "AddRelationshipResult",
     "ApplyWorkflowResult",
     "AnalyzeFeedbackResult",
@@ -216,6 +224,8 @@ __all__ = [
     "service_inspect_entity",
     "service_get_receipt",
     "service_get_relationship",
+    "service_add_constraint",
+    "service_add_decision_policy",
     "service_init",
     "service_list",
     "service_query",

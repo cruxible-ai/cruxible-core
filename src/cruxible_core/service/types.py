@@ -130,6 +130,22 @@ class ReloadConfigResult:
 
 
 @dataclass
+class AddConstraintServiceResult:
+    name: str
+    added: bool
+    config_updated: bool
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AddDecisionPolicyServiceResult:
+    name: str
+    added: bool
+    config_updated: bool
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class FeedbackServiceResult:
     feedback_id: str
     applied: bool

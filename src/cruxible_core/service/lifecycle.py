@@ -15,7 +15,11 @@ from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.service.types import InitResult, ReloadConfigResult, ValidateServiceResult
+from cruxible_core.service.types import (
+    InitResult,
+    ReloadConfigResult,
+    ValidateServiceResult,
+)
 
 
 def service_validate(
