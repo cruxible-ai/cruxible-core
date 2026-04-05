@@ -192,6 +192,20 @@ class GroupNotFoundError(CoreError):
         super().__init__(f"Group '{group_id}' not found")
 
 
+class AuthenticationError(CoreError):
+    pass
+
+
+class InstanceScopeError(CoreError):
+    def __init__(self, instance_id: str, credential_scope: str):
+        self.instance_id = instance_id
+        self.credential_scope = credential_scope
+        super().__init__(
+            f"Credential scoped to instance '{credential_scope}' cannot access "
+            f"instance '{instance_id}'"
+        )
+
+
 class PermissionDeniedError(CoreError):
     def __init__(self, tool_name: str, current_mode: str, required_mode: str):
         self.tool_name = tool_name
@@ -258,6 +272,13 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
     elif body.error_type == "GroupNotFoundError":
         exc = GroupNotFoundError(context.get("group_id", "unknown"))
+    elif body.error_type == "AuthenticationError":
+        exc = AuthenticationError(body.message)
+    elif body.error_type == "InstanceScopeError":
+        exc = InstanceScopeError(
+            context.get("instance_id", "unknown"),
+            context.get("credential_scope", "unknown"),
+        )
     elif body.error_type == "QueryExecutionError":
         exc = QueryExecutionError(body.message)
     elif body.error_type == "IngestionError":

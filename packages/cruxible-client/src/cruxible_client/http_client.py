@@ -103,6 +103,56 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ValidateResult)
 
+    def deploy_upload_bundle(self, bundle_path: str) -> contracts.DeployUploadResult:
+        path = Path(bundle_path)
+        with path.open("rb") as handle:
+            response = self._client.post(
+                "/api/v1/deploy/uploads",
+                files={"bundle": (path.name, handle, "application/zip")},
+            )
+        return self._parse_model(response, contracts.DeployUploadResult)
+
+    def deploy_bootstrap(
+        self,
+        *,
+        system_id: str,
+        upload_id: str,
+        instance_slug: str | None = None,
+    ) -> contracts.DeployBootstrapResult:
+        response = self._client.post(
+            "/api/v1/deploy/bootstrap",
+            json={
+                "system_id": system_id,
+                "upload_id": upload_id,
+                "instance_slug": instance_slug,
+            },
+        )
+        return self._parse_model(response, contracts.DeployBootstrapResult)
+
+    def deploy_status(self, *, system_id: str) -> contracts.DeployStatusResult:
+        response = self._client.get("/api/v1/deploy/status", params={"system_id": system_id})
+        return self._parse_model(response, contracts.DeployStatusResult)
+
+    def create_runtime_key(
+        self,
+        *,
+        role: contracts.RuntimeCredentialRole,
+        subject_label: str,
+    ) -> contracts.RuntimeCredentialCreateResult:
+        response = self._client.post(
+            "/api/v1/deploy/keys",
+            json={"role": role, "subject_label": subject_label},
+        )
+        return self._parse_model(response, contracts.RuntimeCredentialCreateResult)
+
+    def list_runtime_keys(self) -> contracts.RuntimeCredentialListResult:
+        response = self._client.get("/api/v1/deploy/keys")
+        return self._parse_model(response, contracts.RuntimeCredentialListResult)
+
+    def revoke_runtime_key(self, key_id: str) -> contracts.RuntimeCredentialRevokeResult:
+        response = self._client.post(f"/api/v1/deploy/keys/{key_id}/revoke")
+        return self._parse_model(response, contracts.RuntimeCredentialRevokeResult)
+
     def world_fork(
         self,
         *,
