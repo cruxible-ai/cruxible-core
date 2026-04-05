@@ -27,7 +27,7 @@ from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.query.candidates import CandidateMatch
-from cruxible_core.server.config import get_server_token
+from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.service import service_sample, service_schema
 
 console = Console()
@@ -64,7 +64,7 @@ def _get_client() -> CruxibleClient | None:
     client = CruxibleClient(
         base_url=server_url,
         socket_path=server_socket,
-        token=get_server_token(),
+        token=get_runtime_bearer_token(),
     )
     obj["_client"] = client
     return client

@@ -74,9 +74,58 @@ def is_server_auth_enabled(environ: Mapping[str, str] | None = None) -> bool:
 
 
 def get_server_token(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the configured bearer token, if any."""
+    """Return the configured legacy bearer token, if any."""
     env = environ or os.environ
     token = env.get("CRUXIBLE_SERVER_TOKEN")
     if token:
         return token
+    return None
+
+
+def get_runtime_bearer_token(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the configured runtime bearer credential for CLI/MCP clients.
+
+    ``CRUXIBLE_SERVER_BEARER_TOKEN`` is the preferred env var. ``CRUXIBLE_SERVER_TOKEN``
+    remains as a backward-compatible alias for local/dev workflows.
+    """
+    env = environ or os.environ
+    token = env.get("CRUXIBLE_SERVER_BEARER_TOKEN") or env.get("CRUXIBLE_SERVER_TOKEN")
+    if token:
+        return token
+    return None
+
+
+def get_bootstrap_jwks_url(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the configured bootstrap-token JWKS URL, if any."""
+    env = environ or os.environ
+    value = env.get("CRUXIBLE_BOOTSTRAP_JWKS_URL")
+    if value:
+        return value
+    return None
+
+
+def get_bootstrap_public_key(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the configured bootstrap-token public key PEM/JWKS blob, if any."""
+    env = environ or os.environ
+    value = env.get("CRUXIBLE_BOOTSTRAP_PUBLIC_KEY") or env.get("CRUXIBLE_BOOTSTRAP_JWKS")
+    if value:
+        return value
+    return None
+
+
+def get_bootstrap_issuer(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the expected bootstrap JWT issuer, if configured."""
+    env = environ or os.environ
+    value = env.get("CRUXIBLE_BOOTSTRAP_ISSUER")
+    if value:
+        return value
+    return None
+
+
+def get_bootstrap_audience(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the expected bootstrap JWT audience, if configured."""
+    env = environ or os.environ
+    value = env.get("CRUXIBLE_BOOTSTRAP_AUDIENCE")
+    if value:
+        return value
     return None

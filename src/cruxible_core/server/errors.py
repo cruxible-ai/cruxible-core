@@ -6,6 +6,7 @@ from typing import Any
 
 from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.errors import (
+    AuthenticationError,
     ConfigError,
     ConstraintViolationError,
     CoreError,
@@ -16,6 +17,7 @@ from cruxible_core.errors import (
     GroupNotFoundError,
     IngestionError,
     InstanceNotFoundError,
+    InstanceScopeError,
     MutationError,
     OutcomeNotFoundError,
     OwnershipError,
@@ -36,9 +38,11 @@ def _message_for_error(exc: CoreError) -> str:
 
 
 def _status_for_error(exc: CoreError) -> int:
+    if isinstance(exc, AuthenticationError):
+        return 401
     if isinstance(exc, (ConfigError, DataValidationError, QueryExecutionError, IngestionError)):
         return 400
-    if isinstance(exc, (PermissionDeniedError, OwnershipError)):
+    if isinstance(exc, (PermissionDeniedError, OwnershipError, InstanceScopeError)):
         return 403
     if isinstance(
         exc,
@@ -97,6 +101,9 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["receipt_id"] = exc.receipt_id
     if isinstance(exc, InstanceNotFoundError):
         context["instance_id"] = exc.instance_id
+    if isinstance(exc, InstanceScopeError):
+        context["instance_id"] = exc.instance_id
+        context["credential_scope"] = exc.credential_scope
     if isinstance(exc, GroupNotFoundError):
         context["group_id"] = exc.group_id
 

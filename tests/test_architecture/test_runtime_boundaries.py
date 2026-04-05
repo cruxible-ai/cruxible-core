@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import tomllib
 from pathlib import Path
 
@@ -62,7 +63,22 @@ def test_client_package_does_not_import_core_modules():
     client_dir = _repo_root() / "packages/cruxible-client/src/cruxible_client"
     for path in client_dir.rglob("*.py"):
         source = path.read_text()
-        assert "cruxible_core" not in source, str(path)
+        tree = ast.parse(source, filename=str(path))
+        imports_core = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports_core = any(
+                    alias.name == "cruxible_core" or alias.name.startswith("cruxible_core.")
+                    for alias in node.names
+                )
+            elif isinstance(node, ast.ImportFrom):
+                imports_core = (
+                    node.module == "cruxible_core"
+                    or (node.module is not None and node.module.startswith("cruxible_core."))
+                )
+            if imports_core:
+                break
+        assert not imports_core, str(path)
 
 
 def test_compatibility_re_exports_point_at_client_package():

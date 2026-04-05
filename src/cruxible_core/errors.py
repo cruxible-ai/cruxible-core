@@ -294,6 +294,24 @@ class GroupNotFoundError(CoreError):
         super().__init__(f"Group '{group_id}' not found")
 
 
+class AuthenticationError(CoreError):
+    """HTTP/API request is unauthenticated or uses an invalid credential."""
+
+    pass
+
+
+class InstanceScopeError(CoreError):
+    """Runtime credential scope does not match the requested instance."""
+
+    def __init__(self, instance_id: str, credential_scope: str):
+        self.instance_id = instance_id
+        self.credential_scope = credential_scope
+        super().__init__(
+            f"Credential scoped to instance '{credential_scope}' cannot access "
+            f"instance '{instance_id}'"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Permission errors
 # ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ from cruxible_core.runtime.instance_manager import (
 from cruxible_core.runtime.instance_manager import (
     get_manager as runtime_get_manager,
 )
-from cruxible_core.server.config import get_server_token, resolve_server_settings
+from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
 
 _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None
@@ -54,7 +54,7 @@ def _get_client() -> CruxibleClient | None:
         reset_client_cache()
         return None
 
-    token = get_server_token()
+    token = get_runtime_bearer_token()
     cache_key = (settings.server_url, settings.server_socket, token)
     if _client_cache is None or _client_cache_key != cache_key:
         reset_client_cache()
