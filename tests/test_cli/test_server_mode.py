@@ -827,3 +827,135 @@ def test_local_mutation_commands_require_server_mode(
         result = runner.invoke(cli, args)
     assert result.exit_code == 2
     assert f"Local mutation disabled for {label}" in result.output
+
+
+def test_deploy_init_builds_bundle_and_bootstraps_remote_instance(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    bundle_path = tmp_path / "bundle.zip"
+    bundle_path.write_bytes(b"bundle")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CAR_PARTS_YAML)
+
+    class StubBuiltBundle:
+        def __init__(self) -> None:
+            self.bundle_path = bundle_path
+            self.manifest = contracts.DeployBundleManifest(
+                instance_kind="plain",
+                cruxible_core_version="0.2.0",
+                config_name="demo",
+                config_path="config.yaml",
+                lock_path="cruxible.lock.yaml",
+                config_digest="sha256:cfg",
+                lock_digest="sha256:lock",
+                artifacts=[],
+            )
+
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def deploy_upload_bundle(self, path: str):
+            captured["bundle_path"] = path
+            return contracts.DeployUploadResult(
+                upload_id="upload_123",
+                bundle_digest="sha256:bundle",
+                manifest_summary=StubBuiltBundle().manifest,
+            )
+
+        def deploy_bootstrap(self, *, system_id: str, upload_id: str, instance_slug: str | None):
+            captured["system_id"] = system_id
+            captured["upload_id"] = upload_id
+            captured["instance_slug"] = instance_slug
+            return contracts.DeployBootstrapResult(
+                status="bootstrapped",
+                system_id=system_id,
+                instance_id="inst_deploy",
+                server_url="http://server",
+                warnings=[],
+                admin_bearer_token="crx_admin",
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.deploy.build_deploy_bundle",
+        lambda **_kwargs: StubBuiltBundle(),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.deploy._client_from_context",
+        lambda **_kwargs: StubClient(),
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "deploy",
+            "init",
+            "--system-id",
+            "system-1",
+            "--bootstrap-token",
+            "bootstrap-token",
+            "--root-dir",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["bundle_path"] == str(bundle_path)
+    assert captured["system_id"] == "system-1"
+    assert captured["upload_id"] == "upload_123"
+    assert "Deploy status: bootstrapped" in result.output
+    assert "Instance ID: inst_deploy" in result.output
+
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0
+    assert json.loads(shown.output) == {
+        "instance_id": "inst_deploy",
+        "server_url": "http://server",
+    }
+
+
+def test_deploy_keys_create_uses_admin_runtime_client(monkeypatch, runner: CliRunner):
+    class StubClient:
+        def create_runtime_key(self, *, role: str, subject_label: str):
+            assert role == "viewer"
+            assert subject_label == "viewer-key"
+            return contracts.RuntimeCredentialCreateResult(
+                credential=contracts.RuntimeCredentialMetadata(
+                    key_id="key_123",
+                    instance_scope="inst_123",
+                    role="viewer",
+                    subject_label="viewer-key",
+                    created_by="key_admin",
+                    created_at="2026-04-03T00:00:00Z",
+                    revoked_at=None,
+                ),
+                bearer_token="crx_key_123_secret",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands.deploy._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "deploy",
+            "keys",
+            "create",
+            "--role",
+            "viewer",
+            "--subject",
+            "viewer-key",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Key ID: key_123" in result.output
+    assert "Bearer token: crx_key_123_secret" in result.output
