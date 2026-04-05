@@ -9,12 +9,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from cruxible_core import __version__
-from cruxible_core.errors import ConfigError, CoreError
+from cruxible_core.errors import CoreError
 from cruxible_core.mcp.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
-from cruxible_core.server.config import get_server_token, is_server_auth_enabled
 from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.registry import get_registry
+from cruxible_core.server.routes.deploy import router as deploy_router
 from cruxible_core.server.routes.feedback import router as feedback_router
 from cruxible_core.server.routes.groups import router as groups_router
 from cruxible_core.server.routes.instances import router as instances_router
@@ -27,9 +27,6 @@ from cruxible_core.server.routes.world import router as world_router
 
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
-    if is_server_auth_enabled() and not get_server_token():
-        raise ConfigError("CRUXIBLE_SERVER_AUTH=true requires CRUXIBLE_SERVER_TOKEN")
-
     get_registry()
     app = FastAPI(title="cruxible-core")
     app.middleware("http")(token_auth_middleware)
@@ -53,6 +50,7 @@ def create_app() -> FastAPI:
         return {"version": __version__}
 
     app.include_router(instances_router)
+    app.include_router(deploy_router)
     app.include_router(world_router)
     app.include_router(queries_router)
     app.include_router(mutations_router)
