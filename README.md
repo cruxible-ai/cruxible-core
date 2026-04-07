@@ -125,13 +125,20 @@ Duration: 0.41ms | 2 traversal steps
 
 ## Get Started
 
-### Server / MCP Runtime
+### Choose a Mode
+
+- **Local evaluation:** fastest way to try Cruxible, iterate on configs, and run demos. This is a convenience path for development and single-user exploration, not a hard isolation boundary.
+- **Governed daemon / deployment:** recommended when trust boundaries matter. Run `cruxible-core` in a separate daemon environment and give agents only `cruxible-client` access to that daemon.
+
+### Local Runtime / MCP
 
 ```bash
 pip install "cruxible-core[mcp]"
 ```
 
 > Or use `uv tool install "cruxible-core[mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
+
+This is the easiest way to evaluate Cruxible locally. If the same environment can import `cruxible-core` or reach the runtime files directly, permission modes are advisory rather than isolating.
 
 ### Client-Only Agent Environment
 
@@ -142,6 +149,15 @@ pip install cruxible-client
 Use `cruxible-client` when the agent only needs typed HTTP/API access to a separate Cruxible daemon.
 
 Permission modes are enforced at the daemon boundary. If an agent can import `cruxible-core` or access the same runtime/filesystem directly, those modes are advisory rather than isolating. If trust levels matter, keep `cruxible-core` out of the agent environment and talk to a separate daemon through `cruxible-client`.
+
+For agent setups, prefer:
+
+- `cruxible-client` in the agent environment
+- `cruxible-core` in a separate daemon/runtime environment
+- `CRUXIBLE_REQUIRE_SERVER=1` in the agent environment
+- daemon state outside the agent workspace
+
+For a concrete hardened setup, see [Isolated Deployment](docs/isolated-deployment.md).
 
 ### MCP Setup
 
@@ -180,6 +196,8 @@ cd cruxible-core/demos/drug-interactions
 ```
 
 Each demo is a starter kit with a config, prebuilt graph, example queries, and receipts. If you're new, start with `drug-interactions`.
+
+Treat the demo flow as local evaluation mode. For production or multi-user use, run against a separate daemon or managed deployment instead of relying on a same-machine local runtime boundary.
 
 First, load the instance:
 
