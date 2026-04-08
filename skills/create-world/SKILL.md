@@ -1,9 +1,9 @@
 ---
-name: onboard-domain
-description: Go from raw domain data to a working Cruxible world through staged understanding, config writes, loading, and review-loop design.
+name: create-world
+description: Create a new Cruxible world from raw domain data through staged graph, workflow, query, and review-loop design.
 ---
 
-# Onboard Domain
+# Create World
 
 Use this skill when a user wants to turn new data into a usable Cruxible world.
 
@@ -113,7 +113,7 @@ Fully design the canonical workflow path now. Extend the config with:
 
 For judgment-based tasks that will need model judgment, matching, ranking, or review:
 
-- add only the `contracts` needed to describe their input and output shapes
+- add only the base `contracts` needed to describe their task input and output shapes
 - do not build the provider-backed proposal workflows yet
 - do not mark these tasks `canonical`
 
@@ -217,7 +217,8 @@ After the user approves the governed group design, add the config pieces that de
 Add the config pieces that define the governed relationship layer:
 
 - relationship `matching` config where needed
-- `contracts` for proposal artifact inputs and outputs
+- add proposal-specific `contracts` only if the approved governed design introduces a new proposal artifact shape that was not already defined in Step B
+- otherwise reuse the Step B contracts and do not redefine them here
 - do not invent new schema fields or top-level group config here; save provider, integration, and workflow implementation details for later phases
 
 Also write a governed-group design note for each governed relationship type at:
@@ -446,12 +447,13 @@ Do not hand off a world whose `named_queries` have not all been exercised agains
 
 In this phase:
 
-- `feedback` is structured review about whether a relationship, proposal group, decision, query output, or workflow output was right
-- a `feedback_profile` defines the structured vocabulary for that review surface:
+- `feedback` is structured review about whether a relationship is right, wrong, or needs correction
+- a `feedback_profile` defines the structured vocabulary for relationship-scoped review:
   - `reason_codes` say what went wrong or what kind of correction is being made
   - `remediation_hint` says what kind of fix the feedback points toward
   - `scope_keys` are the named fields used to group and analyze similar feedback consistently
-- an `outcome` is later evidence about whether a prior resolution or system output was actually correct or useful
+- proposal groups may still be reviewed by humans or agents, but the durable feedback surface is the relationship outcome of that review
+- an `outcome` is later evidence about whether a prior resolution, query result, workflow result, or other system decision was actually correct or useful
 - an `outcome_profile` defines the structured vocabulary for those later results:
   - it anchors to either a `resolution` or a `receipt`
   - `outcome_codes` say what later happened
@@ -464,11 +466,11 @@ In this phase:
 - `decision_policies` are exact-match rules that suppress or require review for governed decisions
 - `constraints` define invalid states the world should reject or warn on
 
-1. identify where humans or agent reviewers will review relationships, proposal groups, decisions, query outputs, or workflow outputs
-2. identify which review surfaces need structured feedback, and whether that feedback is relationship-scoped
-3. identify the `feedback_profiles` those surfaces need
-4. identify which downstream outcomes should be recorded, and whether they should anchor to a `resolution` or a `receipt`
-5. identify the `outcome_profiles` those surfaces need
+1. identify where humans or agent reviewers will review relationships or proposal groups
+2. identify which relationship-scoped review surfaces need structured `feedback_profiles`
+3. identify the `feedback_profiles` those relationship review surfaces need
+4. identify which downstream outcomes should be recorded for resolutions, queries, workflows, or operations, and whether they should anchor to a `resolution` or a `receipt`
+5. identify the `outcome_profiles` those outcome surfaces need
 6. identify what repeated failure modes should become `constraints`, `quality_checks`, `decision_policies`, provider fixes, workflow fixes, or graph fixes
 7. identify what feedback and outcome flywheels should improve the world over time
 8. summarize the feedback and outcome flywheel for user confirmation
