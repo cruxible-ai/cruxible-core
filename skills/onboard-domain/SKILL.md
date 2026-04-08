@@ -67,13 +67,16 @@ Stop on validation or init errors. Do not continue with a broken base config.
 
 ## Phase 3: Understand the operational workflows
 
-Once the base graph shape is real, figure out how the world is built and maintained:
+Once the base graph shape is real, figure out how this world is built and maintained over time.
 
-1. identify recurring deterministic build or refresh workflows
-2. identify artifacts, providers, and contracts those workflows require
-3. identify which workflows should be canonical
-4. identify any inference, matching, or proposal workflows that are needed later
-5. summarize the workflow plan for user confirmation
+Start with the operating loop, not the config nouns. Ask:
+
+1. where does new data come from?
+2. what repeatable steps turn raw inputs into graph state?
+3. which steps are deterministic and repeatable?
+4. which steps require judgment, matching, or review?
+5. what should be automatically committed versus proposed for review?
+6. summarize the workflow plan for user confirmation
 
 Ask targeted questions only about operations in this phase:
 
@@ -81,6 +84,14 @@ Ask targeted questions only about operations in this phase:
 - what should be automatically rebuilt?
 - what should be proposed instead of directly applied?
 - where is human review required?
+
+Then translate those answers into Cruxible terms:
+
+- `artifacts`: input files, bundles, or external data sources the workflow depends on
+- `providers`: reusable logic, model calls, or external processing steps
+- `contracts`: structured workflow input and output shapes
+- `workflows`: repeatable procedures that build, refresh, or propose graph state
+- `canonical` workflows: workflows whose results are written directly into world state instead of first becoming reviewable proposals. Use this only for deterministic or otherwise highly trusted operations that are safe to commit without a proposal/review step.
 
 ## Write Step B: Add workflow machinery
 
@@ -91,7 +102,7 @@ Extend the config with:
 - `contracts`
 - deterministic `workflows`
 
-Add proposal or review-oriented workflows only where the need is already clear.
+Add proposal or review-oriented workflows only where the need is already clear. Do not introduce Cruxible workflow machinery just because the schema allows it.
 
 ## Phase 4: Lock, run, and inspect the workflowed world
 
