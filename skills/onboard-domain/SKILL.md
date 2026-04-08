@@ -21,6 +21,8 @@ Before writing config:
    - prefer durable source IDs or external identifiers
    - avoid names, titles, or other mutable text unless there is no better identifier
    - if no good primary key exists, stop and design one before continuing
+   - if a concept may need to be a future query or traversal surface, model it as its own entity instead of leaving it as a property
+   - if users may need to start from it, fan out from it, relate other things to it, or review it independently over time, it is usually better modeled as an entity
 3. identify deterministic relationships between entities that can be loaded directly from the source data
 4. identify any obvious bad states that should remain invalid across future ingests, refreshes, and graph updates, and should later become constraints or quality checks
    - do not invent constraints just to fill the slot
@@ -372,7 +374,11 @@ When real groups expose ambiguity or a design mismatch, ask targeted iteration q
 
 If Phase 5 enabled auto-resolve or this relationship type is supposed to reuse prior resolutions across repeated runs, inspect prior resolutions and trust status before moving on. Use `group trust` only when a representative resolution should become reusable precedent or should invalidate earlier precedent.
 
-After approving representative groups, verify that the intended governed relationships now exist in world state before moving on to named queries.
+After approving representative groups, verify that the intended governed relationships now exist in world state before moving on to named queries. Re-check the world with:
+
+```bash
+cruxible stats
+```
 
 If the grouping rule, review question, thesis/signature design, or signal policy is wrong, go back to Phase 5 and revise the governed design with the user. If the provider output, signal mapping, or workflow wiring is wrong, go back to Phase 6 and revise the implementation.
 
@@ -380,24 +386,37 @@ Do not design the final query surface against a world that is still missing the 
 
 ## Phase 8: Understand the user-facing query surface
 
-Only after the graph and workflows are real:
-
 1. identify the repeated user questions that matter most
 2. choose the real entry-point entity type for each question
 3. decide the traversal direction and fan-out needed
 4. identify what evidence path a human should be able to inspect
 5. summarize the planned query surface for user confirmation
 
-Ask targeted questions only about usage in this phase:
+Keep this phase user-facing. Design queries around the real questions users ask and the evidence they should be able to inspect. Do not reopen earlier graph or workflow design unless an important question has no clean path through the current world.
 
-- what does the user start from?
-- what answer shape do they want back?
-- what neighboring context is required?
-- what would make an answer trustworthy?
+If an important user question has no clean path through the current world, do not force a bad query. Go back to the earlier phase that owns the problem:
+
+- Phase 1 if the graph shape is missing the needed entities or deterministic relationships
+- Phase 5 if the governed relationship design is wrong
+- Phase 6 if the proposal workflow implementation is wrong
+
+Also use this phase to simplify the world when needed. If an entity, relationship, or governed path was added in anticipation of queries that the real user-facing query surface does not actually need, do not keep that complexity by default. Go back to the earlier phase that introduced it and narrow the design:
+
+- Phase 1 if the base graph is broader than the real query surface requires
+- Phase 5 if the governed relationship design is broader than the real query surface requires
+- Phase 6 if the proposal workflow implementation is solving a query problem that does not actually exist
 
 ## Write Step E: Add named queries
 
-Add `named_queries` only after the graph shape is stable.
+Write the actual `named_queries` now. For each user-facing query you are keeping:
+
+- add a stable query name
+- set the `entry_point`
+- define the `traversal` steps
+- set `returns`
+- keep the query as narrow and inspectable as the use case allows
+
+Do not stop at describing the query surface in prose. Add the `named_queries` to the config before validating.
 
 When the config changes:
 
@@ -412,24 +431,16 @@ If providers, artifacts, or workflows changed too, lock again:
 cruxible lock
 ```
 
-Query-design rules:
-
-1. choose the real entry point entity type
-2. choose traversal direction deliberately
-3. keep fan-out controlled
-4. test representative cases, not just happy-path IDs
-5. inspect receipts, not just results
-
 ## Phase 9: Prove the queries work
 
-Run at least one real query and inspect its receipt:
+Run every `named_query` you added and inspect its receipt:
 
 ```bash
 cruxible query --query <query_name> --param key=value
 cruxible explain --receipt <receipt_id>
 ```
 
-Do not hand off a world whose named queries have not been exercised.
+Do not hand off a world whose `named_queries` have not all been exercised against representative cases.
 
 ## Phase 10: Understand the feedback and outcome flywheel
 
