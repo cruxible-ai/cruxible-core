@@ -93,18 +93,31 @@ Then translate those answers into Cruxible terms:
 - `workflows`: repeatable procedures that build, refresh, or propose graph state
 - `canonical` workflows: workflows whose results are written directly into world state instead of first becoming reviewable proposals. Use this only for deterministic or otherwise highly trusted operations that are safe to commit without a proposal/review step.
 
+At the end of this phase, separate the workflow plan into two buckets:
+
+- canonical workflows to design now
+- judgment-based workflows that should become reviewable proposals later
+
+For the later judgment-based workflows, define the task and the expected input/output shape now, but defer detailed provider and proposal-workflow design until after the graph and query surfaces are clearer.
+
 ## Write Step B: Add workflow machinery
 
-Extend the config with:
+Fully design the canonical workflow path now. Extend the config with:
 
 - `artifacts`
-- `providers`
 - `contracts`
+- `providers` needed for deterministic or otherwise trusted steps
 - deterministic `workflows`
 
-Add proposal or review-oriented workflows only where the need is already clear. Do not introduce Cruxible workflow machinery just because the schema allows it.
+For judgment-based tasks that will need model judgment, matching, ranking, or review:
 
-## Phase 4: Lock, run, and inspect the workflowed world
+- add only the `contracts` needed to describe their input and output shapes
+- do not build the provider-backed proposal workflows yet
+- do not mark these tasks `canonical`
+
+Do not introduce Cruxible workflow machinery just because the schema allows it.
+
+## Phase 4: Build and inspect the world for the first time
 
 After workflow config changes:
 
@@ -116,11 +129,15 @@ cruxible lock
 
 Use `cruxible plan --workflow <workflow_name>` when you need to inspect the compiled workflow before running it.
 
-Then run representative workflows:
+Then run every canonical build or refresh workflow you defined in Step B, in dependency order:
 
 ```bash
 cruxible run --workflow <workflow_name> --apply
 ```
+
+This is the first real population step. Use it to build or refresh the world through the full canonical workflow path you designed in Step B.
+
+Do not run judgment-based or proposal workflows in this phase. This phase is only for the workflows that are safe to apply directly to world state.
 
 Re-check the world with:
 
@@ -183,35 +200,39 @@ cruxible explain --receipt <receipt_id>
 
 Do not hand off a world whose named queries have not been exercised.
 
-## Phase 7: Understand the review and learning loop
+## Phase 7: Understand the judgment, review, and learning loop
 
 Only after the base world, workflows, and named queries are in place:
 
-1. identify where humans will review edges, proposals, or decisions
-2. identify what repeated failure modes should become constraints, quality checks, or decision policies
-3. identify what structured feedback should be captured
-4. identify what downstream outcomes should be recorded
-5. identify what feedback and outcome flywheels should improve the world over time
-6. summarize the review and learning loop for user confirmation
+1. identify which matching, classification, ranking, or recommendation tasks should become provider-backed proposal workflows
+2. identify where humans will review edges, proposals, or decisions
+3. identify what repeated failure modes should become constraints, quality checks, or decision policies
+4. identify what structured feedback should be captured
+5. identify what downstream outcomes should be recorded
+6. identify what feedback and outcome flywheels should improve the world over time
+7. summarize the judgment, review, and learning loop for user confirmation
 
 Ask targeted questions only about the flywheel in this phase:
 
+- which ambiguous tasks need provider-backed judgment instead of deterministic loading?
 - what gets reviewed?
 - what gets approved or rejected?
 - what later real-world outcome tells you whether the system was right?
 - what repeated failure should become a rule instead of a one-off correction?
 
-## Write Step D: Add review, feedback, and outcome structure
+## Write Step D: Add proposal, feedback, and outcome structure
 
 Add the later-stage governance pieces that are actually justified:
 
+- provider-backed proposal workflows for judgment-based tasks
+- any additional `providers` those workflows require
 - `quality_checks`
 - `constraints`
 - `decision_policies`
 - `feedback_profiles`
 - `outcome_profiles`
 
-Design these around real recurring review and outcome surfaces, not speculative completeness.
+Design these around real recurring review and outcome surfaces, not speculative completeness. Keep judgment-based workflows non-canonical unless there is a compelling reason to bypass the proposal/review step.
 
 ## Phase 8: Evaluate and hand off
 
