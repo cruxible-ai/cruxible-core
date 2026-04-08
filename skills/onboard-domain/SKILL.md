@@ -276,33 +276,52 @@ Do not choose providers or build proposal workflows yet. First make the group se
 
 ## Phase 6: Design provider-backed proposal workflows
 
-Only after the governed group structure is clear:
+Only after the governed group structure is clear.
 
-1. identify which ambiguous tasks need provider-backed matching, classification, ranking, or recommendation
+Use the approved `design/governed/<relationship_type>.yaml` note and `matching` config for each governed relationship type as the source of truth in this phase. Do not redesign grouping, thesis, `thesis_facts`, `analysis_state`, or auto-resolve policy here unless implementation exposes a real mismatch that needs to go back to the user.
+
+In this phase:
+
+- a `provider` is the executable logic behind a workflow step
+- it takes structured inputs and returns structured outputs defined by contracts
+- it may be code, external logic, or model-backed judgment
+- it implements the approved governed design; it does not define that design by itself
+- an `integration` is the named judgment source Cruxible uses for signals, review policy, and trust reuse
+
+1. for each governed relationship type approved in Phase 5, identify the provider-backed task or tasks needed to produce candidates and signals
 2. identify what raw inputs each task needs from the graph or artifacts
 3. identify what outputs the provider should produce before signal mapping
-4. identify which concrete integrations should produce governed signals for each task
-5. decide which integrations are `blocking`, `required`, or `advisory`
-6. decide how provider output becomes candidates, signals, and finally a relationship group proposal
-7. decide which workflows should end in `propose_relationship_group`
-8. summarize the proposal-workflow design for user confirmation
+4. choose which concrete integrations should implement the approved evidence policy for each task
+5. map each integration to the already-approved `blocking`, `required`, or `advisory` role
+6. decide how provider output becomes:
+   - candidate relationships
+   - `support`, `contradict`, or `unsure` signals
+   - the fields that will populate `thesis_facts`
+   - the fields that will populate `analysis_state`
+   - a relationship group proposal
+7. decide which non-canonical workflows should end in `propose_relationship_group`
+8. summarize the proposal-workflow implementation choices
+9. if implementation exposes a semantic mismatch or open question, stop and return to the user before changing the approved governed design
 
-Ask targeted questions only about provider-backed judgment in this phase:
-
-- what exactly is the model or logic deciding?
-- what evidence should the provider emit for each candidate?
-- what should become a `support`, `contradict`, or `unsure` signal?
-- what should be proposed as a group instead of directly persisted?
+Keep this phase implementation-focused. Choose providers, integrations, inputs, outputs, and workflow wiring that implement the approved governed design. Do not reopen group semantics here unless implementation exposes a real mismatch.
 
 ## Write Step D: Add proposal workflows and providers
 
-Add the later-stage judgment machinery that is actually justified:
+Extend the config with the proposal machinery that is actually justified:
 
-- provider-backed proposal workflows for judgment-based tasks
-- any additional `providers` those workflows require
-- any additional `contracts` those workflows require
+- `artifacts`
+- `contracts`
+- `integrations`
+- `providers`
+- non-canonical proposal `workflows`
 
-Keep judgment-based workflows non-canonical unless there is a compelling reason to bypass the proposal/review step.
+Only add the pieces this governed relationship type actually needs.
+
+Those non-canonical proposal `workflows` should gather the needed graph or artifact inputs, call providers, build candidates with `make_candidates`, convert evidence into signals with `map_signals`, and emit reviewable groups with `propose_relationship_group`.
+
+If a provider in this phase is implemented as code, write that provider code now. Make sure it accepts the structured inputs the contracts define, returns the structured outputs the contracts define, and is wired into the workflow config correctly.
+
+In this phase, keep these workflows non-canonical and route them through the proposal/review step. Do not bypass review for judgment-based matching or other non-deterministic relationship decisions.
 
 ## Phase 7: Run proposal workflows and establish the governed layer
 
