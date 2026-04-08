@@ -77,7 +77,6 @@ _MODE_NAMES: dict[str, PermissionMode] = {
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # READ_ONLY tools
     "cruxible_version": PermissionMode.READ_ONLY,
-    "cruxible_prompt": PermissionMode.READ_ONLY,
     "cruxible_init": PermissionMode.READ_ONLY,  # admin gate for create inside handler
     "cruxible_validate": PermissionMode.READ_ONLY,
     "cruxible_schema": PermissionMode.READ_ONLY,

@@ -6,7 +6,6 @@ Exceptions propagate to FastMCP, which wraps them as ToolError.
 
 from __future__ import annotations
 
-import inspect
 from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
@@ -34,59 +33,6 @@ def register_tools(server: FastMCP) -> list[str]:
     def cruxible_version() -> dict[str, str]:
         """Return the cruxible-core version. Use this to confirm which build is running."""
         return {"version": __version__}
-
-    @_tool
-    def cruxible_prompt(
-        prompt_name: str | None = None,
-        args: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Read a cruxible workflow prompt, or list available prompts.
-
-        With no arguments, returns the list of available prompts and
-        their required parameters.
-
-        With ``prompt_name``, returns the full prompt content.
-
-        Call this before starting work to get the guided workflow.
-        """
-        from cruxible_core.mcp.prompts import PROMPT_REGISTRY
-
-        # List mode
-        if prompt_name is None:
-            prompts: dict[str, Any] = {}
-            for name, (fn, desc) in PROMPT_REGISTRY.items():
-                sig = inspect.signature(fn)
-                params = {
-                    p.name: (
-                        p.annotation.__name__
-                        if hasattr(p.annotation, "__name__")
-                        else str(p.annotation)
-                    )
-                    for p in sig.parameters.values()
-                }
-                prompts[name] = {"description": desc, "args": params}
-            return {"prompts": prompts}
-
-        # Read mode
-        if prompt_name not in PROMPT_REGISTRY:
-            available = ", ".join(sorted(PROMPT_REGISTRY.keys()))
-            raise ValueError(f"Unknown prompt '{prompt_name}'. Available: {available}")
-
-        fn, _desc = PROMPT_REGISTRY[prompt_name]
-
-        # Validate args against signature
-        sig = inspect.signature(fn)
-        required = [p.name for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
-        provided = set((args or {}).keys())
-        missing = [r for r in required if r not in provided]
-        if missing:
-            raise ValueError(f"Prompt '{prompt_name}' requires: {', '.join(missing)}")
-        extra = provided - set(sig.parameters.keys())
-        if extra:
-            raise ValueError(f"Unknown args for '{prompt_name}': {', '.join(sorted(extra))}")
-
-        content = fn(**(args or {}))
-        return {"prompt_name": prompt_name, "content": content}
 
     @_tool
     def cruxible_init(

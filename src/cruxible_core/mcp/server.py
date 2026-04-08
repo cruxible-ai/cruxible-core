@@ -15,7 +15,6 @@ from cruxible_core.mcp.permissions import (
     init_permissions,
     validate_tool_permissions,
 )
-from cruxible_core.mcp.prompts import register_prompts
 from cruxible_core.mcp.tools import register_tools
 from cruxible_core.server.config import resolve_server_settings
 
@@ -28,16 +27,23 @@ execution with proof via receipts.
 
 ## Start Here
 
-Prompts contain the workflow logic. These instructions are just the reference.
+This server exposes deterministic world-building and query tools.
+Workflow guidance belongs client-side in agent skills or playbooks, not in MCP prompts.
 
-**No config yet?** Call `cruxible_prompt("onboard_domain", {"domain": "<domain>"})`.
-It is the step-by-step workflow from raw data to working graph.
+**No config yet?**
+- inspect the user's data first
+- write a YAML config
+- `cruxible_validate`
+- `cruxible_init`
+- `cruxible_lock_workflow`
+- `cruxible_run_workflow` / `cruxible_apply_workflow`
 
-**Existing graph?** Call `cruxible_prompt("review_graph", {"instance_id": "<id>"})`.
-
-**Discover all prompts:** Call `cruxible_prompt()` with no arguments.
-
-Use prompt defaults unless the user explicitly requests deviation.
+**Existing graph?**
+- `cruxible_evaluate`
+- `cruxible_query`
+- `cruxible_list`
+- `cruxible_receipt`
+- `cruxible_feedback`
 
 ## Permission Modes
 
@@ -131,7 +137,6 @@ def create_server() -> FastMCP:
         instructions=_build_instructions(mode),
     )
     registered = register_tools(server)
-    register_prompts(server)
     validate_tool_permissions(registered)
     # NOTE: Runtime FastMCP parity check is in main(), not here.
     # create_server() must remain safe for async embedders.
