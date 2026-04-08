@@ -67,7 +67,7 @@ Stop on validation or init errors. Do not continue with a broken base config.
 
 ## Phase 3: Understand the operational workflows
 
-Once the base graph shape is real, figure out how this world is built and maintained over time.
+Once the base graph shape is defined and validated, figure out how this world is built and maintained over time.
 
 Start with the operating loop, not the config nouns. Ask:
 
@@ -166,6 +166,7 @@ Before choosing providers or proposal workflow steps, understand the proposal pr
 - prior trust rules control when a new group can reuse trust from an earlier approved group with the same signature:
   - `trusted_only`: only prior groups explicitly marked `trusted` can unlock auto-resolve
   - `trusted_or_watch`: either `trusted` or the default `watch` trust can unlock auto-resolve
+- `auto-resolve` here means the group's matching policy can mark it eligible for `auto_resolved` status based on its signals and prior trust; it does not mean the agent should bypass proposal/review design in this skill
 - the group carries:
   - a human-readable `thesis_text`
   - structured `thesis_facts` that define the stable identity/signature of the proposal
@@ -215,7 +216,7 @@ Add the config pieces that define the governed relationship layer:
 
 - relationship `matching` config where needed
 - `contracts` for proposal artifact inputs and outputs
-- any schema structure needed to support group proposals later
+- do not invent new schema fields or top-level group config here; save provider, integration, and workflow implementation details for later phases
 
 Also write a governed-group design note for each governed relationship type at:
 
@@ -329,6 +330,8 @@ Only do this phase if named queries or downstream review depend on approved gove
 
 Run the proposal workflows, inspect the resulting groups, and review enough representative groups to make the intended governed layer real.
 
+This phase is where the Phase 5 design and Phase 6 implementation get validated against real emitted groups. Treat the approved Phase 5 design as the current best design, not as untouchable ground truth. If the real groups show that the governed layer should work differently, iterate.
+
 Use the real CLI surfaces for this work:
 
 ```bash
@@ -336,7 +339,12 @@ cruxible propose --workflow <workflow_name>
 cruxible group list
 cruxible group get --group <group_id>
 cruxible group resolve --group <group_id> --action approve
+cruxible group resolve --group <group_id> --action reject
+cruxible group resolutions
+cruxible group trust --resolution <resolution_id> --status <watch|trusted|invalidated>
 ```
+
+If a proposal workflow produces no reviewable group or a suppressed result, stop and inspect prerequisites, provider output, and workflow wiring before assuming the governed layer exists.
 
 For each concrete group you inspect, answer the per-group questions:
 
@@ -347,7 +355,26 @@ For each concrete group you inspect, answer the per-group questions:
 5. do the signals and evidence make the group reviewable, or does the grouping rule need to change?
 6. should this group be approved, rejected, or escalated for deeper review?
 
-If trust or reuse behavior matters, inspect prior resolutions and trust status before moving on.
+Use those answers to test and iterate on the current governed design:
+
+- does the emitted group follow the current `grouping_rule`, or is that rule too broad or too narrow?
+- does it ask the intended `unit_of_review` question, or is the review unit wrong?
+- do the actual `thesis_facts` match the intended identity fields, or is identity being modeled incorrectly?
+- does the actual `analysis_state` look like useful review context rather than identity-bearing data?
+
+When real groups expose ambiguity or a design mismatch, ask targeted iteration questions before changing the design. For example:
+
+- should this group be split or merged differently?
+- is the review question the user actually wants to answer here?
+- are these `thesis_facts` stable enough to define identity across repeated runs?
+- is important reviewer context missing, or is too much identity leaking into `analysis_state`?
+- are the current signals strong enough to support review and later trust reuse?
+
+If Phase 5 enabled auto-resolve or this relationship type is supposed to reuse prior resolutions across repeated runs, inspect prior resolutions and trust status before moving on. Use `group trust` only when a representative resolution should become reusable precedent or should invalidate earlier precedent.
+
+After approving representative groups, verify that the intended governed relationships now exist in world state before moving on to named queries.
+
+If the grouping rule, review question, thesis/signature design, or signal policy is wrong, go back to Phase 5 and revise the governed design with the user. If the provider output, signal mapping, or workflow wiring is wrong, go back to Phase 6 and revise the implementation.
 
 Do not design the final query surface against a world that is still missing the governed relationships it is supposed to rely on.
 
