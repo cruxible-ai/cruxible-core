@@ -444,21 +444,36 @@ Do not hand off a world whose `named_queries` have not all been exercised agains
 
 ## Phase 10: Understand the feedback and outcome flywheel
 
-Only after the base world, proposal layer, and named queries are in place:
+In this phase:
 
-1. identify where humans will review relationships, proposals, or decisions
-2. identify what repeated failure modes should become constraints, quality checks, or decision policies
-3. identify what structured feedback should be captured
-4. identify what downstream outcomes should be recorded
-5. identify what feedback and outcome flywheels should improve the world over time
-6. summarize the feedback and outcome flywheel for user confirmation
+- `feedback` is structured review about whether a relationship, proposal group, decision, query output, or workflow output was right
+- a `feedback_profile` defines the structured vocabulary for that review surface:
+  - `reason_codes` say what went wrong or what kind of correction is being made
+  - `remediation_hint` says what kind of fix the feedback points toward
+  - `scope_keys` are the named fields used to group and analyze similar feedback consistently
+- an `outcome` is later evidence about whether a prior resolution or system output was actually correct or useful
+- an `outcome_profile` defines the structured vocabulary for those later results:
+  - it anchors to either a `resolution` or a `receipt`
+  - `outcome_codes` say what later happened
+  - `remediation_hint` says what kind of fix the outcome points toward
+  - `scope_keys` are the named fields used to group and analyze similar outcomes consistently
+  - receipt-anchored profiles also record the relevant surface metadata
+- a `resolution` is the recorded approve/reject decision on a candidate group
+- a `receipt` is the recorded output of a query, workflow, or operation
+- `quality_checks` are recurring health checks over the world
+- `decision_policies` are exact-match rules that suppress or require review for governed decisions
+- `constraints` define invalid states the world should reject or warn on
 
-Ask targeted questions only about the flywheel in this phase:
+1. identify where humans or agent reviewers will review relationships, proposal groups, decisions, query outputs, or workflow outputs
+2. identify which review surfaces need structured feedback, and whether that feedback is relationship-scoped
+3. identify the `feedback_profiles` those surfaces need
+4. identify which downstream outcomes should be recorded, and whether they should anchor to a `resolution` or a `receipt`
+5. identify the `outcome_profiles` those surfaces need
+6. identify what repeated failure modes should become `constraints`, `quality_checks`, `decision_policies`, provider fixes, workflow fixes, or graph fixes
+7. identify what feedback and outcome flywheels should improve the world over time
+8. summarize the feedback and outcome flywheel for user confirmation
 
-- what gets reviewed?
-- what gets approved or rejected?
-- what later real-world outcome tells you whether the system was right?
-- what repeated failure should become a rule instead of a one-off correction?
+Keep this phase focused on real recurring review and outcome surfaces for both human and agent reviewers. Do not invent `feedback_profiles`, `outcome_profiles`, or governance rules unless there is a real review or outcome loop to support.
 
 ## Write Step F: Add feedback and outcome structure
 
@@ -470,7 +485,7 @@ Add the later-stage governance pieces that are actually justified:
 - `feedback_profiles`
 - `outcome_profiles`
 
-Design these around real recurring review and outcome surfaces, not speculative completeness.
+Define `feedback_profiles` and `outcome_profiles` to match the real recurring review and outcome surfaces you identified in Phase 10, not speculative completeness.
 
 ## Phase 11: Evaluate and hand off
 
@@ -484,10 +499,12 @@ Then summarize:
 
 - entity counts
 - relationship counts
-- deterministic workflows used
-- named queries with example invocations
-- one representative query or receipt that was checked
+- canonical `workflows` used
+- governed relationship types and proposal `workflows` used
+- all `named_queries` exercised, with example invocations
+- one representative receipt or query that was checked in detail
 - review surfaces and feedback/outcome plans
+- open questions or deferred cleanup
 - next actions the user can take
 
 Simple domains may stop earlier. Do not force every domain to use every later-stage feature.
