@@ -163,6 +163,9 @@ Before choosing providers or proposal workflow steps, understand the proposal pr
   - `contradict`: this integration argues against the relationship
   - `unsure`: this integration cannot support the relationship strongly enough to approve it
 - signals should carry short evidence that explains why the integration produced that judgment
+- prior trust rules control when a new group can reuse trust from an earlier approved group with the same signature:
+  - `trusted_only`: only prior groups explicitly marked `trusted` can unlock auto-resolve
+  - `trusted_or_watch`: either `trusted` or the default `watch` trust can unlock auto-resolve
 - the group carries:
   - a human-readable `thesis_text`
   - structured `thesis_facts` that define the stable identity/signature of the proposal
@@ -171,36 +174,103 @@ Before choosing providers or proposal workflow steps, understand the proposal pr
 - the group is then reviewed, approved, rejected, or reused through prior trust
 - approved groups create relationships later; rejected groups still matter because they establish precedent and trust context
 
-Before choosing providers or proposal workflow steps, design the governed group structure itself. Ask:
+Before choosing providers or proposal workflow steps, design the governed group structure itself. Answer the macro-level grouping questions first:
 
 1. which relationship types should be proposed and reviewed instead of written canonically?
-2. what candidate relationships belong in the same group, and what should be split into separate groups?
-3. what is the unit of review for this relationship type, and what single judgment should one reviewable group ask the reviewer to make?
-4. what human-readable thesis should explain why this group exists?
-5. what structured `thesis_facts` should define the group's stable identity and signature?
-6. what useful reviewer context should stay in `analysis_state` instead of the signature?
-7. which integrations or evidence sources should contribute signals?
-8. which integrations are `blocking`, `required`, or `advisory`?
-9. should `unsure` always force review for any integration?
+2. what grouping rule should determine which candidate relationships belong in the same group, and what should be split into separate groups?
+3. what is the unit of review for this relationship type, and what single judgment should each resulting group ask the reviewer to make?
+4. what general kind of `thesis_text` should explain why a group exists?
+5. what kinds of facts should belong in `thesis_facts` so the same proposal can be recognized across repeated runs?
+6. what kinds of reviewer context should stay in `analysis_state` instead of the signature?
+7. what kinds of evidence or judgment sources should matter for this relationship type?
+8. which kinds of evidence should be blocking, required, or advisory in principle?
+9. should uncertainty always force review for this relationship type?
 10. should this relationship type ever auto-resolve, and if so under what prior trust rule?
 11. do the user-facing named queries depend on approved governed relationships, or only on canonical state?
 12. summarize the governed group design for user confirmation
 
-Ask targeted questions only about group semantics in this phase:
+Keep this phase at the design-rule level. Define how governed groups should work in general for this relationship type or proposal workflow. Do not answer per-group review questions yet; those belong later when concrete groups exist.
 
-- what is the actual unit of review?
-- what facts should define "the same thesis" across repeated proposals?
-- what information is useful for analysis but should not affect signature reuse?
-- when should a new proposal inherit prior trust?
-- when should it be forced into review or critical review?
+Before writing any governed-group config artifacts, surface the governed design in normal language and get user approval. Do not present the YAML design note itself as the approval surface.
+
+Summarize:
+
+- which relationship types are governed
+- what one group means
+- what single judgment each group asks the reviewer to make
+- what kinds of facts define stable identity in `thesis_facts`
+- what kinds of context belong in `analysis_state`
+- what kinds of evidence matter
+- whether uncertainty forces review
+- whether auto-resolve should ever happen, and under what prior trust rule
+- whether named queries depend on approved governed relationships
+
+If the user already answered these questions earlier, summarize the resulting design and confirm it rather than re-asking everything.
 
 ## Write Step C: Add governed-group structure
+
+After the user approves the governed group design, add the config pieces that define the governed relationship layer.
 
 Add the config pieces that define the governed relationship layer:
 
 - relationship `matching` config where needed
 - `contracts` for proposal artifact inputs and outputs
 - any schema structure needed to support group proposals later
+
+Also write a governed-group design note for each governed relationship type at:
+
+```text
+design/governed/<relationship_type>.yaml
+```
+
+Use this shape:
+
+```yaml
+relationship_type: asset_runs_product
+grouping_rule: one group per asset under one product-matching thesis
+unit_of_review: one reviewable judgment about which product relationships should exist for one asset
+judgment_question: Which product relationships for this asset should be approved?
+thesis_text_guidance: short human-readable statement of why this relationship group exists
+thesis_facts_fields:
+  - asset_id
+  - matching_scope
+analysis_state_fields:
+  - candidate_rankings
+  - provider_notes
+  - raw_match_context
+evidence_source_types:
+  - exact identifier match
+  - catalog similarity
+  - human supplied context
+signal_policy:
+  blocking_kinds:
+    - explicit contradiction from trusted source
+  required_kinds:
+    - core matching judgment
+  advisory_kinds:
+    - weaker contextual hints
+  unsure_forces_review: true
+auto_resolve_policy:
+  enabled: false
+  prior_trust_rule: trusted_only
+query_depends_on_governed_relationships: true
+open_questions: []
+```
+
+This design note is an internal record of the approved Phase 5 semantics. It is scoped to Phase 5 only. It should capture:
+
+- grouping and review semantics
+- thesis/signature design
+- evidence and signal policy in principle
+- auto-resolve policy
+- whether named queries depend on approved governed relationships
+
+Do not put later-phase details in this note:
+
+- no provider names
+- no workflow step design
+- no concrete group instances
+- no resolution outcomes
 
 Do not choose providers or build proposal workflows yet. First make the group semantics explicit.
 
@@ -211,9 +281,11 @@ Only after the governed group structure is clear:
 1. identify which ambiguous tasks need provider-backed matching, classification, ranking, or recommendation
 2. identify what raw inputs each task needs from the graph or artifacts
 3. identify what outputs the provider should produce before signal mapping
-4. decide how provider output becomes candidates, signals, and finally a relationship group proposal
-5. decide which workflows should end in `propose_relationship_group`
-6. summarize the proposal-workflow design for user confirmation
+4. identify which concrete integrations should produce governed signals for each task
+5. decide which integrations are `blocking`, `required`, or `advisory`
+6. decide how provider output becomes candidates, signals, and finally a relationship group proposal
+7. decide which workflows should end in `propose_relationship_group`
+8. summarize the proposal-workflow design for user confirmation
 
 Ask targeted questions only about provider-backed judgment in this phase:
 
@@ -246,6 +318,15 @@ cruxible group list
 cruxible group get --group <group_id>
 cruxible group resolve --group <group_id> --action approve
 ```
+
+For each concrete group you inspect, answer the per-group questions:
+
+1. what is this group's actual `thesis_text`?
+2. what are this group's actual `thesis_facts`?
+3. what useful context belongs in this group's `analysis_state`?
+4. do the candidate relationships in this group actually belong together under one review decision?
+5. do the signals and evidence make the group reviewable, or does the grouping rule need to change?
+6. should this group be approved, rejected, or escalated for deeper review?
 
 If trust or reuse behavior matters, inspect prior resolutions and trust status before moving on.
 
