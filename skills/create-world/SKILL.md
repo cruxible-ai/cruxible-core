@@ -41,7 +41,7 @@ Use a concrete summary:
 - how it gets populated
 - notes or ambiguities
 
-Ask targeted questions only about domain shape in this phase. Do not jump ahead to workflow design unless the user raises it.
+Keep this phase focused on domain shape. Do not jump ahead to workflow design unless the user raises it.
 
 ## Write Step A: Write the base graph config
 
@@ -80,12 +80,7 @@ Start with the operating loop, not the config nouns. Ask:
 5. what should be automatically committed versus proposed for review?
 6. summarize the workflow plan for user confirmation
 
-Ask targeted questions only about operations in this phase:
-
-- how often does data refresh?
-- what should be automatically rebuilt?
-- what should be proposed instead of directly applied?
-- where is human review required?
+Keep this phase focused on operations. Ask only the workflow questions needed to understand refresh cadence, automatic rebuilds, proposal-vs-direct-apply boundaries, and where review is required.
 
 Then translate those answers into Cruxible terms:
 
@@ -452,7 +447,7 @@ In this phase:
   - `reason_codes` say what went wrong or what kind of correction is being made
   - `remediation_hint` says what kind of fix the feedback points toward
   - `scope_keys` are the named fields used to group and analyze similar feedback consistently
-- proposal groups may still be reviewed by humans or agents, but the durable feedback surface is the relationship outcome of that review
+- proposal groups may still be reviewed by humans or agents, but that review should usually resolve into relationship-scoped feedback
 - an `outcome` is later evidence about whether a prior resolution, query result, workflow result, or other system decision was actually correct or useful
 - an `outcome_profile` defines the structured vocabulary for those later results:
   - it anchors to either a `resolution` or a `receipt`
