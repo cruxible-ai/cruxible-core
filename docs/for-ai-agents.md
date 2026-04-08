@@ -2,7 +2,13 @@
 
 This guide explains how AI agents (Claude Code, Cursor, Codex, or any MCP-capable agent) should orchestrate Cruxible Core. You provide the intelligence; Core provides deterministic execution with proof.
 
-**MCP is the recommended interface** for domain onboarding and graph building. The CLI supports prompts and all core operations, but MCP returns structured data that agents can reason over more effectively.
+For **local instances**, CLI and MCP are the same shape over the same local runtime. Use whichever fits the host better.
+
+For **remote / governed instances**, the authenticated HTTP API is the primary execution interface. CLI and MCP are client adapters over that API. Today the CLI has broader parity than MCP, so treat MCP as the tool-calling adapter rather than the canonical surface.
+
+Workflow guidance should live in agent-side skills; MCP should remain a deterministic execution adapter, not the source of the workflow itself.
+
+Starter `SKILL.md` files for the old prompt workflows now live in the repo-level [skills](../skills) folder.
 
 ## Install Boundary
 
@@ -80,25 +86,6 @@ The graph is prebuilt. Load it and start querying:
 Other named queries available: `find_mechanism`, `suggest_alternative`.
 
 Every demo directory is a self-contained MCP workspace — the `.mcp.json` points at `cruxible-mcp` so agents can discover tools automatically when opened in that directory.
-
-## Workflow Prompts
-
-Cruxible includes guided workflow prompts that provide step-by-step instructions for common tasks. Use `cruxible_prompt()` to list them, or `cruxible_prompt("name", {args})` to read one.
-
-| Prompt | Args | Description |
-|--------|------|-------------|
-| `onboard_domain` | `domain` | Full workflow from raw data to working graph (11 steps) |
-| `prepare_data` | `data_description` | Checklist for profiling and cleaning data before workflow loading or legacy ingestion |
-| `review_graph` | `instance_id` | Review and improve an existing graph's quality |
-| `user_review` | `instance_id` | Collaborative edge review session with a human |
-| `analyze_feedback` | `instance_id`, `relationship_type` | Discover rejection patterns worth encoding as constraints |
-| `common_workflows` | _(none)_ | Common multi-tool sequences for debugging, review, and auditing |
-
-**Start with `onboard_domain`** for new domains, or **`review_graph`** for existing graphs. The prompts contain detailed checklists that go deeper than the summaries below.
-
-```
-cruxible_prompt("onboard_domain", {"domain": "drug interactions"})
-```
 
 ## Lifecycle
 
@@ -209,11 +196,7 @@ Add the named queries to the YAML config, re-validate with `cruxible_validate`, 
 
 ### Step 8 — Validate Graph Quality
 
-`cruxible_evaluate` checks structural health — orphans, violations, coverage gaps. For deeper review including cross-dataset gap analysis and intelligence-driven discovery, run the `review_graph` prompt:
-
-```
-cruxible_prompt("review_graph", {"instance_id": "<instance_id>"})
-```
+`cruxible_evaluate` checks structural health — orphans, violations, coverage gaps. For deeper review including cross-dataset gap analysis and intelligence-driven discovery, use your agent-side review skill/playbook and drive the loop with `cruxible_evaluate`, `cruxible_sample`, `cruxible_find_candidates`, `cruxible_get_entity`, `cruxible_get_relationship`, and `cruxible_feedback`.
 
 ### Step 9 — Run Sample Queries
 

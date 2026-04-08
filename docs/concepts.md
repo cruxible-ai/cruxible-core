@@ -188,7 +188,7 @@ Run `cruxible_evaluate` to check the graph for:
 
 When rejection patterns emerge from feedback, encode them as constraints:
 
-1. Use the `analyze_feedback` prompt or manually review feedback records
+1. Review feedback records directly or use an agent-side analysis skill/playbook
 2. Identify repeated property mismatches in rejected edges
 3. Call `cruxible_add_constraint` to encode the pattern as a rule
 4. Run `cruxible_evaluate` to verify constraints flag expected violations

@@ -146,9 +146,11 @@ This is the easiest way to evaluate Cruxible locally. If the same environment ca
 pip install cruxible-client
 ```
 
-Use `cruxible-client` when the agent only needs typed HTTP/API access to a separate Cruxible daemon.
+Use `cruxible-client` when the agent only needs typed HTTP/API access to a separate remote or governed Cruxible daemon.
 
 Permission modes are enforced at the daemon boundary. If an agent can import `cruxible-core` or access the same runtime/filesystem directly, those modes are advisory rather than isolating. If trust levels matter, keep `cruxible-core` out of the agent environment and talk to a separate daemon through `cruxible-client`.
+
+For local development, CLI and MCP are just two adapters over the same local runtime. The API-first/authenticated model matters for remote or governed instances.
 
 For agent setups, prefer:
 

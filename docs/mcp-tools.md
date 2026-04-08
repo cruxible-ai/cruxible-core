@@ -2,6 +2,8 @@
 
 Cruxible Core exposes MCP tools through the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). AI agents (Claude Code, Cursor, Codex, etc.) use these tools to orchestrate the full decision lifecycle: validate configs, lock and execute workflows, query the graph, provide feedback, and evaluate quality.
 
+For local instances, MCP and CLI are the same shape over the same runtime. For remote or governed instances, the authenticated HTTP API is the primary execution surface and MCP is one client adapter over it.
+
 ## Setup
 
 Install the MCP runtime with:
@@ -59,34 +61,6 @@ _No parameters._
 | Field | Type | Description |
 |-------|------|-------------|
 | `version` | string | Installed cruxible-core version (e.g., `"0.3.3"`) |
-
----
-
-### cruxible_prompt
-
-Read a workflow prompt, or list all available prompts.
-
-**Permission:** READ_ONLY
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `prompt_name` | string | no | Prompt to read (omit to list all) |
-| `args` | dict | no | Arguments for the prompt (e.g., `{"domain": "drug interactions"}`) |
-
-**List mode** (no arguments): Returns all available prompts with descriptions and required args.
-
-**Read mode** (with `prompt_name`): Returns the full prompt content for the specified workflow.
-
-**Available prompts:**
-
-| Prompt | Args | Description |
-|--------|------|-------------|
-| `onboard_domain` | `domain` | Full workflow from raw data to working graph |
-| `prepare_data` | `data_description` | Checklist for profiling and cleaning data before ingestion |
-| `review_graph` | `instance_id` | Review and improve an existing graph's quality |
-| `user_review` | `instance_id` | Collaborative edge review session with a human |
-| `analyze_feedback` | `instance_id`, `relationship_type` | Discover rejection patterns worth encoding as constraints |
-| `common_workflows` | _(none)_ | Common multi-tool sequences for debugging, review, and auditing |
 
 ---
 

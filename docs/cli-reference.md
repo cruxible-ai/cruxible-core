@@ -522,41 +522,6 @@ cruxible evaluate
 
 ---
 
-## cruxible prompt
-
-List or read workflow prompts. Prompts provide guided workflows for onboarding, graph review, feedback analysis, and more.
-
-### cruxible prompt list
-
-```bash
-cruxible prompt list
-```
-
-No options. Lists all available prompts with their descriptions and required arguments.
-
-### cruxible prompt read
-
-```bash
-cruxible prompt read --name <prompt_name> [--arg KEY=VALUE ...]
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--name` | **yes** | Prompt name (from `prompt list`) |
-| `--arg` | no | Prompt argument as `KEY=VALUE` (repeatable) |
-
-**Example:**
-
-```bash
-cruxible prompt read --name onboard_domain --arg domain=drug_interactions
-# [full onboarding workflow for the domain]
-
-cruxible prompt read --name common_workflows
-# [common tool sequences for debugging, review, refinement]
-```
-
----
-
 ## Error Handling
 
 All commands catch `CoreError` exceptions and print a user-friendly error message to stderr with a non-zero exit code. Use `--help` on any command for usage details.
