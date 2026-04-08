@@ -1,6 +1,6 @@
 ---
 name: onboard-domain
-description: Go from raw domain data to a working Cruxible world using the real CLI flow.
+description: Go from raw domain data to a working Cruxible world through staged understanding, config writes, loading, and review-loop design.
 ---
 
 # Onboard Domain
@@ -9,16 +9,24 @@ Use this skill when a user wants to turn new data into a usable Cruxible world.
 
 If the source files are messy, run `prepare-data` first.
 
-## Phase 1: Understand the domain
+Work in stages. Do not try to design the graph, workflows, queries, and review loop all at once.
+
+## Phase 1: Understand the domain shape
 
 Before writing config:
 
 1. inspect the source files
-2. identify entity types and primary keys
-3. identify deterministic relationships present in the data
-4. identify inferred or cross-dataset relationships that will need review or matching
-5. propose 2-4 user-facing questions the world should answer
-6. summarize the model for user confirmation before building
+2. identify entity types and likely primary keys
+   - a primary key is the stable property that uniquely identifies one real entity across reloads and updates
+   - prefer durable source IDs or external identifiers
+   - avoid names, titles, or other mutable text unless there is no better identifier
+   - if no good primary key exists, stop and design one before continuing
+3. identify deterministic relationships between entities that can be loaded directly from the source data
+4. identify any obvious bad states that should remain invalid across future ingests, refreshes, and graph updates, and should later become constraints or quality checks
+   - do not invent constraints just to fill the slot
+   - if there are no clear durable invalid states yet, leave this empty for now
+5. identify the major user-facing query and use-case categories the world should eventually support
+6. summarize the structural model for user confirmation
 
 Use a concrete summary:
 
@@ -31,31 +39,20 @@ Use a concrete summary:
 - how it gets populated
 - notes or ambiguities
 
-Do not start writing config until the model is confirmed.
+Ask targeted questions only about domain shape in this phase. Do not jump ahead to workflow design unless the user raises it.
 
-## Phase 2: Write the config
+## Write Step A: Write the base graph config
 
-Prefer deterministic loading via:
+Write only the minimum needed for the base graph:
 
 - `entity_types`
 - `relationships`
-- `contracts`
-- `artifacts`
-- `providers`
-- `workflows`
+- obvious `constraints`
+- minimal `contracts` only if clearly required
 
-Use `ingestion` only when intentionally keeping a legacy mapping-based config.
+Do not spend time on named queries, review loops, or advanced workflows yet.
 
-For the first pass, write:
-
-- clear descriptions
-- primary keys on entity properties
-- deterministic workflows/providers/artifacts needed for loading
-- constraints for obvious bad states
-
-Do not spend time polishing named queries yet. Add them after the initial graph shape is visible.
-
-## Phase 3: Validate and initialize
+## Phase 2: Validate the base graph config
 
 Use the real CLI:
 
@@ -64,83 +61,93 @@ cruxible validate --config config.yaml
 cruxible init --config config.yaml --root-dir .
 ```
 
-Use `--data-dir` only when the config expects a separate data directory.
+At this stage, the goal is not to design or run the full operational loading path yet. The goal is to confirm that the base graph definition is coherent enough to proceed.
 
-Stop on validation or init errors.
+Stop on validation or init errors. Do not continue with a broken base config.
 
-## Phase 4: Load deterministic state
+## Phase 3: Understand the operational workflows
 
-If the config uses workflows:
+Once the base graph shape is real, figure out how the world is built and maintained:
+
+1. identify recurring deterministic build or refresh workflows
+2. identify artifacts, providers, and contracts those workflows require
+3. identify which workflows should be canonical
+4. identify any inference, matching, or proposal workflows that are needed later
+5. summarize the workflow plan for user confirmation
+
+Ask targeted questions only about operations in this phase:
+
+- how often does data refresh?
+- what should be automatically rebuilt?
+- what should be proposed instead of directly applied?
+- where is human review required?
+
+## Write Step B: Add workflow machinery
+
+Extend the config with:
+
+- `artifacts`
+- `providers`
+- `contracts`
+- deterministic `workflows`
+
+Add proposal or review-oriented workflows only where the need is already clear.
+
+## Phase 4: Lock, run, and inspect the workflowed world
+
+After workflow config changes:
 
 ```bash
+cruxible validate --config config.yaml
+cruxible reload-config --config config.yaml
 cruxible lock
-cruxible run --workflow <workflow_name> --apply
-```
-
-If you need to inspect canonical preview state before committing:
-
-```bash
-cruxible run --workflow <workflow_name>
-cruxible apply --workflow <workflow_name> --apply-digest <digest> --head-snapshot <snapshot_id>
 ```
 
 Use `cruxible plan --workflow <workflow_name>` when you need to inspect the compiled workflow before running it.
 
-Legacy path:
+Then run representative workflows:
 
 ```bash
-cruxible ingest --mapping <mapping_name> --file <path>
+cruxible run --workflow <workflow_name> --apply
 ```
 
-Do not keep going past tool errors.
-
-## Phase 5: Inspect the loaded graph before designing queries
-
-After loading, inspect what actually exists:
+Re-check the world with:
 
 ```bash
-cruxible schema
 cruxible stats
 cruxible sample --type <EntityType> --limit 5
 cruxible inspect entity --type <EntityType> --id <entity_id>
 ```
 
-Confirm:
+## Phase 5: Understand the user-facing query surface
 
-- entity types and counts look plausible
-- key relationships actually exist
-- sample entities have the expected properties
-- representative entities have the expected neighbors
+Only after the graph and workflows are real:
 
-If the world shape is wrong, fix config or loaders before adding named queries.
+1. identify the repeated user questions that matter most
+2. choose the real entry-point entity type for each question
+3. decide the traversal direction and fan-out needed
+4. identify what evidence path a human should be able to inspect
+5. summarize the planned query surface for user confirmation
 
-## Phase 6: Add inferred or cross-dataset relationships
+Ask targeted questions only about usage in this phase:
 
-Choose the simplest path that matches the problem:
+- what does the user start from?
+- what answer shape do they want back?
+- what neighboring context is required?
+- what would make an answer trustworthy?
 
-- simple exact or case-insensitive matching
-- reviewed relationship creation
-- free-text or ambiguous cases with explicit review
+## Write Step C: Add named queries
 
-Entities from free text or outside the deterministic load must exist before you relate them:
+Add `named_queries` only after the graph shape is stable.
 
-```bash
-cruxible add-entity ...
-cruxible add-relationship ...
-```
-
-## Phase 7: Design named queries and reload the config
-
-Once the graph shape is stable, add named queries to `config.yaml`.
-
-When the config changes, do not re-init. Reload it:
+When the config changes:
 
 ```bash
 cruxible validate --config config.yaml
 cruxible reload-config --config config.yaml
 ```
 
-If providers, artifacts, or workflows changed, lock again:
+If providers, artifacts, or workflows changed too, lock again:
 
 ```bash
 cruxible lock
@@ -149,12 +156,12 @@ cruxible lock
 Query-design rules:
 
 1. choose the real entry point entity type
-2. choose traversal direction carefully
+2. choose traversal direction deliberately
 3. keep fan-out controlled
 4. test representative cases, not just happy-path IDs
 5. inspect receipts, not just results
 
-## Phase 8: Prove the queries work
+## Phase 6: Prove the queries work
 
 Run at least one real query and inspect its receipt:
 
@@ -165,15 +172,52 @@ cruxible explain --receipt <receipt_id>
 
 Do not hand off a world whose named queries have not been exercised.
 
-## Phase 9: Evaluate and hand off
+## Phase 7: Understand the review and learning loop
 
-1. run `cruxible evaluate`
-2. sample representative queries again if needed
-3. run `review-graph` if the world needs deeper quality work
-4. summarize:
-   - entity counts
-   - relationship counts
-   - deterministic workflows used
-   - named queries with example invocations
-   - one representative query or receipt that was checked
-   - next actions the user can take
+Only after the base world, workflows, and named queries are in place:
+
+1. identify where humans will review edges, proposals, or decisions
+2. identify what repeated failure modes should become constraints, quality checks, or decision policies
+3. identify what structured feedback should be captured
+4. identify what downstream outcomes should be recorded
+5. identify what feedback and outcome flywheels should improve the world over time
+6. summarize the review and learning loop for user confirmation
+
+Ask targeted questions only about the flywheel in this phase:
+
+- what gets reviewed?
+- what gets approved or rejected?
+- what later real-world outcome tells you whether the system was right?
+- what repeated failure should become a rule instead of a one-off correction?
+
+## Write Step D: Add review, feedback, and outcome structure
+
+Add the later-stage governance pieces that are actually justified:
+
+- `quality_checks`
+- `constraints`
+- `decision_policies`
+- `feedback_profiles`
+- `outcome_profiles`
+
+Design these around real recurring review and outcome surfaces, not speculative completeness.
+
+## Phase 8: Evaluate and hand off
+
+Run:
+
+```bash
+cruxible evaluate
+```
+
+Then summarize:
+
+- entity counts
+- relationship counts
+- deterministic workflows used
+- named queries with example invocations
+- one representative query or receipt that was checked
+- review surfaces and feedback/outcome plans
+- next actions the user can take
+
+Simple domains may stop earlier. Do not force every domain to use every later-stage feature.
