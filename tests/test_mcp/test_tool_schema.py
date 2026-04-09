@@ -146,8 +146,12 @@ class TestInputSchema:
         assert "root_dir" in required
         assert "transport_ref" in props
         assert "world_ref" in props
+        assert "kit" in props
+        assert "no_kit" in props
         assert "transport_ref" not in required
         assert "world_ref" not in required
+        assert "kit" not in required
+        assert "no_kit" not in required
 
 
 class TestOutputSchema:

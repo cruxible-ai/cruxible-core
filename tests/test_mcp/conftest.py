@@ -355,8 +355,16 @@ class GovernedLocalClient:
         root_dir: str,
         transport_ref: str | None = None,
         world_ref: str | None = None,
+        kit: str | None = None,
+        no_kit: bool = False,
     ):
-        return local_api._handle_world_fork_governed(transport_ref, world_ref, root_dir)
+        return local_api._handle_world_fork_governed(
+            transport_ref,
+            world_ref,
+            kit,
+            no_kit,
+            root_dir,
+        )
 
     def world_publish(self, instance_id: str, *, output_dir: str | None = None):
         return local_api._handle_world_publish_local(instance_id, output_dir=output_dir)

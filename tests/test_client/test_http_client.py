@@ -374,6 +374,7 @@ def test_world_fork_serializes_world_ref():
     result = client.world_fork(
         root_dir="/tmp/fork",
         world_ref="kev-reference",
+        kit="kev-triage",
     )
 
     assert result.instance_id == "inst_fork"
@@ -381,6 +382,8 @@ def test_world_fork_serializes_world_ref():
     assert captured["payload"] == {
         "transport_ref": None,
         "world_ref": "kev-reference",
+        "kit": "kev-triage",
+        "no_kit": False,
         "root_dir": "/tmp/fork",
     }
 
