@@ -17,6 +17,7 @@ class WorldCatalogEntry:
     alias: str
     base_transport_ref: str
     latest_release: str = "latest"
+    default_kit: str | None = None
     description: str | None = None
 
 
@@ -27,6 +28,7 @@ class ResolvedWorldSource:
     source_ref: str
     pull_transport_ref: str
     tracking_transport_ref: str
+    default_kit: str | None = None
     requested_release: str | None = None
     alias: str | None = None
 
@@ -35,6 +37,7 @@ WORLD_CATALOG: dict[str, WorldCatalogEntry] = {
     "kev-reference": WorldCatalogEntry(
         alias="kev-reference",
         base_transport_ref="oci://ghcr.io/cruxible-ai/models/kev-reference",
+        default_kit="kev-triage",
         description="Published KEV reference world",
     ),
 }
@@ -60,6 +63,7 @@ def resolve_world_source(
             source_ref=normalized_transport,
             pull_transport_ref=normalized_transport,
             tracking_transport_ref=normalized_transport,
+            default_kit=None,
         )
     assert normalized_world is not None
     if "://" in normalized_world:
@@ -83,6 +87,7 @@ def resolve_world_source(
         source_ref=normalized_world,
         pull_transport_ref=pull_transport_ref,
         tracking_transport_ref=tracking_transport_ref,
+        default_kit=entry.default_kit,
         requested_release=release,
         alias=alias,
     )

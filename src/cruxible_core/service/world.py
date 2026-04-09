@@ -28,6 +28,7 @@ from cruxible_core.service.types import (
 from cruxible_core.snapshot.types import PublishedWorldManifest, UpstreamMetadata
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import PulledReleaseBundle
+from cruxible_core.world_kits import materialize_world_kit
 from cruxible_core.world_refs import resolve_world_source
 
 
@@ -66,6 +67,8 @@ def service_fork_world(
     *,
     transport_ref: str | None = None,
     world_ref: str | None = None,
+    kit: str | None = None,
+    no_kit: bool = False,
     root_dir: str | Path,
     instance_mode: str = CruxibleInstance.DEV_MODE,
 ) -> WorldForkResult:
@@ -78,7 +81,20 @@ def service_fork_world(
     pulled = _pull_bundle(resolved.pull_transport_ref)
     upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
 
-    overlay_path = _write_default_overlay_config(root, pulled.manifest.world_id, upstream_dir)
+    normalized_kit = (kit or "").strip() or None
+    if normalized_kit is not None and no_kit:
+        raise ConfigError("Provide kit or no_kit, not both")
+    selected_kit = None if no_kit else (normalized_kit or resolved.default_kit)
+
+    overlay_path = (
+        materialize_world_kit(
+            kit=selected_kit,
+            root=root,
+            upstream_world_id=pulled.manifest.world_id,
+        )
+        if selected_kit is not None
+        else _write_default_overlay_config(root, pulled.manifest.world_id, upstream_dir)
+    )
     composed_path = root / ".cruxible" / "composed" / "config.yaml"
     write_runtime_composed_config(
         base_path=upstream_dir / "config.yaml",

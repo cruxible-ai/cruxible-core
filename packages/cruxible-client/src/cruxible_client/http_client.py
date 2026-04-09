@@ -159,12 +159,16 @@ class CruxibleClient:
         root_dir: str,
         transport_ref: str | None = None,
         world_ref: str | None = None,
+        kit: str | None = None,
+        no_kit: bool = False,
     ) -> contracts.WorldForkResult:
         response = self._client.post(
             "/api/v1/worlds/fork",
             json={
                 "transport_ref": transport_ref,
                 "world_ref": world_ref,
+                "kit": kit,
+                "no_kit": no_kit,
                 "root_dir": root_dir,
             },
         )

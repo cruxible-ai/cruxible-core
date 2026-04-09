@@ -22,6 +22,8 @@ async def world_fork(req: WorldForkRequest) -> contracts.WorldForkResult:
     return local_api._handle_world_fork_governed(
         transport_ref=req.transport_ref,
         world_ref=req.world_ref,
+        kit=req.kit,
+        no_kit=req.no_kit,
         root_dir=req.root_dir,
     )
 

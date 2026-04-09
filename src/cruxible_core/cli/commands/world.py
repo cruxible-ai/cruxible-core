@@ -73,11 +73,22 @@ def world_publish_cmd(
     "--world-ref",
     help="World alias, e.g. kev-reference or kev-reference@2026-03-27.",
 )
+@click.option(
+    "--kit",
+    help="Apply a checked-in local overlay kit, e.g. kev-triage.",
+)
+@click.option(
+    "--no-kit",
+    is_flag=True,
+    help="Skip automatic kit application and create a bare fork overlay.",
+)
 @click.option("--root-dir", required=True, help="Root directory for the new local fork.")
 @handle_errors
 def world_fork_cmd(
     transport_ref: str | None,
     world_ref: str | None,
+    kit: str | None,
+    no_kit: bool,
     root_dir: str,
 ) -> None:
     """Create a new local fork instance from a published world release."""
@@ -86,10 +97,14 @@ def world_fork_cmd(
             root_dir=root_dir,
             transport_ref=transport_ref,
             world_ref=world_ref,
+            kit=kit,
+            no_kit=no_kit,
         ),
         lambda: service_fork_world(
             transport_ref=transport_ref,
             world_ref=world_ref,
+            kit=kit,
+            no_kit=no_kit,
             root_dir=root_dir,
         ),
         allow_local=False,

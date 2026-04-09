@@ -196,12 +196,16 @@ class WorldPublishRequest(BaseModel):
 class WorldForkRequest(BaseModel):
     transport_ref: str | None = None
     world_ref: str | None = None
+    kit: str | None = None
+    no_kit: bool = False
     root_dir: str
 
     @model_validator(mode="after")
     def validate_source(self) -> WorldForkRequest:
         if bool((self.transport_ref or "").strip()) == bool((self.world_ref or "").strip()):
             raise ValueError("Provide exactly one of transport_ref or world_ref")
+        if bool((self.kit or "").strip()) and self.no_kit:
+            raise ValueError("Provide kit or no_kit, not both")
         return self
 
 

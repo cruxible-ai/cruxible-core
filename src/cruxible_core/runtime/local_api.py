@@ -1622,6 +1622,8 @@ def _handle_world_publish_local(
 def _handle_world_fork_local(
     transport_ref: str | None,
     world_ref: str | None,
+    kit: str | None,
+    no_kit: bool,
     root_dir: str,
 ) -> contracts.WorldForkResult:
     """Create a new local fork from a published world release."""
@@ -1634,6 +1636,8 @@ def _handle_world_fork_local(
     result = service_fork_world(
         transport_ref=transport_ref,
         world_ref=world_ref,
+        kit=kit,
+        no_kit=no_kit,
         root_dir=root_dir,
     )
     registered = get_registry().get_or_create_local_instance(Path(root_dir))
@@ -1649,6 +1653,8 @@ def _handle_world_fork_local(
 def _handle_world_fork_governed(
     transport_ref: str | None,
     world_ref: str | None,
+    kit: str | None,
+    no_kit: bool,
     root_dir: str,
 ) -> contracts.WorldForkResult:
     """Create a daemon-owned governed fork from a published world release."""
@@ -1662,6 +1668,8 @@ def _handle_world_fork_governed(
     result = service_fork_world(
         transport_ref=transport_ref,
         world_ref=world_ref,
+        kit=kit,
+        no_kit=no_kit,
         root_dir=registered.record.location,
         instance_mode=CruxibleInstance.GOVERNED_MODE,
     )

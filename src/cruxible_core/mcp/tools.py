@@ -67,12 +67,16 @@ def register_tools(server: FastMCP) -> list[str]:
         root_dir: str,
         transport_ref: str | None = None,
         world_ref: str | None = None,
+        kit: str | None = None,
+        no_kit: bool = False,
     ) -> contracts.WorldForkResult:
         """Create a new governed fork from a published world release."""
         return handlers.handle_world_fork(
             root_dir=root_dir,
             transport_ref=transport_ref,
             world_ref=world_ref,
+            kit=kit,
+            no_kit=no_kit,
         )
 
     @_tool
