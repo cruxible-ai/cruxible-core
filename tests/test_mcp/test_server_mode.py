@@ -155,7 +155,7 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
     ("fn", "args", "label"),
     [
         (handlers.handle_init, ("./project", None, "name: demo", None), "cruxible_init"),
-        (handlers.handle_world_fork, ("file:///tmp/release", "./fork"), "cruxible_world_fork"),
+        (handlers.handle_world_fork, ("./fork", "file:///tmp/release"), "cruxible_world_fork"),
         (handlers.handle_workflow_run, ("inst_123", "wf", {"id": "1"}), "cruxible_run_workflow"),
     ],
 )

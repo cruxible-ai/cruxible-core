@@ -138,6 +138,17 @@ class TestInputSchema:
         # root_dir remains required
         assert "root_dir" in required
 
+    def test_world_fork_has_optional_world_ref_and_transport_ref(self, server):
+        schemas = _get_tool_schemas(server)
+        schema = schemas["cruxible_world_fork"].inputSchema
+        props = schema["properties"]
+        required = set(schema.get("required", []))
+        assert "root_dir" in required
+        assert "transport_ref" in props
+        assert "world_ref" in props
+        assert "transport_ref" not in required
+        assert "world_ref" not in required
+
 
 class TestOutputSchema:
     """Verify typed returns produce outputSchema with expected keys."""

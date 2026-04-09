@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from cruxible_client import contracts
 
@@ -194,8 +194,15 @@ class WorldPublishRequest(BaseModel):
 
 
 class WorldForkRequest(BaseModel):
-    transport_ref: str
+    transport_ref: str | None = None
+    world_ref: str | None = None
     root_dir: str
+
+    @model_validator(mode="after")
+    def validate_source(self) -> WorldForkRequest:
+        if bool((self.transport_ref or "").strip()) == bool((self.world_ref or "").strip()):
+            raise ValueError("Provide exactly one of transport_ref or world_ref")
+        return self
 
 
 class WorldPullApplyRequest(BaseModel):

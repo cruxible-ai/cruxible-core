@@ -150,13 +150,18 @@ def handle_validate(
 
 
 def handle_world_fork(
-    transport_ref: str,
     root_dir: str,
+    transport_ref: str | None = None,
+    world_ref: str | None = None,
 ) -> contracts.WorldForkResult:
     """Create a new governed fork from a published world release."""
     return _dispatch_remote_or_local(
-        lambda client: client.world_fork(transport_ref=transport_ref, root_dir=root_dir),
-        lambda: local_api._handle_world_fork_local(transport_ref, root_dir),
+        lambda client: client.world_fork(
+            root_dir=root_dir,
+            transport_ref=transport_ref,
+            world_ref=world_ref,
+        ),
+        lambda: local_api._handle_world_fork_local(transport_ref, world_ref, root_dir),
         allow_local=False,
         operation_name="cruxible_world_fork",
     )

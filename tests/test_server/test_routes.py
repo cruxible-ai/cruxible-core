@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.config import get_server_state_dir
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
+from cruxible_core.world_refs import WorldCatalogEntry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -283,6 +285,71 @@ def test_world_publish_fork_and_status_routes(
     assert status.status_code == 200
     assert status.json()["upstream"]["world_id"] == "car-parts"
     assert status.json()["upstream"]["release_id"] == "v1.0.0"
+
+
+def test_world_fork_route_accepts_world_ref(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    releases_dir = tmp_path / "releases"
+    version_dir = releases_dir / "v1.0.0"
+    latest_dir = releases_dir / "current"
+    publish = app_client.post(
+        f"/api/v1/{instance_id}/world/publish",
+        json={
+            "transport_ref": f"file://{version_dir}",
+            "world_id": "car-parts",
+            "release_id": "v1.0.0",
+            "compatibility": "data_only",
+        },
+    )
+    assert publish.status_code == 200
+    shutil.copytree(version_dir, latest_dir)
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "car-parts": WorldCatalogEntry(
+                alias="car-parts",
+                base_transport_ref=f"file://{releases_dir}",
+                latest_release="current",
+            )
+        },
+    )
+
+    fork_root = tmp_path / "forked-alias-model"
+    fork = app_client.post(
+        "/api/v1/worlds/fork",
+        json={
+            "world_ref": "car-parts",
+            "root_dir": str(fork_root),
+        },
+    )
+    assert fork.status_code == 200
+    fork_instance_id = fork.json()["instance_id"]
+
+    status = app_client.get(f"/api/v1/{fork_instance_id}/world/status")
+    assert status.status_code == 200
+    assert status.json()["upstream"]["requested_source_ref"] == "car-parts"
+    assert status.json()["upstream"]["requested_transport_ref"] == f"file://{latest_dir}"
+    assert status.json()["upstream"]["transport_ref"] == f"file://{latest_dir}"
+
+
+def test_world_fork_route_requires_exactly_one_source(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    response = app_client.post(
+        "/api/v1/worlds/fork",
+        json={
+            "transport_ref": "file:///tmp/release",
+            "world_ref": "car-parts",
+            "root_dir": str(tmp_path / "fork"),
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_permission_denied_returns_structured_403(

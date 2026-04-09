@@ -30,6 +30,7 @@ from cruxible_core.service import (
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.workflow.executor import _apply_entity_set, _apply_relationship_set
+from cruxible_core.world_refs import WorldCatalogEntry
 
 WORLD_MODEL_YAML = """\
 version: "1.0"
@@ -147,6 +148,63 @@ def test_publish_fork_and_pull_apply_preserves_fork_overlay(
     status = service_world_status(fork_instance)
     assert status.upstream is not None
     assert status.upstream.release_id == "v1.1.0"
+
+
+def test_fork_world_ref_specific_release_tracks_latest_ref(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_instance, current_dir = published_release_fixture
+    releases_dir = current_dir.parent
+    version_dir = releases_dir / "v1.0.0"
+    shutil.copytree(current_dir, version_dir)
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "case-law": WorldCatalogEntry(
+                alias="case-law",
+                base_transport_ref=f"file://{releases_dir}",
+                latest_release="current",
+            )
+        },
+    )
+
+    fork_root = tmp_path / "forked-model"
+    fork_instance = service_fork_world(
+        world_ref="case-law@v1.0.0",
+        root_dir=fork_root,
+    ).instance
+
+    status = service_world_status(fork_instance)
+    assert status.upstream is not None
+    assert status.upstream.release_id == "v1.0.0"
+    assert status.upstream.requested_source_ref == "case-law@v1.0.0"
+    assert status.upstream.requested_transport_ref == f"file://{version_dir}"
+    assert status.upstream.transport_ref == f"file://{current_dir}"
+
+    root_graph = root_instance.load_graph()
+    root_graph.add_entity(
+        EntityInstance(
+            entity_type="Case",
+            entity_id="CASE-C",
+            properties={"case_id": "CASE-C", "title": "Gamma"},
+        )
+    )
+    root_instance.save_graph(root_graph)
+    successor_dir = tmp_path / "releases" / "v1.1.0"
+    service_publish_world(
+        root_instance,
+        transport_ref=f"file://{successor_dir}",
+        world_id="case-law",
+        release_id="v1.1.0",
+        compatibility="data_only",
+    )
+    _replace_release_dir(successor_dir, current_dir)
+
+    preview = service_pull_world_preview(fork_instance)
+    assert preview.target_release_id == "v1.1.0"
+    assert preview.conflicts == []
 
 
 def test_pull_preview_surfaces_dangling_fork_relationships(

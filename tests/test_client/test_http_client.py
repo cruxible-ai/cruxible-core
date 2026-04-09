@@ -275,6 +275,8 @@ def test_world_endpoints_use_expected_routes():
                 json={
                     "upstream": {
                         "transport_ref": "file:///tmp/releases/current",
+                        "requested_source_ref": "case-law@v1.0.0",
+                        "requested_transport_ref": "file:///tmp/releases/v1.0.0",
                         "world_id": "case-law",
                         "release_id": "v1.0.0",
                         "snapshot_id": "snap_1",
@@ -328,7 +330,10 @@ def test_world_endpoints_use_expected_routes():
         release_id="v1.0.0",
         compatibility="data_only",
     ).manifest.release_id == "v1.0.0"
-    assert client.world_status("inst_123").upstream is not None
+    upstream = client.world_status("inst_123").upstream
+    assert upstream is not None
+    assert upstream.requested_source_ref == "case-law@v1.0.0"
+    assert upstream.requested_transport_ref == "file:///tmp/releases/v1.0.0"
     assert client.world_pull_preview("inst_123").apply_digest == "sha256:apply"
     assert client.world_pull_apply(
         "inst_123",
@@ -340,6 +345,44 @@ def test_world_endpoints_use_expected_routes():
     assert captured[2][0].endswith("/api/v1/inst_123/world/status")
     assert captured[3][0].endswith("/api/v1/inst_123/world/pull/preview")
     assert captured[4][0].endswith("/api/v1/inst_123/world/pull/apply")
+
+
+def test_world_fork_serializes_world_ref():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "inst_fork",
+                "manifest": {
+                    "format_version": 1,
+                    "world_id": "kev-reference",
+                    "release_id": "2026-03-27",
+                    "snapshot_id": "snap_1",
+                    "compatibility": "data_only",
+                    "owned_entity_types": ["Vulnerability"],
+                    "owned_relationship_types": ["affects_product"],
+                    "parent_release_id": None,
+                },
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.world_fork(
+        root_dir="/tmp/fork",
+        world_ref="kev-reference",
+    )
+
+    assert result.instance_id == "inst_fork"
+    assert captured["path"].endswith("/api/v1/worlds/fork")
+    assert captured["payload"] == {
+        "transport_ref": None,
+        "world_ref": "kev-reference",
+        "root_dir": "/tmp/fork",
+    }
 
 
 def test_stats_inspect_and_reload_use_expected_routes():

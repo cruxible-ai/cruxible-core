@@ -21,6 +21,7 @@ async def world_fork(req: WorldForkRequest) -> contracts.WorldForkResult:
     """Create a new governed fork from a published world release."""
     return local_api._handle_world_fork_governed(
         transport_ref=req.transport_ref,
+        world_ref=req.world_ref,
         root_dir=req.root_dir,
     )
 

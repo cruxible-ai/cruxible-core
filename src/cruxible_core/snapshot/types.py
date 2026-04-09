@@ -46,6 +46,8 @@ class UpstreamMetadata(BaseModel):
     """Per-instance upstream release tracking metadata for pullable forks."""
 
     transport_ref: str
+    requested_source_ref: str | None = None
+    requested_transport_ref: str | None = None
     world_id: str
     release_id: str
     snapshot_id: str

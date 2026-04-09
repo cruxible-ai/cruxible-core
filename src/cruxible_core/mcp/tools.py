@@ -64,11 +64,16 @@ def register_tools(server: FastMCP) -> list[str]:
 
     @_tool
     def cruxible_world_fork(
-        transport_ref: str,
         root_dir: str,
+        transport_ref: str | None = None,
+        world_ref: str | None = None,
     ) -> contracts.WorldForkResult:
         """Create a new governed fork from a published world release."""
-        return handlers.handle_world_fork(transport_ref, root_dir)
+        return handlers.handle_world_fork(
+            root_dir=root_dir,
+            transport_ref=transport_ref,
+            world_ref=world_ref,
+        )
 
     @_tool
     def cruxible_lock_workflow(instance_id: str) -> contracts.WorkflowLockResult:

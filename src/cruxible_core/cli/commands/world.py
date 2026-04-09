@@ -68,14 +68,30 @@ def world_publish_cmd(
 
 
 @world_group.command("fork")
-@click.option("--transport-ref", required=True, help="Transport ref, e.g. file://... or oci://...")
+@click.option("--transport-ref", help="Transport ref, e.g. file://... or oci://...")
+@click.option(
+    "--world-ref",
+    help="World alias, e.g. kev-reference or kev-reference@2026-03-27.",
+)
 @click.option("--root-dir", required=True, help="Root directory for the new local fork.")
 @handle_errors
-def world_fork_cmd(transport_ref: str, root_dir: str) -> None:
+def world_fork_cmd(
+    transport_ref: str | None,
+    world_ref: str | None,
+    root_dir: str,
+) -> None:
     """Create a new local fork instance from a published world release."""
     result = _dispatch_cli(
-        lambda client: client.world_fork(transport_ref=transport_ref, root_dir=root_dir),
-        lambda: service_fork_world(transport_ref=transport_ref, root_dir=root_dir),
+        lambda client: client.world_fork(
+            root_dir=root_dir,
+            transport_ref=transport_ref,
+            world_ref=world_ref,
+        ),
+        lambda: service_fork_world(
+            transport_ref=transport_ref,
+            world_ref=world_ref,
+            root_dir=root_dir,
+        ),
         allow_local=False,
         command_name="world fork",
     )
@@ -101,7 +117,11 @@ def world_status_cmd() -> None:
         return
     click.echo(f"World: {result.upstream.world_id}")
     click.echo(f"Release: {result.upstream.release_id}")
-    click.echo(f"Transport: {result.upstream.transport_ref}")
+    if result.upstream.requested_source_ref is not None:
+        click.echo(f"Requested source: {result.upstream.requested_source_ref}")
+    if result.upstream.requested_transport_ref is not None:
+        click.echo(f"Requested transport: {result.upstream.requested_transport_ref}")
+    click.echo(f"Tracking transport: {result.upstream.transport_ref}")
     click.echo(f"Snapshot: {result.upstream.snapshot_id}")
 
 

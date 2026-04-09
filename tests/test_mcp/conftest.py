@@ -349,8 +349,14 @@ class GovernedLocalClient:
             limit=limit,
         )
 
-    def world_fork(self, *, transport_ref: str, root_dir: str):
-        return local_api._handle_world_fork_governed(transport_ref, root_dir)
+    def world_fork(
+        self,
+        *,
+        root_dir: str,
+        transport_ref: str | None = None,
+        world_ref: str | None = None,
+    ):
+        return local_api._handle_world_fork_governed(transport_ref, world_ref, root_dir)
 
     def world_publish(self, instance_id: str, *, output_dir: str | None = None):
         return local_api._handle_world_publish_local(instance_id, output_dir=output_dir)

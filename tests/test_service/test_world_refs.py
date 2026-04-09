@@ -1,0 +1,94 @@
+"""Tests for world alias resolution helpers."""
+
+from __future__ import annotations
+
+import pytest
+
+from cruxible_core.errors import ConfigError
+from cruxible_core.world_refs import WorldCatalogEntry, resolve_world_source
+
+
+def test_transport_ref_passthrough() -> None:
+    resolved = resolve_world_source(transport_ref="file:///tmp/releases/current")
+
+    assert resolved.source_ref == "file:///tmp/releases/current"
+    assert resolved.pull_transport_ref == "file:///tmp/releases/current"
+    assert resolved.tracking_transport_ref == "file:///tmp/releases/current"
+    assert resolved.alias is None
+
+
+def test_world_ref_latest_uses_tracking_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "case-law": WorldCatalogEntry(
+                alias="case-law",
+                base_transport_ref="file:///tmp/releases",
+                latest_release="current",
+            )
+        },
+    )
+
+    resolved = resolve_world_source(world_ref="case-law")
+
+    assert resolved.source_ref == "case-law"
+    assert resolved.pull_transport_ref == "file:///tmp/releases/current"
+    assert resolved.tracking_transport_ref == "file:///tmp/releases/current"
+    assert resolved.alias == "case-law"
+    assert resolved.requested_release is None
+
+
+def test_world_ref_specific_release_still_tracks_latest(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "kev-reference": WorldCatalogEntry(
+                alias="kev-reference",
+                base_transport_ref="oci://ghcr.io/cruxible-ai/models/kev-reference",
+            )
+        },
+    )
+
+    resolved = resolve_world_source(world_ref="kev-reference@2026-03-27")
+
+    assert resolved.source_ref == "kev-reference@2026-03-27"
+    assert resolved.pull_transport_ref == "oci://ghcr.io/cruxible-ai/models/kev-reference:2026-03-27"
+    assert resolved.tracking_transport_ref == "oci://ghcr.io/cruxible-ai/models/kev-reference:latest"
+    assert resolved.requested_release == "2026-03-27"
+
+
+def test_world_ref_requires_known_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cruxible_core.world_refs.get_world_catalog", lambda: {})
+
+    with pytest.raises(ConfigError, match="Unknown world_ref alias"):
+        resolve_world_source(world_ref="missing")
+
+
+@pytest.mark.parametrize(
+    ("world_ref", "message"),
+    [
+        ("@v1", "alias must not be empty"),
+        ("case-law@", "release must not be empty"),
+        ("case law", "alias must match"),
+        ("case-law@../../escape", "release must match"),
+        ("case/law", "alias must match"),
+    ],
+)
+def test_world_ref_rejects_malformed_parts(
+    world_ref: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "case-law": WorldCatalogEntry(
+                alias="case-law",
+                base_transport_ref="file:///tmp/releases",
+                latest_release="current",
+            )
+        },
+    )
+
+    with pytest.raises(ConfigError, match=message):
+        resolve_world_source(world_ref=world_ref)

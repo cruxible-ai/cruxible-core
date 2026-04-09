@@ -28,6 +28,7 @@ from cruxible_core.service.types import (
 from cruxible_core.snapshot.types import PublishedWorldManifest, UpstreamMetadata
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import PulledReleaseBundle
+from cruxible_core.world_refs import resolve_world_source
 
 
 def service_publish_world(
@@ -63,7 +64,8 @@ def service_publish_world(
 
 def service_fork_world(
     *,
-    transport_ref: str,
+    transport_ref: str | None = None,
+    world_ref: str | None = None,
     root_dir: str | Path,
     instance_mode: str = CruxibleInstance.DEV_MODE,
 ) -> WorldForkResult:
@@ -72,23 +74,11 @@ def service_fork_world(
     if (root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
         raise ConfigError(f"Instance already exists at {root}")
 
-    pulled = _pull_bundle(transport_ref)
+    resolved = resolve_world_source(transport_ref=transport_ref, world_ref=world_ref)
+    pulled = _pull_bundle(resolved.pull_transport_ref)
     upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
 
-    overlay_path = root / "config.yaml"
-    overlay_path.parent.mkdir(parents=True, exist_ok=True)
-    overlay_path.write_text(
-        "\n".join(
-            [
-                "version: '1.0'",
-                f"name: {pulled.manifest.world_id}-fork",
-                f"extends: {str((upstream_dir / 'config.yaml').relative_to(root))}",
-                "entity_types: {}",
-                "relationships: []",
-            ]
-        )
-        + "\n"
-    )
+    overlay_path = _write_default_overlay_config(root, pulled.manifest.world_id, upstream_dir)
     composed_path = root / ".cruxible" / "composed" / "config.yaml"
     write_runtime_composed_config(
         base_path=upstream_dir / "config.yaml",
@@ -103,7 +93,9 @@ def service_fork_world(
     )
     instance.save_graph(_load_graph_from_bundle(upstream_dir))
     upstream = UpstreamMetadata(
-        transport_ref=transport_ref,
+        transport_ref=resolved.tracking_transport_ref,
+        requested_source_ref=resolved.source_ref,
+        requested_transport_ref=resolved.pull_transport_ref,
         world_id=pulled.manifest.world_id,
         release_id=pulled.manifest.release_id,
         snapshot_id=pulled.manifest.snapshot_id,
@@ -216,6 +208,8 @@ def service_pull_world_apply(
 
     updated = UpstreamMetadata(
         transport_ref=upstream.transport_ref,
+        requested_source_ref=upstream.requested_source_ref,
+        requested_transport_ref=upstream.requested_transport_ref,
         world_id=pulled.manifest.world_id,
         release_id=pulled.manifest.release_id,
         snapshot_id=pulled.manifest.snapshot_id,
@@ -287,6 +281,24 @@ def _materialize_upstream_bundle(root: Path, bundle_dir: Path, release_id: str) 
     shutil.rmtree(current_dir, ignore_errors=True)
     shutil.copytree(releases_dir, current_dir)
     return current_dir
+
+
+def _write_default_overlay_config(root: Path, world_id: str, upstream_dir: Path) -> Path:
+    overlay_path = root / "config.yaml"
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    overlay_path.write_text(
+        "\n".join(
+            [
+                "version: '1.0'",
+                f"name: {world_id}-fork",
+                f"extends: {str((upstream_dir / 'config.yaml').relative_to(root))}",
+                "entity_types: {}",
+                "relationships: []",
+            ]
+        )
+        + "\n"
+    )
+    return overlay_path
 
 
 def _load_graph_from_bundle(bundle_dir: Path) -> EntityGraph:
