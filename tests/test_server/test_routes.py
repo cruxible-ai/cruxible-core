@@ -17,6 +17,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.config import get_server_state_dir
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
+from cruxible_core.world_kits import WorldKitEntry
 from cruxible_core.world_refs import WorldCatalogEntry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
@@ -297,6 +298,22 @@ def test_world_fork_route_accepts_world_ref(
     releases_dir = tmp_path / "releases"
     version_dir = releases_dir / "v1.0.0"
     latest_dir = releases_dir / "current"
+    kit_dir = tmp_path / "kit"
+    kit_dir.mkdir()
+    (kit_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: car_parts_overlay",
+                "kind: world_model",
+                "extends: base-kit.yaml",
+                "entity_types: {}",
+                "relationships: []",
+            ]
+        )
+        + "\n"
+    )
+    (kit_dir / "providers.py").write_text("KIT = True\n")
     publish = app_client.post(
         f"/api/v1/{instance_id}/world/publish",
         json={
@@ -315,6 +332,18 @@ def test_world_fork_route_accepts_world_ref(
                 alias="car-parts",
                 base_transport_ref=f"file://{releases_dir}",
                 latest_release="current",
+                default_kit="car-parts-overlay",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "cruxible_core.world_kits.get_world_kit_catalog",
+        lambda: {
+            "car-parts-overlay": WorldKitEntry(
+                kit="car-parts-overlay",
+                source_dir=kit_dir,
+                copy_paths=("providers.py",),
+                world_id="car-parts",
             )
         },
     )
@@ -335,6 +364,9 @@ def test_world_fork_route_accepts_world_ref(
     assert status.json()["upstream"]["requested_source_ref"] == "car-parts"
     assert status.json()["upstream"]["requested_transport_ref"] == f"file://{latest_dir}"
     assert status.json()["upstream"]["transport_ref"] == f"file://{latest_dir}"
+    record = get_registry().get(fork_instance_id)
+    assert record is not None
+    assert (Path(record.location) / "providers.py").exists()
 
 
 def test_world_fork_route_requires_exactly_one_source(
@@ -346,6 +378,22 @@ def test_world_fork_route_requires_exactly_one_source(
         json={
             "transport_ref": "file:///tmp/release",
             "world_ref": "car-parts",
+            "root_dir": str(tmp_path / "fork"),
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_world_fork_route_rejects_kit_and_no_kit(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    response = app_client.post(
+        "/api/v1/worlds/fork",
+        json={
+            "world_ref": "car-parts",
+            "kit": "car-parts-overlay",
+            "no_kit": True,
             "root_dir": str(tmp_path / "fork"),
         },
     )

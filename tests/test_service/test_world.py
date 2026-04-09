@@ -30,6 +30,7 @@ from cruxible_core.service import (
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.workflow.executor import _apply_entity_set, _apply_relationship_set
+from cruxible_core.world_kits import WorldKitEntry
 from cruxible_core.world_refs import WorldCatalogEntry
 
 WORLD_MODEL_YAML = """\
@@ -205,6 +206,317 @@ def test_fork_world_ref_specific_release_tracks_latest_ref(
     preview = service_pull_world_preview(fork_instance)
     assert preview.target_release_id == "v1.1.0"
     assert preview.conflicts == []
+
+
+def test_fork_with_explicit_kit_materializes_local_overlay(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root_instance, release_dir = published_release_fixture
+    kit_dir = tmp_path / "kit"
+    kit_dir.mkdir()
+    (kit_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: case_overlay",
+                "kind: world_model",
+                "extends: base-kit.yaml",
+                "entity_types:",
+                "  Note:",
+                "    properties:",
+                "      note_id:",
+                "        type: string",
+                "        primary_key: true",
+                "relationships: []",
+                "artifacts:",
+                "  local_seed:",
+                "    kind: directory",
+                "    uri: ./data/seed",
+                "    sha256: sha256:test",
+            ]
+        )
+        + "\n"
+    )
+    (kit_dir / "providers.py").write_text("KIT = True\n")
+    seed_dir = kit_dir / "data" / "seed"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "notes.csv").write_text("note_id\nNOTE-1\n")
+    monkeypatch.setattr(
+        "cruxible_core.world_kits.get_world_kit_catalog",
+        lambda: {
+            "case-overlay": WorldKitEntry(
+                kit="case-overlay",
+                source_dir=kit_dir,
+                copy_paths=("providers.py", "data/seed"),
+                world_id="case-law",
+            )
+        },
+    )
+
+    fork_root = tmp_path / "forked-model"
+    fork_result = service_fork_world(
+        transport_ref=f"file://{release_dir}",
+        kit="case-overlay",
+        root_dir=fork_root,
+    )
+
+    overlay_text = (fork_root / "config.yaml").read_text()
+    assert "extends: .cruxible/upstream/current/config.yaml" in overlay_text
+    assert (fork_root / "providers.py").exists()
+    assert (fork_root / "data" / "seed" / "notes.csv").exists()
+    loaded = fork_result.instance.load_config()
+    assert "Case" in loaded.entity_types
+    assert "Note" in loaded.entity_types
+
+
+def test_fork_world_ref_uses_default_kit(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root_instance, current_dir = published_release_fixture
+    releases_dir = current_dir.parent
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "case-law": WorldCatalogEntry(
+                alias="case-law",
+                base_transport_ref=f"file://{releases_dir}",
+                latest_release="current",
+                default_kit="case-overlay",
+            )
+        },
+    )
+    kit_dir = tmp_path / "default-kit"
+    kit_dir.mkdir()
+    (kit_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: case_overlay",
+                "kind: world_model",
+                "extends: base-kit.yaml",
+                "entity_types:",
+                "  Note:",
+                "    properties:",
+                "      note_id:",
+                "        type: string",
+                "        primary_key: true",
+                "relationships: []",
+            ]
+        )
+        + "\n"
+    )
+    (kit_dir / "providers.py").write_text("DEFAULT_KIT = True\n")
+    monkeypatch.setattr(
+        "cruxible_core.world_kits.get_world_kit_catalog",
+        lambda: {
+            "case-overlay": WorldKitEntry(
+                kit="case-overlay",
+                source_dir=kit_dir,
+                copy_paths=("providers.py",),
+                world_id="case-law",
+            )
+        },
+    )
+
+    fork_root = tmp_path / "forked-default-kit"
+    fork_result = service_fork_world(world_ref="case-law", root_dir=fork_root)
+
+    assert (fork_root / "providers.py").exists()
+    assert "Note" in fork_result.instance.load_config().entity_types
+
+
+def test_explicit_kit_overrides_world_default_kit(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root_instance, current_dir = published_release_fixture
+    releases_dir = current_dir.parent
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "case-law": WorldCatalogEntry(
+                alias="case-law",
+                base_transport_ref=f"file://{releases_dir}",
+                latest_release="current",
+                default_kit="default-kit",
+            )
+        },
+    )
+    default_dir = tmp_path / "default-kit"
+    default_dir.mkdir()
+    (default_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: default_overlay",
+                "kind: world_model",
+                "extends: base-kit.yaml",
+                "entity_types:",
+                "  DefaultNote:",
+                "    properties:",
+                "      note_id:",
+                "        type: string",
+                "        primary_key: true",
+                "relationships: []",
+            ]
+        )
+        + "\n"
+    )
+    override_dir = tmp_path / "override-kit"
+    override_dir.mkdir()
+    (override_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: override_overlay",
+                "kind: world_model",
+                "extends: base-kit.yaml",
+                "entity_types:",
+                "  OverrideNote:",
+                "    properties:",
+                "      note_id:",
+                "        type: string",
+                "        primary_key: true",
+                "relationships: []",
+            ]
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(
+        "cruxible_core.world_kits.get_world_kit_catalog",
+        lambda: {
+            "default-kit": WorldKitEntry(
+                kit="default-kit",
+                source_dir=default_dir,
+                world_id="case-law",
+            ),
+            "override-kit": WorldKitEntry(
+                kit="override-kit",
+                source_dir=override_dir,
+                world_id="case-law",
+            ),
+        },
+    )
+
+    fork_root = tmp_path / "forked-override-kit"
+    loaded = service_fork_world(
+        world_ref="case-law",
+        kit="override-kit",
+        root_dir=fork_root,
+    ).instance.load_config()
+
+    assert "OverrideNote" in loaded.entity_types
+    assert "DefaultNote" not in loaded.entity_types
+
+
+def test_no_kit_skips_world_default_kit(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root_instance, current_dir = published_release_fixture
+    releases_dir = current_dir.parent
+    monkeypatch.setattr(
+        "cruxible_core.world_refs.get_world_catalog",
+        lambda: {
+            "case-law": WorldCatalogEntry(
+                alias="case-law",
+                base_transport_ref=f"file://{releases_dir}",
+                latest_release="current",
+                default_kit="case-overlay",
+            )
+        },
+    )
+    kit_dir = tmp_path / "default-kit"
+    kit_dir.mkdir()
+    (kit_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: case_overlay",
+                "kind: world_model",
+                "extends: base-kit.yaml",
+                "entity_types:",
+                "  Note:",
+                "    properties:",
+                "      note_id:",
+                "        type: string",
+                "        primary_key: true",
+                "relationships: []",
+            ]
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(
+        "cruxible_core.world_kits.get_world_kit_catalog",
+        lambda: {
+            "case-overlay": WorldKitEntry(
+                kit="case-overlay",
+                source_dir=kit_dir,
+                world_id="case-law",
+            )
+        },
+    )
+
+    fork_root = tmp_path / "forked-no-kit"
+    fork_result = service_fork_world(world_ref="case-law", no_kit=True, root_dir=fork_root)
+
+    assert not (fork_root / "providers.py").exists()
+    loaded = fork_result.instance.load_config()
+    assert "Note" not in loaded.entity_types
+    assert "Case" in loaded.entity_types
+
+
+def test_transport_ref_fork_does_not_auto_apply_any_kit(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root_instance, release_dir = published_release_fixture
+    kit_dir = tmp_path / "transport-kit"
+    kit_dir.mkdir()
+    (kit_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: transport_overlay",
+                "kind: world_model",
+                "extends: base-kit.yaml",
+                "entity_types:",
+                "  TransportNote:",
+                "    properties:",
+                "      note_id:",
+                "        type: string",
+                "        primary_key: true",
+                "relationships: []",
+            ]
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(
+        "cruxible_core.world_kits.get_world_kit_catalog",
+        lambda: {
+            "transport-kit": WorldKitEntry(
+                kit="transport-kit",
+                source_dir=kit_dir,
+                world_id="case-law",
+            )
+        },
+    )
+
+    fork_root = tmp_path / "forked-transport-ref"
+    loaded = service_fork_world(
+        transport_ref=f"file://{release_dir}",
+        root_dir=fork_root,
+    ).instance.load_config()
+
+    assert "TransportNote" not in loaded.entity_types
+    assert "Case" in loaded.entity_types
 
 
 def test_pull_preview_surfaces_dangling_fork_relationships(

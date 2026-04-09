@@ -14,6 +14,7 @@ def test_transport_ref_passthrough() -> None:
     assert resolved.source_ref == "file:///tmp/releases/current"
     assert resolved.pull_transport_ref == "file:///tmp/releases/current"
     assert resolved.tracking_transport_ref == "file:///tmp/releases/current"
+    assert resolved.default_kit is None
     assert resolved.alias is None
 
 
@@ -25,6 +26,7 @@ def test_world_ref_latest_uses_tracking_ref(monkeypatch: pytest.MonkeyPatch) -> 
                 alias="case-law",
                 base_transport_ref="file:///tmp/releases",
                 latest_release="current",
+                default_kit="case-law-review",
             )
         },
     )
@@ -34,6 +36,7 @@ def test_world_ref_latest_uses_tracking_ref(monkeypatch: pytest.MonkeyPatch) -> 
     assert resolved.source_ref == "case-law"
     assert resolved.pull_transport_ref == "file:///tmp/releases/current"
     assert resolved.tracking_transport_ref == "file:///tmp/releases/current"
+    assert resolved.default_kit == "case-law-review"
     assert resolved.alias == "case-law"
     assert resolved.requested_release is None
 
