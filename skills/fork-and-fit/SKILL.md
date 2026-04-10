@@ -192,119 +192,26 @@ cruxible inspect entity --type <EntityType> --id <entity_id>
 
 If the inherited world plus the applied `kit` now solve the problem, stop adding machinery.
 
-## Phase 6: Add local governed design only if needed
+## Shared Governance Flow
 
-Only add this phase if the local config needs reviewable, judgment-based relationships beyond what already exists.
+After Phase 5, read and follow:
 
-Prefer adapting existing governed patterns from the applied `kit` before inventing new ones.
+- `../_shared/references/governance-flow.md`
 
-For each new local governed relationship type:
+That shared reference is the source of truth for the remaining flow after the local canonical fit. Some phases inside it are conditional, so if the inherited world plus the selected `kit` already solve the problem you may skip the unnecessary add-more-machinery phases there. But the shared reference itself is not optional once you move past Phase 5.
 
-1. identify the local review surface and why canonical loading is not enough
-2. define the grouping rule and unit of review
-3. define the intended `thesis_facts` and `analysis_state`
-4. define the evidence policy in principle
-5. decide whether local queries depend on approved governed relationships
-6. summarize the governed local design for user confirmation
+When following it from `fork-and-fit`:
 
-Before implementing local proposal workflows, capture the approved design in:
+- use Phases 1-5 of this skill as the earlier loopback points for local fit boundary, local canonical config, and local canonical build questions
+- prefer inherited and `kit` surfaces before adding local ones
+- add only the smallest local fit needed to solve the current problem
+- if a change really belongs upstream, call it out instead of forcing it into the fork
 
-```text
-design/governed/<relationship_type>.yaml
-```
+Before doing the final handoff phase in `governance-flow.md`, return here for the fork-specific final phase below.
 
-Keep this design note local. If the governed relationship really belongs in the inherited config, call that out instead of normalizing it into the local fit.
+## Phase 6: Check future upstream pull compatibility
 
-## Phase 7: Implement local proposal workflows only when needed
-
-Use the approved governed design note and the applied `kit` as the source of truth.
-
-Prefer adapting existing local `providers`, `integrations`, `contracts`, and `workflows` before writing new ones.
-
-If the local governed layer really needs implementation work:
-
-1. identify what local graph or artifact inputs the proposal workflow needs
-2. decide which local `integrations` should emit governed signals
-3. decide how provider output becomes:
-   - candidate relationships
-   - `support`, `contradict`, or `unsure` signals
-   - the fields that will populate `thesis_facts`
-   - the fields that will populate `analysis_state`
-   - a relationship group proposal
-4. add any needed local `artifacts`, `contracts`, `integrations`, `providers`, and non-canonical proposal `workflows`
-5. if a provider is implemented as code, write the provider code now and make sure it matches the contracts
-
-Keep these `workflows` non-canonical and route them through proposal/review. Do not bypass review for local judgment-based relationship decisions.
-
-## Phase 8: Run local proposal workflows and establish the governed layer
-
-Only do this phase if the local query or review surface depends on approved governed relationships.
-
-Use the real CLI surfaces:
-
-```bash
-cruxible propose --workflow <workflow_name>
-cruxible group list
-cruxible group get --group <group_id>
-cruxible group resolve --group <group_id> --action approve
-cruxible group resolve --group <group_id> --action reject
-cruxible group resolutions
-cruxible group trust --resolution <resolution_id> --status <watch|trusted|invalidated>
-```
-
-Validate real emitted groups against the approved local governed design.
-
-If the grouping rule or review question is wrong, go back to Phase 6.  
-If the provider output, signal mapping, or workflow wiring is wrong, go back to Phase 7.
-
-After approving representative groups, verify the intended governed relationships now exist in world state:
-
-```bash
-cruxible stats
-```
-
-## Phase 9: Add the local query surface
-
-Prefer inherited queries when they already answer the local question.
-
-Add new local `named_queries` only when the inherited query surface is insufficient. Do not try to redefine inherited queries in place.
-
-For each local query you are keeping:
-
-1. choose the real local entry point
-2. decide whether it depends on inherited state, local state, or both
-3. keep the traversal as narrow and inspectable as the use case allows
-4. summarize the local query surface for user confirmation
-
-If an important local question has no clean path through the current fork, go back to the earlier phase that owns the problem:
-
-- Phase 4 for local-boundary mistakes
-- Phase 6 for governed design mistakes
-- Phase 7 for proposal-workflow implementation mistakes
-
-Write the actual local `named_queries` now in `config.yaml`, then:
-
-```bash
-cruxible validate --config config.yaml
-cruxible reload-config --config config.yaml
-```
-
-If local `providers`, `artifacts`, or `workflows` changed too, lock again:
-
-```bash
-cruxible lock
-```
-
-Run every local `named_query` you added, and any inherited query the handoff depends on:
-
-```bash
-cruxible query --query <query_name> --param key=value
-cruxible explain --receipt <receipt_id>
-```
-
-## Phase 10: Check future upstream pull compatibility
-
-Before handoff, confirm that the local config still stays compatible with future upstream pulls:
+Before the final handoff, confirm that the local config still stays compatible with future upstream pulls:
 
 ```bash
 cruxible world status
@@ -325,20 +232,10 @@ Only apply the pull if the user wants to test it directly:
 cruxible world pull-apply --apply-digest <digest>
 ```
 
-## Phase 11: Feedback, outcomes, and handoff
-
-Only add local `feedback_profiles`, `outcome_profiles`, `quality_checks`, `constraints`, or `decision_policies` when the local config introduces real review or outcome surfaces that are not already covered.
-
-Then summarize:
+When you return to the final handoff phase in `governance-flow.md`, also clearly distinguish:
 
 - what remains inherited
-- what came from the applied `kit`
-- what local entries were added
-- what local canonical or proposal `workflows` were used
-- what local `named_queries` were added and exercised
-- whether local governed relationships were established
+- what came from the selected `kit`
+- what was added locally in this fork
 - the current `world status` / `pull-preview` result
 - what should stay local versus what should be proposed upstream later
-- next actions the user can take
-
-Keep the local fit as small as the use case allows. Do not force local complexity that really belongs upstream.
