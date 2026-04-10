@@ -1,6 +1,6 @@
 ---
 name: prepare-data
-description: Profile and prepare raw source files before world creation or local fitting; validate keys, grain, joins, and transformation needs, then produce a concrete readiness report.
+description: Profile and prepare raw source files before modeling or loading them into Cruxible; validate keys, grain, joins, and transformation needs, then produce a concrete readiness report.
 ---
 
 # Prepare Data
@@ -19,7 +19,7 @@ This skill is about source-data preparation only:
 
 It is not for cross-dataset matching or governed relationship design. Those happen later in the world-building flow.
 
-Use your own tools freely here: Python, Polars, SQL, spreadsheets, or shell tooling. The goal is to hand the later world-building skill source files that are understood, defensible, and ready.
+Use your own tools freely here: Python, Polars, SQL, spreadsheets, or shell tooling. The goal is to hand the later skills source files that are understood, defensible, and ready.
 
 ## Workflow
 
@@ -29,9 +29,10 @@ For each file, identify:
 
 - what the file appears to represent
 - whether it looks like an entity source, deterministic relationship source, reference file, or unknown source
-- what later world surface it is likely to support
+- what its likely row grain is
+- what other files it seems to join to
 
-If a draft world model or config already exists, use it to anchor the review. Otherwise, infer the likely role of each file from the data itself.
+Do not assume the target world shape is already known. This skill is part of discovering it.
 
 ## Phase 2: Profile each file
 
@@ -44,7 +45,7 @@ For every source file, inspect:
 - sample rows
 - obvious schema inconsistencies across files of the same kind
 
-Do not stop at one-line summaries. The point is to understand what later loaders or workflows would actually consume.
+Do not stop at one-line summaries. The point is to understand what later modeling and loading work would actually consume.
 
 ## Phase 3: Validate entity keys and relationship joins
 
@@ -81,19 +82,20 @@ Look for:
 - encoding issues
 - embedded dates, IDs, or structured values worth extracting
 
-Keep preparation scoped to what the world-building flow will actually need. Do not over-clean for its own sake.
+Keep preparation scoped to what reliable downstream modeling and loading will actually need. Do not over-clean for its own sake.
 
-## Phase 5: Compare against the intended world shape
+## Phase 5: Summarize modeling implications
 
-If there is already a draft config, skill output, or user-confirmed world model, compare the files against it:
+After the files are profiled and cleaned enough to reason about them, summarize what they imply:
 
-- expected entity ID columns
-- expected relationship join columns
-- expected properties
-- deterministic workflow assumptions
-- obvious column rename or reshape requirements
+- likely entity-like record types
+- likely deterministic relationship sources
+- likely join keys across files
+- obvious ambiguous areas that will need user clarification later
+- obvious column rename, normalization, or reshape requirements
+- whether cross-dataset matching will likely be needed later
 
-If the current files do not support the intended world shape cleanly, say exactly what has to change before world work should continue.
+If a draft config or draft world model already exists, you may compare against it here as a consistency check. Do not treat that as the starting assumption for this skill.
 
 ## Phase 6: Produce the preparation result
 
@@ -104,16 +106,44 @@ End with a concrete result, not just observations.
 Report:
 
 - `readiness`: `ready` | `ready_with_warnings` | `blocked`
+- `source_inventory`
 - `blocking_issues`
 - `warnings`
 - `cleaned_files`
+- `transform_lineage`
 - `required_transforms`
 - `join_or_key_risks`
+- `loading_readiness_by_surface`
+- `likely_modeling_implications`
+- `open_questions`
 - `recommended_next_step`
+
+`source_inventory` should capture, for each file:
+
+- file path
+- guessed role
+- row grain
+- likely join keys
+- whether it looks loader-ready, transform-needed, or unclear
+
+`transform_lineage` should capture, for each cleaned file:
+
+- source file
+- transform summary
+- columns renamed, dropped, or derived
+- rows removed and why
+
+`loading_readiness_by_surface` should separate:
+
+- likely entity loading readiness
+- likely deterministic relationship loading readiness
+- likely later matching or governed need
+
+`open_questions` should capture true source ambiguity that the agent should not guess past.
 
 `recommended_next_step` should usually be one of:
 
 - start `create-world`
 - continue `fork-and-fit`
 - clean specific files first
-- clarify the intended world shape with the user before cleaning further
+- clarify ambiguous source semantics with the user before modeling further
