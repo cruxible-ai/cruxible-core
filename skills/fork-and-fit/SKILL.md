@@ -27,6 +27,14 @@ Here, `<root_dir>` is the workspace root directory that will contain the local `
 
 If that world has a configured default `kit`, its local files will be copied into the workspace automatically. This usually means the fork-specific `config.yaml` plus any companion workspace files that kit needs, such as local provider code, artifacts or seed data, helper files, or other local starting material. The exact kit shape may vary. Use `--kit <kit>` to override the default `kit`, or `--no-kit` for a bare fork.
 
+## Cruxible Terms
+
+- `canonical` behavior means deterministic graph-building or refresh behavior whose results can be written directly into world state
+- `governed` behavior means judgment-based behavior that should go through proposal, review, and resolution before it becomes durable world state
+- `proposal workflows` are the non-canonical `workflows` that produce reviewable candidates or groups instead of writing directly into world state
+- `named_queries` are the user-facing query entry points the world exposes
+- `providers` are the code or model-backed steps that `workflows` call
+
 ## Core Rules
 
 - edit the local `config.yaml`, not `.cruxible/upstream/current/config.yaml`
@@ -75,9 +83,9 @@ Decide whether to use the fork as-is or make the smallest local fit:
 
 1. can the inherited world, applied `kit`, and existing `workflows` handle the user's data or workflow as-is?
 2. if yes, which existing `workflows`, proposal flows, or `named_queries` should be used?
-3. if no, what is the smallest local change needed?
-4. if no, is the gap missing local graph structure, missing local provider or workflow machinery, missing local `named_queries`, or some combination?
-5. does the problem require new local canonical behavior, new governed behavior, new local queries, or none of those?
+3. if no, is the gap missing local graph structure, missing local provider or workflow machinery, missing local `named_queries`, or some combination?
+4. does the problem require new local canonical behavior, new governed behavior, new local queries, or none of those?
+5. what is the smallest set of local changes needed to support those goals?
 6. summarize the chosen path for user confirmation
 
 If the answer is "use the current fork as-is," continue to Phase 3 and do not edit `config.yaml` yet.
@@ -112,16 +120,23 @@ If the current setup is not enough, continue to Phase 4 and make the smallest ne
 
 ## Phase 4: Define the local fit boundary
 
-Decide what the local config actually needs to add:
+Start with the local operating loop, not just the config nouns. Decide what the local config actually needs to add:
 
 1. which local entities or relationships are truly missing?
-2. which local `workflows` are actually needed?
-3. which local review or governed surfaces are actually needed?
-4. which local `named_queries` are actually needed?
-5. what can be solved by refining the applied `kit` or local config instead of inventing new machinery?
-6. summarize the local fit boundary for user confirmation
+2. what repeatable local steps should turn local inputs into local graph state?
+3. which of those steps are deterministic and repeatable enough to become local `canonical` `workflows`?
+4. which of those steps require judgment, matching, or review and should become later `proposal workflows` instead?
+5. which local review or governed surfaces are actually needed?
+6. which local `named_queries` are actually needed?
+7. what can be solved by refining the applied `kit` or local config instead of inventing new machinery?
+8. summarize the local fit boundary for user confirmation
 
 Keep this phase ownership-focused. If a change would require inherited entries or semantics to change, call that out as upstream work instead of forcing it into the local config.
+
+At the end of this phase, separate the local workflow plan into two buckets:
+
+- local `canonical` `workflows` to implement and run in Phase 5
+- judgment-based local `proposal workflows` to design later in Phases 6-8
 
 ## Write Step A: Update the local config
 
@@ -142,6 +157,10 @@ Use the applied `kit` as a starting point where possible. Add only the local pie
 - appended `constraints`, `quality_checks`, `decision_policies`, or `tests`
 
 Use local names for new entries so they do not collide with inherited names.
+
+In this step, fully add the local graph structure and local `canonical` workflow machinery needed for Phase 5.
+
+For later judgment-based tasks that should become `proposal workflows`, only add the base local structure you already know you need, such as supporting graph elements or base `contracts`. Do not fully design the provider-backed proposal flow here; that belongs in Phases 6-7.
 
 Do not copy large chunks of inherited config into the local file. Reuse inherited structure and `kit` patterns instead.
 
