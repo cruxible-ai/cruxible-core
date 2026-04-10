@@ -9,20 +9,30 @@ Use this skill when the user wants to start from a published reference world and
 
 This is the reference-world path, not the greenfield path. Start from the inherited world, use the applied `kit` if one exists, and only add local config or code when the current fork is not enough.
 
-If the current workspace is not already a fork, create one first:
+If you are not sure whether the current workspace is already a fork, check first:
+
+```bash
+cruxible world status
+```
+
+If it reports upstream tracking metadata, continue in the current workspace.
+
+If it says the instance is not tracking an upstream published world, create a fork first:
 
 ```bash
 cruxible world fork --world-ref <alias> --root-dir <root_dir>
 ```
 
-If that world has a configured default `kit`, it will be applied automatically. Use `--kit <kit>` to override the default `kit`, or `--no-kit` for a bare fork.
+Here, `<root_dir>` is the workspace root directory that will contain the local `config.yaml` and the `.cruxible/` instance directory. It is not the `.cruxible/` directory itself.
+
+If that world has a configured default `kit`, its local files will be copied into the workspace automatically. This usually means the fork-specific `config.yaml` plus any companion workspace files that kit needs, such as local provider code, artifacts or seed data, helper files, or other local starting material. The exact kit shape may vary. Use `--kit <kit>` to override the default `kit`, or `--no-kit` for a bare fork.
 
 ## Core Rules
 
 - edit the local `config.yaml`, not `.cruxible/upstream/current/config.yaml`
 - treat `.cruxible/composed/config.yaml` as generated output, not as the source of truth
 - use the inherited world and the applied `kit` as-is if they already solve the problem
-- add local extensions instead of re-declaring inherited config or graph structure
+- add local extensions instead of re-declaring inherited config or graph structure from the reference world
 - prefer refining the local `kit` pattern over inventing new local machinery
 - if a desired change really belongs in the inherited config, call it out as upstream work
 - keep the local fit as small as the use case allows
@@ -51,9 +61,11 @@ Then answer:
 1. what user problem are we solving in this fork?
 2. what does the inherited world already provide?
 3. what does the applied `kit` already provide?
-4. can the current fork already handle this use case without local changes?
-5. if not, what is actually missing?
-6. what should stay local instead of being pushed upstream?
+4. what `named_queries` or downstream `workflows` does this fork need to support for the user?
+5. does the current inherited world plus local files already have a clean path for those surfaces?
+6. can the current fork already handle this use case without local changes?
+7. if not, what is actually missing?
+8. what should stay local instead of being pushed upstream?
 
 Keep this phase grounded in the current fork. Do not redesign the inherited world from scratch.
 
@@ -64,8 +76,9 @@ Decide whether to use the fork as-is or make the smallest local fit:
 1. can the inherited world, applied `kit`, and existing `workflows` handle the user's data or workflow as-is?
 2. if yes, which existing `workflows`, proposal flows, or `named_queries` should be used?
 3. if no, what is the smallest local change needed?
-4. does the problem require new local canonical behavior, new governed behavior, new local queries, or none of those?
-5. summarize the chosen path for user confirmation
+4. if no, is the gap missing local graph structure, missing local provider or workflow machinery, missing local `named_queries`, or some combination?
+5. does the problem require new local canonical behavior, new governed behavior, new local queries, or none of those?
+6. summarize the chosen path for user confirmation
 
 If the answer is "use the current fork as-is," continue to Phase 3 and do not edit `config.yaml` yet.
 
