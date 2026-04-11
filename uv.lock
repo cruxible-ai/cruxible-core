@@ -287,6 +287,7 @@ dependencies = [
 dev = [
     { name = "fastapi" },
     { name = "mypy" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "python-multipart" },
@@ -297,6 +298,7 @@ mcp = [
 ]
 server = [
     { name = "fastapi" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -319,6 +321,8 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.0" },
     { name = "polars", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'dev'", specifier = ">=2.8" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'server'", specifier = ">=2.8" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "python-multipart", marker = "extra == 'dev'", specifier = ">=0.0.9" },
