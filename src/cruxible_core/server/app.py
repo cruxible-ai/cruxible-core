@@ -12,6 +12,7 @@ from cruxible_core import __version__
 from cruxible_core.errors import CoreError
 from cruxible_core.mcp.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
+from cruxible_core.server.deploy import initialize_deploy_runtime
 from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.registry import get_registry
 from cruxible_core.server.routes.deploy import router as deploy_router
@@ -28,6 +29,7 @@ from cruxible_core.server.routes.world import router as world_router
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
+    initialize_deploy_runtime()
     app = FastAPI(title="cruxible-core")
     app.middleware("http")(token_auth_middleware)
 

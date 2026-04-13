@@ -213,7 +213,7 @@ class WorldPullApplyRequest(BaseModel):
     expected_apply_digest: str
 
 
-class DeployBootstrapRequest(BaseModel):
+class DeployBootstrapStartRequest(BaseModel):
     system_id: str
     upload_id: str
     instance_slug: str | None = None

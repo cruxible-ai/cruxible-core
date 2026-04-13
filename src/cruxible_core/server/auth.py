@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from cruxible_core.errors import AuthenticationError
 from cruxible_core.mcp.permissions import PermissionMode, request_permission_scope
-from cruxible_core.server.auth_store import RuntimeKeyRecord, get_auth_store
+from cruxible_core.server.auth_store import DeploySessionRecord, RuntimeKeyRecord, get_auth_store
 from cruxible_core.server.config import (
     get_bootstrap_audience,
     get_bootstrap_issuer,
@@ -39,6 +39,7 @@ class ResolvedAuthContext:
     principal_id: str
     principal_label: str
     credential_type: str
+    operation_id: str | None
     instance_scope: str | None
     role: str | None
     effective_permission_mode: PermissionMode | None
@@ -78,6 +79,7 @@ def _runtime_key_context(record: RuntimeKeyRecord) -> ResolvedAuthContext:
         principal_id=record.key_id,
         principal_label=record.subject_label,
         credential_type="runtime_api_key",
+        operation_id=None,
         instance_scope=record.instance_scope,
         role=record.role,
         effective_permission_mode=_role_to_mode(record.role),
@@ -120,6 +122,21 @@ def _decode_bootstrap_jwt(token: str) -> dict[str, Any] | None:
         return None
 
 
+def _deploy_session_context(record: DeploySessionRecord) -> ResolvedAuthContext:
+    return ResolvedAuthContext(
+        principal_id=record.session_id,
+        principal_label=f"deploy_session:{record.operation_id}",
+        credential_type="deploy_session",
+        operation_id=record.operation_id,
+        instance_scope=None,
+        role=None,
+        effective_permission_mode=None,
+        created_by=record.principal_id,
+        system_id=record.system_id,
+        actions=record.actions,
+    )
+
+
 def _bootstrap_context(token: str) -> ResolvedAuthContext | None:
     claims = _decode_bootstrap_jwt(token)
     if claims is None or claims.get("kind") != "bootstrap":
@@ -145,6 +162,7 @@ def _bootstrap_context(token: str) -> ResolvedAuthContext | None:
         principal_id=jti,
         principal_label=f"bootstrap:{system_id}",
         credential_type="bootstrap_jwt",
+        operation_id=None,
         instance_scope=None,
         role="admin",
         effective_permission_mode=PermissionMode.ADMIN,
@@ -185,6 +203,18 @@ def require_bootstrap_or_admin_auth(*, system_id: str | None = None) -> Resolved
     raise AuthenticationError("Deploy route requires bootstrap or admin authentication")
 
 
+def require_deploy_session(operation_id: str, action: str) -> ResolvedAuthContext:
+    """Require a deploy-session credential scoped to a specific operation/action."""
+    context = get_current_auth_context()
+    if context is None or context.credential_type != "deploy_session":
+        raise AuthenticationError("Deploy session credential required")
+    if context.operation_id != operation_id:
+        raise AuthenticationError("Deploy session is not valid for this operation")
+    if action not in set(context.actions):
+        raise AuthenticationError("Deploy session does not permit this action")
+    return context
+
+
 def require_admin_runtime_auth() -> ResolvedAuthContext:
     """Require an admin-scoped runtime credential for key-management routes."""
     context = get_current_auth_context()
@@ -220,7 +250,11 @@ async def token_auth_middleware(
         if runtime_record is not None:
             resolved_context = _runtime_key_context(runtime_record)
         else:
-            resolved_context = _bootstrap_context(bearer_token)
+            deploy_session = get_auth_store().resolve_deploy_session_token(bearer_token)
+            if deploy_session is not None:
+                resolved_context = _deploy_session_context(deploy_session)
+            else:
+                resolved_context = _bootstrap_context(bearer_token)
         if resolved_context is None:
             legacy = get_server_token()
             if legacy and hmac.compare_digest(bearer_token, legacy):
@@ -228,6 +262,7 @@ async def token_auth_middleware(
                     principal_id="legacy_server_token",
                     principal_label="legacy_server_token",
                     credential_type="legacy_server_token",
+                    operation_id=None,
                     instance_scope=None,
                     role="admin",
                     effective_permission_mode=None,

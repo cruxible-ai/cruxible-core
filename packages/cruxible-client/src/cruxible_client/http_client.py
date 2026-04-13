@@ -112,22 +112,48 @@ class CruxibleClient:
             )
         return self._parse_model(response, contracts.DeployUploadResult)
 
-    def deploy_bootstrap(
+    def deploy_bootstrap_start(
         self,
         *,
         system_id: str,
         upload_id: str,
         instance_slug: str | None = None,
-    ) -> contracts.DeployBootstrapResult:
+    ) -> contracts.DeployBootstrapStartResult:
         response = self._client.post(
-            "/api/v1/deploy/bootstrap",
+            "/api/v1/deploy/bootstrap/start",
             json={
                 "system_id": system_id,
                 "upload_id": upload_id,
                 "instance_slug": instance_slug,
             },
         )
-        return self._parse_model(response, contracts.DeployBootstrapResult)
+        return self._parse_model(response, contracts.DeployBootstrapStartResult)
+
+    def deploy_operation_status(
+        self,
+        *,
+        operation_id: str,
+    ) -> contracts.DeployOperationStatus:
+        response = self._client.get(f"/api/v1/deploy/operations/{operation_id}")
+        return self._parse_model(response, contracts.DeployOperationStatus)
+
+    def claim_deploy_admin_key(
+        self,
+        *,
+        operation_id: str,
+    ) -> contracts.ClaimAdminKeyResult:
+        response = self._client.post(f"/api/v1/deploy/operations/{operation_id}/claim-admin-key")
+        return self._parse_model(response, contracts.ClaimAdminKeyResult)
+
+    def recover_deploy_admin_key(
+        self,
+        *,
+        operation_id: str,
+    ) -> contracts.ClaimAdminKeyResult:
+        response = self._client.post(
+            f"/api/v1/deploy/operations/{operation_id}/recover-admin-key"
+        )
+        return self._parse_model(response, contracts.ClaimAdminKeyResult)
 
     def deploy_status(self, *, system_id: str) -> contracts.DeployStatusResult:
         response = self._client.get("/api/v1/deploy/status", params={"system_id": system_id})

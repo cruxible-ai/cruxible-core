@@ -31,13 +31,44 @@ class CliContextState:
         return payload
 
 
+@dataclass(frozen=True)
+class DeploySessionState:
+    operation_id: str
+    system_id: str
+    deploy_session_token: str
+
+    def as_json(self) -> dict[str, str]:
+        return {
+            "operation_id": self.operation_id,
+            "system_id": self.system_id,
+            "deploy_session_token": self.deploy_session_token,
+        }
+
+
+def get_cli_state_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the user-scoped CLI state directory."""
+    env = environ or os.environ
+    raw = env.get("CRUXIBLE_STATE_DIR")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path.home() / ".cruxible").resolve()
+
+
 def get_cli_context_path(environ: Mapping[str, str] | None = None) -> Path:
     """Return the user-scoped CLI context path."""
     env = environ or os.environ
     raw = env.get("CRUXIBLE_CLI_CONTEXT_PATH")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (Path.home() / ".cruxible" / "client-context.json").resolve()
+    return (get_cli_state_dir(env) / "client-context.json").resolve()
+
+
+def get_deploy_session_path(
+    operation_id: str,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the persisted deploy-session path for a given operation."""
+    return (get_cli_state_dir(environ) / "deploy-sessions" / f"{operation_id}.json").resolve()
 
 
 def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextState:
@@ -90,6 +121,71 @@ def save_cli_context(
         handle.write("\n")
         temp_path = Path(handle.name)
     temp_path.replace(path)
+    return path
+
+
+def load_deploy_session(
+    operation_id: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> DeploySessionState | None:
+    """Load a persisted deploy session if present."""
+    path = get_deploy_session_path(operation_id, environ)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except OSError as exc:
+        raise ConfigError(f"Failed to read deploy session at {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"Deploy session at {path} is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ConfigError(f"Deploy session at {path} must contain a JSON object")
+    operation_value = payload.get("operation_id")
+    system_value = payload.get("system_id")
+    token_value = payload.get("deploy_session_token")
+    if not all(isinstance(value, str) for value in (operation_value, system_value, token_value)):
+        raise ConfigError(f"Deploy session at {path} is missing required string fields")
+    return DeploySessionState(
+        operation_id=operation_value,
+        system_id=system_value,
+        deploy_session_token=token_value,
+    )
+
+
+def save_deploy_session(
+    state: DeploySessionState,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Persist a deploy-session token with user-only permissions."""
+    path = get_deploy_session_path(state.operation_id, environ)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=str(path.parent),
+        delete=False,
+        prefix=f".{path.name}.tmp.",
+    ) as handle:
+        json.dump(state.as_json(), handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        temp_path = Path(handle.name)
+    temp_path.chmod(0o600)
+    temp_path.replace(path)
+    path.chmod(0o600)
+    return path
+
+
+def clear_deploy_session(
+    operation_id: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Delete a persisted deploy-session token file."""
+    path = get_deploy_session_path(operation_id, environ)
+    if path.exists():
+        path.unlink()
     return path
 
 

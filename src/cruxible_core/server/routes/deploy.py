@@ -8,17 +8,22 @@ from pathlib import Path
 from fastapi import APIRouter, File, Query, Request, UploadFile
 
 from cruxible_client import contracts
+from cruxible_core.errors import ConfigError
 from cruxible_core.server.auth import require_bootstrap_or_admin_auth
+from cruxible_core.server.config import get_deploy_upload_max_bytes
 from cruxible_core.server.deploy import (
-    bootstrap_deploy,
+    claim_deploy_admin_key,
     create_runtime_key,
+    get_deploy_operation_status,
     get_deploy_status,
     list_runtime_keys,
+    recover_deploy_admin_key,
     revoke_runtime_key,
     stage_deploy_upload,
+    start_deploy_bootstrap,
 )
 from cruxible_core.server.request_models import (
-    DeployBootstrapRequest,
+    DeployBootstrapStartRequest,
     RuntimeCredentialCreateRequest,
 )
 
@@ -29,15 +34,22 @@ router = APIRouter(prefix="/api/v1/deploy", tags=["deploy"])
 async def upload_deploy_bundle(bundle: UploadFile = File(...)) -> contracts.DeployUploadResult:
     """Upload and stage a deploy bundle for bootstrap."""
     require_bootstrap_or_admin_auth()
+    max_bytes = get_deploy_upload_max_bytes()
     suffix = Path(bundle.filename or "bundle.zip").suffix or ".zip"
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
             temp_path = Path(handle.name)
+            total_bytes = 0
             while True:
                 chunk = await bundle.read(1024 * 1024)
                 if not chunk:
                     break
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    raise ConfigError(
+                        f"Deploy bundle exceeds the maximum upload size of {max_bytes} bytes"
+                    )
                 handle.write(chunk)
         assert temp_path is not None
         return stage_deploy_upload(temp_path)
@@ -46,16 +58,61 @@ async def upload_deploy_bundle(bundle: UploadFile = File(...)) -> contracts.Depl
             temp_path.unlink(missing_ok=True)
 
 
-@router.post("/bootstrap", response_model=contracts.DeployBootstrapResult)
-async def bootstrap(
-    req: DeployBootstrapRequest,
+@router.post("/bootstrap/start", response_model=contracts.DeployBootstrapStartResult)
+async def bootstrap_start(
+    req: DeployBootstrapStartRequest,
     request: Request,
-) -> contracts.DeployBootstrapResult:
-    """Create or return the primary deployed governed instance for a system."""
-    return bootstrap_deploy(
+) -> contracts.DeployBootstrapStartResult:
+    """Start or resume bootstrap for the primary deployed governed instance."""
+    return start_deploy_bootstrap(
         system_id=req.system_id,
         upload_id=req.upload_id,
         instance_slug=req.instance_slug,
+        server_url=str(request.base_url).rstrip("/"),
+    )
+
+
+@router.get(
+    "/operations/{operation_id}",
+    response_model=contracts.DeployOperationStatus,
+)
+async def deploy_operation_status(
+    operation_id: str,
+    request: Request,
+) -> contracts.DeployOperationStatus:
+    """Read detailed status for an async deploy operation."""
+    return get_deploy_operation_status(
+        operation_id=operation_id,
+        server_url=str(request.base_url).rstrip("/"),
+    )
+
+
+@router.post(
+    "/operations/{operation_id}/claim-admin-key",
+    response_model=contracts.ClaimAdminKeyResult,
+)
+async def claim_admin_key(
+    operation_id: str,
+    request: Request,
+) -> contracts.ClaimAdminKeyResult:
+    """Claim the one-time initial admin credential for a completed deploy."""
+    return claim_deploy_admin_key(
+        operation_id=operation_id,
+        server_url=str(request.base_url).rstrip("/"),
+    )
+
+
+@router.post(
+    "/operations/{operation_id}/recover-admin-key",
+    response_model=contracts.ClaimAdminKeyResult,
+)
+async def recover_admin_key(
+    operation_id: str,
+    request: Request,
+) -> contracts.ClaimAdminKeyResult:
+    """Recover the initial admin credential after losing the in-memory claim token."""
+    return recover_deploy_admin_key(
+        operation_id=operation_id,
         server_url=str(request.base_url).rstrip("/"),
     )
 

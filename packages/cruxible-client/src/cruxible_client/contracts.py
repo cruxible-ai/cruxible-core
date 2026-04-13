@@ -30,6 +30,20 @@ DecisionPolicyEffect = Literal["suppress", "require_review"]
 WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
 RuntimeCredentialRole = Literal["viewer", "editor", "admin"]
 DeployBundleKind = Literal["plain", "release_fork"]
+DeployOperationPhase = Literal[
+    "validation",
+    "init",
+    "bootstrap_workflows",
+    "snapshot",
+    "admin_key_ready",
+]
+DeployOperationStatusLiteral = Literal["queued", "running", "succeeded", "failed"]
+DeployBootstrapStartStatus = Literal["started", "already_initialized", "in_progress"]
+DeployFailureReason = Literal[
+    "stale_operation_recovery",
+    "server_restart_or_worker_crash",
+    "worker_exception",
+]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -454,13 +468,47 @@ class DeployUploadResult(BaseModel):
     manifest_summary: DeployBundleManifest
 
 
-class DeployBootstrapResult(BaseModel):
-    status: Literal["bootstrapped", "already_initialized", "failed"]
+class DeployBootstrapStartResult(BaseModel):
+    status: DeployBootstrapStartStatus
     system_id: str
+    operation_id: str | None = None
     instance_id: str | None = None
     server_url: str | None = None
+    phase: DeployOperationPhase | None = None
+    current_workflow: str | None = None
+    current_step_id: str | None = None
+    current_provider: str | None = None
+    progress_message: str | None = None
+    deploy_session_token: str | None = None
+
+
+class DeployOperationStatus(BaseModel):
+    operation_id: str
+    system_id: str
+    status: DeployOperationStatusLiteral
+    phase: DeployOperationPhase | None = None
+    instance_id: str | None = None
+    server_url: str | None = None
+    current_workflow: str | None = None
+    current_step_id: str | None = None
+    current_provider: str | None = None
+    progress_message: str | None = None
     warnings: list[str] = Field(default_factory=list)
-    admin_bearer_token: str | None = None
+    error_message: str | None = None
+    failure_reason: DeployFailureReason | None = None
+    last_progress_at: str
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+    admin_key_claimed_at: str | None = None
+
+
+class ClaimAdminKeyResult(BaseModel):
+    operation_id: str
+    system_id: str
+    instance_id: str
+    server_url: str | None = None
+    admin_bearer_token: str
 
 
 class DeployStatusResult(BaseModel):

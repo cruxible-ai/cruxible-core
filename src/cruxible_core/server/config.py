@@ -129,3 +129,18 @@ def get_bootstrap_audience(environ: Mapping[str, str] | None = None) -> str | No
     if value:
         return value
     return None
+
+
+def get_deploy_upload_max_bytes(environ: Mapping[str, str] | None = None) -> int:
+    """Return the maximum allowed deploy upload size in bytes."""
+    env = environ or os.environ
+    raw = env.get("CRUXIBLE_DEPLOY_MAX_UPLOAD_BYTES")
+    if raw is None or not raw.strip():
+        return 256 * 1024 * 1024
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError("CRUXIBLE_DEPLOY_MAX_UPLOAD_BYTES must be an integer") from exc
+    if value <= 0:
+        raise ConfigError("CRUXIBLE_DEPLOY_MAX_UPLOAD_BYTES must be positive")
+    return value
