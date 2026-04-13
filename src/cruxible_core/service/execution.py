@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 from pydantic import ValidationError
@@ -98,10 +99,18 @@ def service_run(
     instance: InstanceProtocol,
     workflow_name: str,
     input_payload: dict[str, Any],
+    *,
+    progress_callback: Callable[[str, str | None, str], None] | None = None,
 ) -> RunServiceResult:
     """Execute a workflow and return output plus receipt/trace identifiers."""
     config = instance.load_config()
-    result = execute_workflow(instance, config, workflow_name, input_payload)
+    result = execute_workflow(
+        instance,
+        config,
+        workflow_name,
+        input_payload,
+        progress_callback=progress_callback,
+    )
     return _build_workflow_execution_result(result, RunServiceResult)
 
 
@@ -112,6 +121,7 @@ def service_apply_workflow(
     *,
     expected_apply_digest: str,
     expected_head_snapshot_id: str | None,
+    progress_callback: Callable[[str, str | None, str], None] | None = None,
 ) -> ApplyWorkflowResult:
     """Apply a canonical workflow after verifying preview identity."""
     config = instance.load_config()
@@ -129,6 +139,7 @@ def service_apply_workflow(
         mode="preview",
         persist_receipt=False,
         persist_traces=False,
+        progress_callback=progress_callback,
     )
     if preview.apply_digest != expected_apply_digest:
         raise ConfigError("Workflow apply digest mismatch; rerun workflow preview before apply")
@@ -148,6 +159,7 @@ def service_apply_workflow(
         mode="apply",
         persist_receipt=True,
         persist_traces=True,
+        progress_callback=progress_callback,
     )
     return _build_workflow_execution_result(result, ApplyWorkflowResult)
 

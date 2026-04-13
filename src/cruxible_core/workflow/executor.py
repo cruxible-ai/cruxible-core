@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -59,6 +60,7 @@ def execute_workflow(
     mode: Literal["run", "preview", "apply"] = "run",
     persist_receipt: bool = True,
     persist_traces: bool = True,
+    progress_callback: Callable[[str, str | None, str], None] | None = None,
 ) -> WorkflowExecutionResult:
     """Execute a workflow against the current instance and persist traces/receipts."""
     lock = load_lock(resolve_lock_path(instance))
@@ -90,6 +92,12 @@ def execute_workflow(
     apply_previews: dict[str, Any] = {}
 
     for compiled_step in plan.steps:
+        if progress_callback is not None:
+            progress_callback(
+                compiled_step.step_id,
+                compiled_step.provider_name if compiled_step.kind == "provider" else None,
+                compiled_step.kind,
+            )
         if compiled_step.kind == "query":
             _execute_query_step(
                 instance,
