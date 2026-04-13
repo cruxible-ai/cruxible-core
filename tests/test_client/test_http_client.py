@@ -612,16 +612,67 @@ def test_deploy_endpoints_use_expected_routes(tmp_path: Path):
                     },
                 },
             )
-        if request.url.path == "/api/v1/deploy/bootstrap":
+        if request.url.path == "/api/v1/deploy/bootstrap/start":
             return httpx.Response(
                 200,
                 json={
-                    "status": "bootstrapped",
+                    "status": "started",
+                    "system_id": "sys-1",
+                    "operation_id": "op_123",
+                    "instance_id": "inst_123",
+                    "server_url": "http://cruxible",
+                    "phase": None,
+                    "current_workflow": None,
+                    "current_step_id": None,
+                    "current_provider": None,
+                    "progress_message": None,
+                    "deploy_session_token": "deploy-token",
+                },
+            )
+        if request.url.path == "/api/v1/deploy/operations/op_123" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "operation_id": "op_123",
+                    "system_id": "sys-1",
+                    "status": "succeeded",
+                    "phase": "admin_key_ready",
+                    "instance_id": "inst_123",
+                    "server_url": "http://cruxible",
+                    "current_workflow": None,
+                    "current_step_id": None,
+                    "current_provider": None,
+                    "progress_message": "Bootstrap complete; admin key ready to claim",
+                    "warnings": [],
+                    "error_message": None,
+                    "failure_reason": None,
+                    "last_progress_at": "2026-04-11T00:00:00Z",
+                    "created_at": "2026-04-11T00:00:00Z",
+                    "updated_at": "2026-04-11T00:00:00Z",
+                    "completed_at": "2026-04-11T00:00:00Z",
+                    "admin_key_claimed_at": None,
+                },
+            )
+        if request.url.path == "/api/v1/deploy/operations/op_123/claim-admin-key":
+            return httpx.Response(
+                200,
+                json={
+                    "operation_id": "op_123",
                     "system_id": "sys-1",
                     "instance_id": "inst_123",
                     "server_url": "http://cruxible",
-                    "warnings": [],
                     "admin_bearer_token": "token",
+                },
+            )
+        if request.url.path == "/api/v1/deploy/operations/op_123/recover-admin-key":
+            return httpx.Response(
+                200,
+                json={
+                    "operation_id": "op_123",
+                    "system_id": "sys-1",
+                    "instance_id": "inst_123",
+                    "server_url": "http://cruxible",
+                    "admin_bearer_token": "recovered-token",
                 },
             )
         if request.url.path == "/api/v1/deploy/status":
@@ -686,8 +737,17 @@ def test_deploy_endpoints_use_expected_routes(tmp_path: Path):
     upload = client.deploy_upload_bundle(str(bundle_path))
     assert upload.upload_id == "upload_123"
 
-    bootstrap = client.deploy_bootstrap(system_id="sys-1", upload_id="upload_123")
-    assert bootstrap.instance_id == "inst_123"
+    started = client.deploy_bootstrap_start(system_id="sys-1", upload_id="upload_123")
+    assert started.operation_id == "op_123"
+
+    operation = client.deploy_operation_status(operation_id="op_123")
+    assert operation.status == "succeeded"
+
+    claimed = client.claim_deploy_admin_key(operation_id="op_123")
+    assert claimed.instance_id == "inst_123"
+
+    recovered = client.recover_deploy_admin_key(operation_id="op_123")
+    assert recovered.admin_bearer_token == "recovered-token"
 
     status = client.deploy_status(system_id="sys-1")
     assert status.status == "initialized"
@@ -702,5 +762,10 @@ def test_deploy_endpoints_use_expected_routes(tmp_path: Path):
     assert revoked.revoked is True
 
     assert any(path.endswith("/api/v1/deploy/uploads") for path, _ in captured)
-    assert any(path.endswith("/api/v1/deploy/bootstrap") for path, _ in captured)
+    assert any(path.endswith("/api/v1/deploy/bootstrap/start") for path, _ in captured)
+    assert any(path.endswith("/api/v1/deploy/operations/op_123") for path, _ in captured)
+    assert any(
+        path.endswith("/api/v1/deploy/operations/op_123/recover-admin-key")
+        for path, _ in captured
+    )
     assert any("/api/v1/deploy/status" in path for path, _ in captured)

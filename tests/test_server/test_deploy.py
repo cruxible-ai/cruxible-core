@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import time
 import zipfile
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -22,7 +23,8 @@ from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.app import create_app
-from cruxible_core.server.auth_store import reset_auth_store
+from cruxible_core.server.auth_store import get_auth_store, reset_auth_store
+from cruxible_core.server.deploy import reset_deploy_runtime
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service import service_fork_world, service_publish_world
 from tests.test_cli.conftest import CAR_PARTS_YAML
@@ -98,6 +100,7 @@ def app_client(
     reset_permissions()
     reset_registry()
     reset_auth_store()
+    reset_deploy_runtime()
     reset_client_cache()
     get_manager().clear()
     return TestClient(create_app())
@@ -122,7 +125,7 @@ def _upload_bundle(client: TestClient, bundle_path: Path, token: str) -> str:
     return upload.json()["upload_id"]
 
 
-def _bootstrap_request(
+def _bootstrap_start_request(
     client: TestClient,
     token: str,
     *,
@@ -130,10 +133,33 @@ def _bootstrap_request(
     upload_id: str,
 ) -> object:
     return client.post(
-        "/api/v1/deploy/bootstrap",
+        "/api/v1/deploy/bootstrap/start",
         headers={"Authorization": f"Bearer {token}"},
         json={"system_id": system_id, "upload_id": upload_id},
     )
+
+
+def _wait_for_operation(
+    client: TestClient,
+    token: str,
+    *,
+    operation_id: str,
+    timeout_seconds: float = 10.0,
+) -> dict[str, object]:
+    deadline = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
+    last_payload: dict[str, object] | None = None
+    while datetime.now(UTC) < deadline:
+        response = client.get(
+            f"/api/v1/deploy/operations/{operation_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        last_payload = payload
+        if payload["status"] in {"succeeded", "failed"}:
+            return payload
+        time.sleep(0.05)
+    pytest.fail(f"Deploy operation did not finish in time: {last_payload}")
 
 
 def _rewrite_bundle(
@@ -204,7 +230,7 @@ def _bootstrap_system(
     token = _mint_bootstrap_token(private_key, system_id=system_id)
     try:
         upload_id = _upload_bundle(client, bundle.bundle_path, token)
-        bootstrap = _bootstrap_request(
+        bootstrap = _bootstrap_start_request(
             client,
             token,
             system_id=system_id,
@@ -212,10 +238,24 @@ def _bootstrap_system(
         )
         assert bootstrap.status_code == 200, bootstrap.text
         payload = bootstrap.json()
-        assert payload["status"] == "bootstrapped"
-        assert payload["instance_id"]
-        assert payload["admin_bearer_token"]
-        return payload["instance_id"], payload["admin_bearer_token"]
+        assert payload["status"] == "started"
+        assert payload["operation_id"]
+        assert payload["deploy_session_token"]
+        operation = _wait_for_operation(
+            client,
+            payload["deploy_session_token"],
+            operation_id=payload["operation_id"],
+        )
+        assert operation["status"] == "succeeded"
+        claimed = client.post(
+            f"/api/v1/deploy/operations/{payload['operation_id']}/claim-admin-key",
+            headers={"Authorization": f"Bearer {payload['deploy_session_token']}"},
+        )
+        assert claimed.status_code == 200, claimed.text
+        claimed_payload = claimed.json()
+        assert claimed_payload["instance_id"]
+        assert claimed_payload["admin_bearer_token"]
+        return claimed_payload["instance_id"], claimed_payload["admin_bearer_token"]
     finally:
         bundle.bundle_path.unlink(missing_ok=True)
 
@@ -320,7 +360,7 @@ def test_deploy_bootstrap_is_idempotent_for_initialized_system(
     token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-idempotent")
     try:
         upload_id = _upload_bundle(app_client, bundle.bundle_path, token)
-        response = _bootstrap_request(
+        response = _bootstrap_start_request(
             app_client,
             token,
             system_id="system-idempotent",
@@ -333,7 +373,7 @@ def test_deploy_bootstrap_is_idempotent_for_initialized_system(
     payload = response.json()
     assert payload["status"] == "already_initialized"
     assert payload["instance_id"] == instance_id
-    assert payload["admin_bearer_token"] is None
+    assert payload["deploy_session_token"] is None
 
 
 def test_expired_bootstrap_jwt_is_rejected_for_upload(
@@ -421,13 +461,20 @@ def test_replayed_bootstrap_jti_is_rejected_after_failed_bootstrap(
     )
     try:
         upload_id = _upload_bundle(app_client, broken_bundle, token)
-        failed = _bootstrap_request(
+        started = _bootstrap_start_request(
             app_client,
             token,
             system_id="system-replay",
             upload_id=upload_id,
         )
-        replayed = _bootstrap_request(
+        assert started.status_code == 200, started.text
+        started_payload = started.json()
+        failed = _wait_for_operation(
+            app_client,
+            started_payload["deploy_session_token"],
+            operation_id=started_payload["operation_id"],
+        )
+        replayed = _bootstrap_start_request(
             app_client,
             token,
             system_id="system-replay",
@@ -437,8 +484,8 @@ def test_replayed_bootstrap_jti_is_rejected_after_failed_bootstrap(
         bundle.bundle_path.unlink(missing_ok=True)
         broken_bundle.unlink(missing_ok=True)
 
-    assert failed.status_code == 400
-    assert failed.json()["error_type"] == "ConfigError"
+    assert failed["status"] == "failed"
+    assert failed["error_message"]
     status = app_client.get(
         "/api/v1/deploy/status",
         headers={"Authorization": f"Bearer {token}"},
@@ -456,30 +503,264 @@ def test_bootstrap_rejects_in_progress_system(
     server_project: Path,
     bootstrap_private_key: rsa.RSAPrivateKey,
 ) -> None:
-    get_registry().create_deployed_instance(
-        system_id="system-busy",
-        instance_slug=None,
-        bootstrap_status="bootstrapping",
-    )
     bundle = build_deploy_bundle(
         root_dir=server_project,
         config_path=str(server_project / "config.yaml"),
     )
     token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-busy")
+    second_token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-busy")
     try:
         upload_id = _upload_bundle(app_client, bundle.bundle_path, token)
-        response = _bootstrap_request(
+        first = _bootstrap_start_request(
             app_client,
             token,
             system_id="system-busy",
             upload_id=upload_id,
         )
+        response = _bootstrap_start_request(
+            app_client,
+            second_token,
+            system_id="system-busy",
+            upload_id=upload_id,
+        )
+        assert first.status_code == 200, first.text
+        first_payload = first.json()
+        assert first_payload["status"] == "started"
+        _wait_for_operation(
+            app_client,
+            first_payload["deploy_session_token"],
+            operation_id=first_payload["operation_id"],
+        )
     finally:
         bundle.bundle_path.unlink(missing_ok=True)
 
-    assert response.status_code == 400
-    assert response.json()["error_type"] == "ConfigError"
-    assert "already in progress" in response.json()["message"]
+    assert response.status_code == 200
+    assert response.json()["status"] == "in_progress"
+    assert response.json()["operation_id"] == first_payload["operation_id"]
+    assert response.json()["deploy_session_token"] is None
+
+
+def test_bootstrap_rejects_different_upload_while_system_is_in_progress(
+    app_client: TestClient,
+    server_project: Path,
+    bootstrap_private_key: rsa.RSAPrivateKey,
+) -> None:
+    first_bundle = build_deploy_bundle(
+        root_dir=server_project,
+        config_path=str(server_project / "config.yaml"),
+    )
+    second_bundle = build_deploy_bundle(
+        root_dir=server_project,
+        config_path=str(server_project / "config.yaml"),
+    )
+    token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-busy-different")
+    second_token = _mint_bootstrap_token(
+        bootstrap_private_key,
+        system_id="system-busy-different",
+    )
+    try:
+        first_upload = _upload_bundle(app_client, first_bundle.bundle_path, token)
+        second_upload = _upload_bundle(app_client, second_bundle.bundle_path, second_token)
+        started = _bootstrap_start_request(
+            app_client,
+            token,
+            system_id="system-busy-different",
+            upload_id=first_upload,
+        )
+        rejected = _bootstrap_start_request(
+            app_client,
+            second_token,
+            system_id="system-busy-different",
+            upload_id=second_upload,
+        )
+        assert started.status_code == 200, started.text
+        payload = started.json()
+        _wait_for_operation(
+            app_client,
+            payload["deploy_session_token"],
+            operation_id=payload["operation_id"],
+        )
+    finally:
+        first_bundle.bundle_path.unlink(missing_ok=True)
+        second_bundle.bundle_path.unlink(missing_ok=True)
+
+    assert rejected.status_code == 400
+    assert rejected.json()["error_type"] == "ConfigError"
+    assert "different upload" in rejected.json()["message"]
+
+
+def test_bootstrap_self_heals_orphaned_registry_state(
+    app_client: TestClient,
+    server_project: Path,
+    bootstrap_private_key: rsa.RSAPrivateKey,
+) -> None:
+    orphan = get_registry().claim_deployed_bootstrap(system_id="system-orphaned")
+    assert orphan.status == "acquired"
+
+    bundle = build_deploy_bundle(
+        root_dir=server_project,
+        config_path=str(server_project / "config.yaml"),
+    )
+    token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-orphaned")
+    try:
+        upload_id = _upload_bundle(app_client, bundle.bundle_path, token)
+        started = _bootstrap_start_request(
+            app_client,
+            token,
+            system_id="system-orphaned",
+            upload_id=upload_id,
+        )
+    finally:
+        bundle.bundle_path.unlink(missing_ok=True)
+
+    assert started.status_code == 200, started.text
+    payload = started.json()
+    assert payload["status"] == "started"
+    operation = _wait_for_operation(
+        app_client,
+        payload["deploy_session_token"],
+        operation_id=payload["operation_id"],
+    )
+    assert operation["status"] == "succeeded"
+
+
+def test_claim_admin_key_succeeds_only_once(
+    app_client: TestClient,
+    server_project: Path,
+    bootstrap_private_key: rsa.RSAPrivateKey,
+) -> None:
+    bundle = build_deploy_bundle(
+        root_dir=server_project,
+        config_path=str(server_project / "config.yaml"),
+    )
+    token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-claim-once")
+    try:
+        upload_id = _upload_bundle(app_client, bundle.bundle_path, token)
+        started = _bootstrap_start_request(
+            app_client,
+            token,
+            system_id="system-claim-once",
+            upload_id=upload_id,
+        )
+        assert started.status_code == 200, started.text
+        payload = started.json()
+        _wait_for_operation(
+            app_client,
+            payload["deploy_session_token"],
+            operation_id=payload["operation_id"],
+        )
+        first = app_client.post(
+            f"/api/v1/deploy/operations/{payload['operation_id']}/claim-admin-key",
+            headers={"Authorization": f"Bearer {payload['deploy_session_token']}"},
+        )
+        second = app_client.post(
+            f"/api/v1/deploy/operations/{payload['operation_id']}/claim-admin-key",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        bundle.bundle_path.unlink(missing_ok=True)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 400
+    assert "no longer available" in second.json()["message"]
+
+
+def test_recover_admin_key_after_pending_claim_loss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bootstrap_private_key: rsa.RSAPrivateKey,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    reset_permissions()
+    reset_registry()
+    reset_auth_store()
+    reset_deploy_runtime()
+    reset_client_cache()
+    get_manager().clear()
+    app_client = TestClient(create_app())
+    server_project = tmp_path / "project"
+    server_project.mkdir()
+    (server_project / "config.yaml").write_text(CAR_PARTS_YAML)
+
+    bundle = build_deploy_bundle(
+        root_dir=server_project,
+        config_path=str(server_project / "config.yaml"),
+    )
+    token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-recover-claim")
+    try:
+        upload_id = _upload_bundle(app_client, bundle.bundle_path, token)
+        started = _bootstrap_start_request(
+            app_client,
+            token,
+            system_id="system-recover-claim",
+            upload_id=upload_id,
+        )
+        assert started.status_code == 200, started.text
+        payload = started.json()
+        _wait_for_operation(
+            app_client,
+            payload["deploy_session_token"],
+            operation_id=payload["operation_id"],
+        )
+
+        reset_deploy_runtime()
+        restarted_client = TestClient(create_app())
+        claimed = restarted_client.post(
+            f"/api/v1/deploy/operations/{payload['operation_id']}/claim-admin-key",
+            headers={"Authorization": f"Bearer {payload['deploy_session_token']}"},
+        )
+        recovered = restarted_client.post(
+            f"/api/v1/deploy/operations/{payload['operation_id']}/recover-admin-key",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        bundle.bundle_path.unlink(missing_ok=True)
+
+    assert claimed.status_code == 400
+    assert "no longer available" in claimed.json()["message"]
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["admin_bearer_token"].startswith("crx_key_")
+
+
+def test_startup_recovery_marks_abandoned_operation_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bootstrap_private_key: rsa.RSAPrivateKey,
+) -> None:
+    del bootstrap_private_key
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    reset_permissions()
+    reset_registry()
+    reset_auth_store()
+    reset_deploy_runtime()
+    reset_client_cache()
+    get_manager().clear()
+
+    orphan = get_registry().claim_deployed_bootstrap(system_id="system-restart")
+    assert orphan.record.instance_id is not None
+    operation = get_auth_store().create_deploy_operation(
+        system_id="system-restart",
+        upload_id="upload_restart",
+        instance_id=orphan.record.instance_id,
+    )
+    get_auth_store().update_deploy_operation(
+        operation.operation_id,
+        status="running",
+        phase="bootstrap_workflows",
+        progress_message="Working",
+        bump_progress=True,
+    )
+
+    reset_deploy_runtime()
+    create_app()
+
+    recovered = get_auth_store().get_deploy_operation(operation.operation_id)
+    assert recovered is not None
+    assert recovered.status == "failed"
+    assert recovered.failure_reason == "server_restart_or_worker_crash"
+    record = get_registry().get_by_system_id("system-restart")
+    assert record is not None
+    assert record.bootstrap_status == "failed"
 
 
 def test_upload_rejects_invalid_manifest_json(
@@ -529,7 +810,7 @@ def test_bootstrap_rejects_zip_slip_bundle_paths(
     token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-zip-slip")
     try:
         upload_id = _upload_bundle(app_client, malicious_bundle, token)
-        response = _bootstrap_request(
+        started = _bootstrap_start_request(
             app_client,
             token,
             system_id="system-zip-slip",
@@ -539,9 +820,15 @@ def test_bootstrap_rejects_zip_slip_bundle_paths(
         bundle.bundle_path.unlink(missing_ok=True)
         malicious_bundle.unlink(missing_ok=True)
 
-    assert response.status_code == 400
-    assert response.json()["error_type"] == "ConfigError"
-    assert "invalid archive path" in response.json()["message"]
+    assert started.status_code == 200
+    payload = started.json()
+    operation = _wait_for_operation(
+        app_client,
+        payload["deploy_session_token"],
+        operation_id=payload["operation_id"],
+    )
+    assert operation["status"] == "failed"
+    assert "invalid archive path" in str(operation["error_message"])
 
 
 def test_legacy_server_token_cannot_manage_runtime_keys(
@@ -569,7 +856,7 @@ def test_release_fork_bundle_bootstraps_and_supports_world_preview(
     token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-fork")
     try:
         upload_id = _upload_bundle(app_client, bundle.bundle_path, token)
-        bootstrap = _bootstrap_request(
+        bootstrap = _bootstrap_start_request(
             app_client,
             token,
             system_id="system-fork",
@@ -580,9 +867,21 @@ def test_release_fork_bundle_bootstraps_and_supports_world_preview(
 
     assert bootstrap.status_code == 200, bootstrap.text
     payload = bootstrap.json()
-    assert payload["status"] == "bootstrapped"
-    instance_id = payload["instance_id"]
-    admin_token = payload["admin_bearer_token"]
+    assert payload["status"] == "started"
+    operation = _wait_for_operation(
+        app_client,
+        payload["deploy_session_token"],
+        operation_id=payload["operation_id"],
+    )
+    assert operation["status"] == "succeeded"
+    claimed = app_client.post(
+        f"/api/v1/deploy/operations/{payload['operation_id']}/claim-admin-key",
+        headers={"Authorization": f"Bearer {payload['deploy_session_token']}"},
+    )
+    assert claimed.status_code == 200, claimed.text
+    claimed_payload = claimed.json()
+    instance_id = claimed_payload["instance_id"]
+    admin_token = claimed_payload["admin_bearer_token"]
 
     status = app_client.get(
         f"/api/v1/{instance_id}/world/status",
@@ -627,7 +926,7 @@ def test_release_fork_bootstrap_validates_active_config(
     token = _mint_bootstrap_token(bootstrap_private_key, system_id="system-fork-invalid")
     try:
         upload_id = _upload_bundle(app_client, bundle.bundle_path, token)
-        response = _bootstrap_request(
+        started = _bootstrap_start_request(
             app_client,
             token,
             system_id="system-fork-invalid",
@@ -636,6 +935,12 @@ def test_release_fork_bootstrap_validates_active_config(
     finally:
         bundle.bundle_path.unlink(missing_ok=True)
 
-    assert response.status_code == 400
-    assert response.json()["error_type"] == "ConfigError"
-    assert "cross-reference error" in response.json()["message"]
+    assert started.status_code == 200
+    payload = started.json()
+    operation = _wait_for_operation(
+        app_client,
+        payload["deploy_session_token"],
+        operation_id=payload["operation_id"],
+    )
+    assert operation["status"] == "failed"
+    assert "cross-reference error" in str(operation["error_message"])

@@ -9,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.errors import ConfigError as ClientConfigError
 from cruxible_core.cli.main import cli
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
@@ -21,6 +22,7 @@ def runner() -> CliRunner:
 @pytest.fixture(autouse=True)
 def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    monkeypatch.setenv("CRUXIBLE_STATE_DIR", str(tmp_path / "cli-state"))
 
 
 def test_cli_fails_when_server_required_without_endpoint(monkeypatch, runner: CliRunner):
@@ -864,16 +866,48 @@ def test_deploy_init_builds_bundle_and_bootstraps_remote_instance(
                 manifest_summary=StubBuiltBundle().manifest,
             )
 
-        def deploy_bootstrap(self, *, system_id: str, upload_id: str, instance_slug: str | None):
+        def deploy_bootstrap_start(
+            self, *, system_id: str, upload_id: str, instance_slug: str | None
+        ):
             captured["system_id"] = system_id
             captured["upload_id"] = upload_id
             captured["instance_slug"] = instance_slug
-            return contracts.DeployBootstrapResult(
-                status="bootstrapped",
+            return contracts.DeployBootstrapStartResult(
+                status="started",
                 system_id=system_id,
+                operation_id="op_deploy",
                 instance_id="inst_deploy",
                 server_url="http://server",
+                deploy_session_token="deploy-session-token",
+            )
+
+        def deploy_operation_status(self, *, operation_id: str):
+            assert operation_id == "op_deploy"
+            return contracts.DeployOperationStatus(
+                operation_id=operation_id,
+                system_id="system-1",
+                status="succeeded",
+                phase="admin_key_ready",
+                instance_id="inst_deploy",
+                server_url="http://server",
+                progress_message="Bootstrap complete; admin key ready to claim",
                 warnings=[],
+                error_message=None,
+                failure_reason=None,
+                last_progress_at="2026-04-11T00:00:00Z",
+                created_at="2026-04-11T00:00:00Z",
+                updated_at="2026-04-11T00:00:00Z",
+                completed_at="2026-04-11T00:00:00Z",
+                admin_key_claimed_at=None,
+            )
+
+        def claim_deploy_admin_key(self, *, operation_id: str):
+            assert operation_id == "op_deploy"
+            return contracts.ClaimAdminKeyResult(
+                operation_id=operation_id,
+                system_id="system-1",
+                instance_id="inst_deploy",
+                server_url="http://server",
                 admin_bearer_token="crx_admin",
             )
 
@@ -920,6 +954,54 @@ def test_deploy_init_builds_bundle_and_bootstraps_remote_instance(
         "instance_id": "inst_deploy",
         "server_url": "http://server",
     }
+
+
+def test_deploy_claim_admin_key_recovers_with_bootstrap_token(
+    monkeypatch,
+    runner: CliRunner,
+):
+    class StubClient:
+        def claim_deploy_admin_key(self, *, operation_id: str):
+            assert operation_id == "op_deploy"
+            raise ClientConfigError(
+                "Initial admin key is no longer available for this deploy operation"
+            )
+
+        def recover_deploy_admin_key(self, *, operation_id: str):
+            assert operation_id == "op_deploy"
+            return contracts.ClaimAdminKeyResult(
+                operation_id=operation_id,
+                system_id="system-1",
+                instance_id="inst_deploy",
+                server_url="http://server",
+                admin_bearer_token="crx_recovered",
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.deploy._client_from_context",
+        lambda **_kwargs: StubClient(),
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "deploy",
+            "claim-admin-key",
+            "--operation-id",
+            "op_deploy",
+            "--bootstrap-token",
+            "bootstrap-token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Instance ID: inst_deploy" in result.output
+    assert "Admin bearer token: crx_recovered" in result.output
 
 
 def test_deploy_keys_create_uses_admin_runtime_client(monkeypatch, runner: CliRunner):
