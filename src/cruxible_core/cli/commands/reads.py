@@ -97,8 +97,16 @@ def query(
                 "total_results": total,
                 "steps_executed": result.steps_executed,
                 "receipt_id": result.receipt_id,
-                "param_hints": result.param_hints.model_dump(mode="python") if result.param_hints else None,
-                "policy_summary": result.policy_summary.model_dump(mode="python") if hasattr(result, "policy_summary") and result.policy_summary else None,
+                "param_hints": (
+                    result.param_hints.model_dump(mode="python")
+                    if result.param_hints
+                    else None
+                ),
+                "policy_summary": (
+                    result.policy_summary.model_dump(mode="python")
+                    if hasattr(result, "policy_summary") and result.policy_summary
+                    else None
+                ),
             })
             return
         click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
@@ -125,7 +133,18 @@ def query(
     results = result.results
     total = result.total_results
     if output_json:
-        items = [] if count_only else [{"entity_type": e.entity_type, "entity_id": e.entity_id, "properties": dict(e.properties)} for e in results]
+        items = (
+            []
+            if count_only
+            else [
+                {
+                    "entity_type": e.entity_type,
+                    "entity_id": e.entity_id,
+                    "properties": dict(e.properties),
+                }
+                for e in results
+            ]
+        )
         if limit is not None and not count_only:
             items = items[:limit]
         _emit_json({

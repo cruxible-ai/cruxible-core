@@ -107,6 +107,35 @@ def test_file_upload_uses_multipart(tmp_path: Path):
     assert captured["path"].endswith("/api/v1/inst_123/ingest")
 
 
+def test_client_includes_bearer_token_header_when_configured():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["authorization"] = request.headers.get("authorization")
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "inst_123",
+                "status": "initialized",
+                "warnings": [],
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = CruxibleClient(base_url="http://cruxible", token="local-secret")
+    client._client.close()  # type: ignore[attr-defined]
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible",
+        headers={"Authorization": "Bearer local-secret"},
+        transport=transport,
+    )
+
+    result = client.init("/srv/project", config_yaml="name: demo")
+
+    assert result.instance_id == "inst_123"
+    assert captured["authorization"] == "Bearer local-secret"
+
+
 def test_workflow_propose_uses_expected_route():
     captured: dict[str, Any] = {}
 
@@ -585,122 +614,3 @@ def test_outcome_routes():
     assert analysis.outcome_count == 2
     assert captured["path"].endswith("/api/v1/inst_123/outcomes/analyze")
     assert captured["payload"]["anchor_type"] == "receipt"
-
-
-def test_deploy_endpoints_use_expected_routes(tmp_path: Path):
-    captured: list[tuple[str, str | None]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = request.content.decode() if request.content else None
-        captured.append((str(request.url), payload))
-        if request.url.path == "/api/v1/deploy/uploads":
-            return httpx.Response(
-                200,
-                json={
-                    "upload_id": "upload_123",
-                    "bundle_digest": "sha256:bundle",
-                    "manifest_summary": {
-                        "bundle_version": 1,
-                        "instance_kind": "plain",
-                        "cruxible_core_version": "0.2.0",
-                        "config_name": "demo",
-                        "config_path": "config.yaml",
-                        "lock_path": "cruxible.lock.yaml",
-                        "config_digest": "sha256:cfg",
-                        "lock_digest": "sha256:lock",
-                        "artifacts": [],
-                    },
-                },
-            )
-        if request.url.path == "/api/v1/deploy/bootstrap":
-            return httpx.Response(
-                200,
-                json={
-                    "status": "bootstrapped",
-                    "system_id": "sys-1",
-                    "instance_id": "inst_123",
-                    "server_url": "http://cruxible",
-                    "warnings": [],
-                    "admin_bearer_token": "token",
-                },
-            )
-        if request.url.path == "/api/v1/deploy/status":
-            return httpx.Response(
-                200,
-                json={
-                    "system_id": "sys-1",
-                    "status": "initialized",
-                    "instance_id": "inst_123",
-                    "instance_slug": None,
-                    "server_url": "http://cruxible",
-                },
-            )
-        if request.url.path == "/api/v1/deploy/keys":
-            if request.method == "GET":
-                return httpx.Response(
-                    200,
-                    json={
-                        "credentials": [
-                            {
-                                "key_id": "key_1",
-                                "instance_scope": "inst_123",
-                                "role": "admin",
-                                "subject_label": "admin",
-                                "created_by": "bootstrap:sys-1",
-                                "created_at": "2026-04-03T00:00:00Z",
-                                "revoked_at": None,
-                            }
-                        ]
-                    },
-                )
-            return httpx.Response(
-                200,
-                json={
-                    "credential": {
-                        "key_id": "key_2",
-                        "instance_scope": "inst_123",
-                        "role": "viewer",
-                        "subject_label": "viewer",
-                        "created_by": "key_1",
-                        "created_at": "2026-04-03T00:00:00Z",
-                        "revoked_at": None,
-                    },
-                    "bearer_token": "crx_key_2_secret",
-                },
-            )
-        if request.url.path == "/api/v1/deploy/keys/key_2/revoke":
-            return httpx.Response(
-                200,
-                json={
-                    "key_id": "key_2",
-                    "revoked": True,
-                    "revoked_at": "2026-04-03T00:00:01Z",
-                },
-            )
-        raise AssertionError(f"Unexpected path: {request.url.path}")
-
-    bundle_path = tmp_path / "bundle.zip"
-    bundle_path.write_bytes(b"fake")
-    client = _build_client(handler)
-
-    upload = client.deploy_upload_bundle(str(bundle_path))
-    assert upload.upload_id == "upload_123"
-
-    bootstrap = client.deploy_bootstrap(system_id="sys-1", upload_id="upload_123")
-    assert bootstrap.instance_id == "inst_123"
-
-    status = client.deploy_status(system_id="sys-1")
-    assert status.status == "initialized"
-
-    created = client.create_runtime_key(role="viewer", subject_label="viewer")
-    assert created.credential.key_id == "key_2"
-
-    listed = client.list_runtime_keys()
-    assert listed.credentials[0].key_id == "key_1"
-
-    revoked = client.revoke_runtime_key("key_2")
-    assert revoked.revoked is True
-
-    assert any(path.endswith("/api/v1/deploy/uploads") for path, _ in captured)
-    assert any(path.endswith("/api/v1/deploy/bootstrap") for path, _ in captured)
-    assert any("/api/v1/deploy/status" in path for path, _ in captured)

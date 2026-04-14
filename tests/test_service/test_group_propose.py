@@ -959,26 +959,37 @@ ingestion: {}
 
 class TestDeriveReviewPriority:
     def test_blocking_contradict_critical(self) -> None:
-        matching = MatchingSchema(integrations={"blocker": IntegrationGuardrailSchema(role="blocking")})
+        matching = MatchingSchema(
+            integrations={"blocker": IntegrationGuardrailSchema(role="blocking")}
+        )
         members = [_member(signals=[CandidateSignal(integration="blocker", signal="contradict")])]
         assert derive_review_priority(members, matching, None) == "critical"
 
     def test_invalidated_prior_critical(self) -> None:
-        matching = MatchingSchema(integrations={"check": IntegrationGuardrailSchema(role="required")})
+        matching = MatchingSchema(
+            integrations={"check": IntegrationGuardrailSchema(role="required")}
+        )
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
         prior = {"trust_status": "invalidated"}
         assert derive_review_priority(members, matching, prior) == "critical"
 
     def test_always_review_on_unsure_review(self) -> None:
         matching = MatchingSchema(
-            integrations={"check": IntegrationGuardrailSchema(role="required", always_review_on_unsure=True)}
+            integrations={
+                "check": IntegrationGuardrailSchema(
+                    role="required",
+                    always_review_on_unsure=True,
+                )
+            }
         )
         members = [_member(signals=[CandidateSignal(integration="check", signal="unsure")])]
         prior = {"trust_status": "trusted"}
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_blocking_review(self) -> None:
-        matching = MatchingSchema(integrations={"blocker": IntegrationGuardrailSchema(role="blocking")})
+        matching = MatchingSchema(
+            integrations={"blocker": IntegrationGuardrailSchema(role="blocking")}
+        )
         members = [_member(signals=[CandidateSignal(integration="blocker", signal="unsure")])]
         prior = {"trust_status": "trusted"}
         assert derive_review_priority(members, matching, prior) == "review"
@@ -990,12 +1001,16 @@ class TestDeriveReviewPriority:
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_no_prior_review(self) -> None:
-        matching = MatchingSchema(integrations={"check": IntegrationGuardrailSchema(role="required")})
+        matching = MatchingSchema(
+            integrations={"check": IntegrationGuardrailSchema(role="required")}
+        )
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
         assert derive_review_priority(members, matching, None) == "review"
 
     def test_prior_watch_review(self) -> None:
-        matching = MatchingSchema(integrations={"check": IntegrationGuardrailSchema(role="required")})
+        matching = MatchingSchema(
+            integrations={"check": IntegrationGuardrailSchema(role="required")}
+        )
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
         prior = {"trust_status": "watch"}
         assert derive_review_priority(members, matching, prior) == "review"

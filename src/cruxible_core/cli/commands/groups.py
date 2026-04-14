@@ -170,7 +170,13 @@ def group_propose(
 )
 @json_option
 @handle_errors
-def group_resolve(group_id: str, action: str, rationale: str, source: str, output_json: bool) -> None:
+def group_resolve(
+    group_id: str,
+    action: str,
+    rationale: str,
+    source: str,
+    output_json: bool,
+) -> None:
     """Resolve a candidate group (approve or reject)."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.resolve_group(
@@ -324,7 +330,12 @@ def group_list(relationship: str | None, status: str | None, limit: int, output_
 @click.option("--limit", default=50, help="Max resolutions to show.")
 @json_option
 @handle_errors
-def group_resolutions(relationship: str | None, action: str | None, limit: int, output_json: bool) -> None:
+def group_resolutions(
+    relationship: str | None,
+    action: str | None,
+    limit: int,
+    output_json: bool,
+) -> None:
     """List group resolutions."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list_resolutions(

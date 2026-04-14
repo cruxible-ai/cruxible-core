@@ -21,6 +21,9 @@ from cruxible_core.world_kits import WorldKitEntry
 from cruxible_core.world_refs import WorldCatalogEntry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+KEV_DEMO_DIR = REPO_ROOT / "demos" / "kev-triage"
+
 
 @pytest.fixture
 def server_project(tmp_path: Path) -> Path:
@@ -72,21 +75,43 @@ def fitments_csv(server_project: Path) -> Path:
     return csv_path
 
 
-@pytest.fixture
-def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _make_app_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    auth_enabled: bool = False,
+    token: str | None = None,
+) -> TestClient:
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    if auth_enabled:
+        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+        assert token is not None
+        monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", token)
+    else:
+        monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+        monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     reset_permissions()
     reset_registry()
     reset_client_cache()
     get_manager().clear()
-    app = create_app()
-    return TestClient(app)
+    return TestClient(create_app())
 
 
-def _init_instance(client: TestClient, root: Path) -> str:
+@pytest.fixture
+def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    return _make_app_client(tmp_path, monkeypatch)
+
+
+def _init_instance(client: TestClient, root: Path, *, config_yaml: str | None = None) -> str:
+    resolved_config_yaml = (
+        config_yaml if config_yaml is not None else (root / "config.yaml").read_text()
+    )
     response = client.post(
         "/api/v1/instances",
-        json={"root_dir": str(root), "config_yaml": (root / "config.yaml").read_text()},
+        json={
+            "root_dir": str(root),
+            "config_yaml": resolved_config_yaml,
+        },
     )
     assert response.status_code == 200
     payload = response.json()
@@ -98,6 +123,41 @@ def test_health_endpoint_returns_ok(app_client: TestClient):
     response = app_client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_daemon_auth_defaults_to_disabled_for_local_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    response = client.post("/api/v1/validate", json={"config_yaml": CAR_PARTS_YAML})
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+
+
+def test_optional_server_token_gates_entire_daemon(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch, auth_enabled=True, token="local-secret")
+
+    missing = client.post("/api/v1/validate", json={"config_yaml": CAR_PARTS_YAML})
+    assert missing.status_code == 401
+
+    wrong = client.post(
+        "/api/v1/validate",
+        json={"config_yaml": CAR_PARTS_YAML},
+        headers={"Authorization": "Bearer wrong-secret"},
+    )
+    assert wrong.status_code == 401
+
+    allowed = client.post(
+        "/api/v1/validate",
+        json={"config_yaml": CAR_PARTS_YAML},
+        headers={"Authorization": "Bearer local-secret"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["valid"] is True
 
 
 def test_init_then_ingest_then_query_round_trip(
@@ -884,3 +944,81 @@ def test_resolve_server_instance_id_rejects_raw_filesystem_paths(
 
     with pytest.raises(InstanceNotFoundError):
         resolve_server_instance_id(str(server_project))
+
+
+def _run_canonical_workflow(client: TestClient, instance_id: str, workflow_name: str) -> None:
+    preview = client.post(
+        f"/api/v1/{instance_id}/workflows/run",
+        json={"workflow_name": workflow_name, "input": {}},
+    )
+    assert preview.status_code == 200
+    preview_payload = preview.json()
+    assert preview_payload["mode"] == "preview"
+
+    apply = client.post(
+        f"/api/v1/{instance_id}/workflows/apply",
+        json={
+            "workflow_name": workflow_name,
+            "input": {},
+            "expected_apply_digest": preview_payload["apply_digest"],
+            "expected_head_snapshot_id": preview_payload["head_snapshot_id"],
+        },
+    )
+    assert apply.status_code == 200
+    assert apply.json()["committed_snapshot_id"]
+
+
+def _approve_workflow_group(client: TestClient, instance_id: str, workflow_name: str) -> None:
+    propose = client.post(
+        f"/api/v1/{instance_id}/workflows/propose",
+        json={"workflow_name": workflow_name, "input": {}},
+    )
+    assert propose.status_code == 200
+    group_id = propose.json()["group_id"]
+    assert group_id
+
+    resolve = client.post(
+        f"/api/v1/{instance_id}/groups/{group_id}/resolve",
+        json={"action": "approve", "resolved_by": "human", "rationale": "smoke test"},
+    )
+    assert resolve.status_code == 200
+
+
+def test_local_daemon_kev_smoke_runs_workflows_and_query(
+    app_client: TestClient,
+) -> None:
+    instance_id = _init_instance(
+        app_client,
+        KEV_DEMO_DIR,
+        config_yaml=(KEV_DEMO_DIR / "config.yaml").read_text(),
+    )
+
+    lock = app_client.post(f"/api/v1/{instance_id}/workflows/lock")
+    assert lock.status_code == 200
+
+    _run_canonical_workflow(app_client, instance_id, "build_public_kev_reference")
+    _run_canonical_workflow(app_client, instance_id, "build_fork_state")
+
+    for workflow_name in [
+        "propose_asset_products",
+        "propose_asset_affected",
+        "propose_asset_exposure",
+        "propose_service_impact",
+    ]:
+        _approve_workflow_group(app_client, instance_id, workflow_name)
+
+    affected_edges = app_client.get(
+        f"/api/v1/{instance_id}/list/edges",
+        params={"relationship_type": "asset_affected_by_vulnerability", "limit": 5},
+    )
+    assert affected_edges.status_code == 200
+    edge = affected_edges.json()["items"][0]
+
+    query = app_client.post(
+        f"/api/v1/{instance_id}/query",
+        json={"query_name": "kev_assets", "params": {"cve_id": edge["to_id"]}},
+    )
+    assert query.status_code == 200
+    query_payload = query.json()
+    assert query_payload["total_results"] > 0
+    assert query_payload["receipt_id"]

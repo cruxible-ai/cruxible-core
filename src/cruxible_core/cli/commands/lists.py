@@ -74,7 +74,12 @@ def list_entities(entity_type: str, limit: int, output_json: bool) -> None:
 @click.option("--limit", default=50, help="Max receipts to show.")
 @json_option
 @handle_errors
-def list_receipts(query_name: str | None, operation_type: str | None, limit: int, output_json: bool) -> None:
+def list_receipts(
+    query_name: str | None,
+    operation_type: str | None,
+    limit: int,
+    output_json: bool,
+) -> None:
     """List receipt summaries."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(

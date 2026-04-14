@@ -35,6 +35,7 @@ def reset_permission_mode(monkeypatch):
     monkeypatch.delenv("CRUXIBLE_REQUIRE_SERVER", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_STATE_DIR", raising=False)
