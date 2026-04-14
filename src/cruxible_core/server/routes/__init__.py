@@ -12,8 +12,6 @@ def resolve_server_instance_id(instance_id: str) -> str:
     record = get_registry().get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise InstanceNotFoundError(instance_id)
-    if record.bootstrap_status not in {None, "initialized"}:
-        raise InstanceNotFoundError(instance_id)
     auth_context = get_current_auth_context()
     if (
         auth_context is not None

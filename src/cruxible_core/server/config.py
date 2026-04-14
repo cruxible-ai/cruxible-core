@@ -93,39 +93,3 @@ def get_runtime_bearer_token(environ: Mapping[str, str] | None = None) -> str | 
     if token:
         return token
     return None
-
-
-def get_bootstrap_jwks_url(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the configured bootstrap-token JWKS URL, if any."""
-    env = environ or os.environ
-    value = env.get("CRUXIBLE_BOOTSTRAP_JWKS_URL")
-    if value:
-        return value
-    return None
-
-
-def get_bootstrap_public_key(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the configured bootstrap-token public key PEM/JWKS blob, if any."""
-    env = environ or os.environ
-    value = env.get("CRUXIBLE_BOOTSTRAP_PUBLIC_KEY") or env.get("CRUXIBLE_BOOTSTRAP_JWKS")
-    if value:
-        return value
-    return None
-
-
-def get_bootstrap_issuer(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the expected bootstrap JWT issuer, if configured."""
-    env = environ or os.environ
-    value = env.get("CRUXIBLE_BOOTSTRAP_ISSUER")
-    if value:
-        return value
-    return None
-
-
-def get_bootstrap_audience(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the expected bootstrap JWT audience, if configured."""
-    env = environ or os.environ
-    value = env.get("CRUXIBLE_BOOTSTRAP_AUDIENCE")
-    if value:
-        return value
-    return None

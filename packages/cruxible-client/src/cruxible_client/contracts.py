@@ -28,8 +28,6 @@ GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
 WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
-RuntimeCredentialRole = Literal["viewer", "editor", "admin"]
-DeployBundleKind = Literal["plain", "release_fork"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -422,78 +420,6 @@ class WorldPullApplyResult(BaseModel):
     release_id: str
     apply_digest: str
     pre_pull_snapshot_id: str
-
-
-class DeployBundleArtifact(BaseModel):
-    name: str
-    uri: str
-    bundle_path: str
-    sha256: str
-
-
-class DeployBundleManifest(BaseModel):
-    bundle_version: int = 1
-    instance_kind: DeployBundleKind
-    cruxible_core_version: str
-    config_name: str | None = None
-    config_path: str
-    lock_path: str
-    config_digest: str
-    lock_digest: str
-    artifacts: list[DeployBundleArtifact] = Field(default_factory=list)
-    upstream_release_id: str | None = None
-    upstream_metadata_path: str | None = None
-    overlay_config_path: str | None = None
-    active_config_path: str | None = None
-    upstream_bundle_path: str | None = None
-
-
-class DeployUploadResult(BaseModel):
-    upload_id: str
-    bundle_digest: str
-    manifest_summary: DeployBundleManifest
-
-
-class DeployBootstrapResult(BaseModel):
-    status: Literal["bootstrapped", "already_initialized", "failed"]
-    system_id: str
-    instance_id: str | None = None
-    server_url: str | None = None
-    warnings: list[str] = Field(default_factory=list)
-    admin_bearer_token: str | None = None
-
-
-class DeployStatusResult(BaseModel):
-    system_id: str
-    status: Literal["bootstrapping", "initialized", "failed", "not_found"]
-    instance_id: str | None = None
-    instance_slug: str | None = None
-    server_url: str | None = None
-
-
-class RuntimeCredentialMetadata(BaseModel):
-    key_id: str
-    instance_scope: str
-    role: RuntimeCredentialRole
-    subject_label: str
-    created_by: str
-    created_at: str
-    revoked_at: str | None = None
-
-
-class RuntimeCredentialCreateResult(BaseModel):
-    credential: RuntimeCredentialMetadata
-    bearer_token: str
-
-
-class RuntimeCredentialListResult(BaseModel):
-    credentials: list[RuntimeCredentialMetadata] = Field(default_factory=list)
-
-
-class RuntimeCredentialRevokeResult(BaseModel):
-    key_id: str
-    revoked: bool
-    revoked_at: str | None = None
 
 
 class ProposeGroupToolResult(BaseModel):

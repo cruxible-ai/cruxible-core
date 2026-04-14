@@ -211,14 +211,3 @@ class WorldForkRequest(BaseModel):
 
 class WorldPullApplyRequest(BaseModel):
     expected_apply_digest: str
-
-
-class DeployBootstrapRequest(BaseModel):
-    system_id: str
-    upload_id: str
-    instance_slug: str | None = None
-
-
-class RuntimeCredentialCreateRequest(BaseModel):
-    role: contracts.RuntimeCredentialRole
-    subject_label: str

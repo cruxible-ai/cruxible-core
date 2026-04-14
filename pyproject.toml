@@ -40,7 +40,6 @@ mcp = ["mcp>=1.0"]
 server = [
     "fastapi>=0.100",
     "python-multipart>=0.0.9",
-    "PyJWT[crypto]>=2.8",
     "uvicorn[standard]>=0.20",
 ]
 dev = [
@@ -50,7 +49,6 @@ dev = [
     "mypy>=1.10",
     "fastapi>=0.100",
     "python-multipart>=0.0.9",
-    "PyJWT[crypto]>=2.8",
 ]
 
 [project.scripts]

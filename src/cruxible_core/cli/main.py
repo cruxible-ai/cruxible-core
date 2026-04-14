@@ -111,7 +111,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     analyze_outcomes_cmd,
     apply_cmd,
     connect_group,
-    deploy_group,
     evaluate,
     explain,
     export_group,
@@ -147,7 +146,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
 cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]
 cli.add_command(connect_group, "context")  # type: ignore[has-type]
-cli.add_command(deploy_group, "deploy")  # type: ignore[has-type]
 cli.add_command(lock_cmd)  # type: ignore[has-type]
 cli.add_command(world_group, "world")  # type: ignore[has-type]
 cli.add_command(plan_cmd)  # type: ignore[has-type]

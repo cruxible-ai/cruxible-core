@@ -6,22 +6,14 @@ import contextvars
 import hmac
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from typing import Any
 
-import jwt
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from cruxible_core.errors import AuthenticationError
 from cruxible_core.mcp.permissions import PermissionMode, request_permission_scope
-from cruxible_core.server.auth_store import RuntimeKeyRecord, get_auth_store
 from cruxible_core.server.config import (
-    get_bootstrap_audience,
-    get_bootstrap_issuer,
-    get_bootstrap_jwks_url,
-    get_bootstrap_public_key,
     get_server_token,
     is_server_auth_enabled,
 )
@@ -31,7 +23,6 @@ _AUTH_CONTEXT: contextvars.ContextVar["ResolvedAuthContext | None"] = contextvar
     "cruxible_auth_context",
     default=None,
 )
-_jwks_client: jwt.PyJWKClient | None = None
 
 
 @dataclass(frozen=True)
@@ -43,10 +34,6 @@ class ResolvedAuthContext:
     role: str | None
     effective_permission_mode: PermissionMode | None
     created_by: str | None = None
-    system_id: str | None = None
-    actions: list[str] = field(default_factory=list)
-    bootstrap_jti: str | None = None
-    bootstrap_expires_at: datetime | None = None
 
 
 def get_current_auth_context() -> ResolvedAuthContext | None:
@@ -64,98 +51,6 @@ def _unauthorized_response(message: str = "Unauthorized") -> JSONResponse:
     )
 
 
-def _role_to_mode(role: str) -> PermissionMode:
-    mapping = {
-        "viewer": PermissionMode.READ_ONLY,
-        "editor": PermissionMode.GOVERNED_WRITE,
-        "admin": PermissionMode.ADMIN,
-    }
-    return mapping.get(role, PermissionMode.READ_ONLY)
-
-
-def _runtime_key_context(record: RuntimeKeyRecord) -> ResolvedAuthContext:
-    return ResolvedAuthContext(
-        principal_id=record.key_id,
-        principal_label=record.subject_label,
-        credential_type="runtime_api_key",
-        instance_scope=record.instance_scope,
-        role=record.role,
-        effective_permission_mode=_role_to_mode(record.role),
-        created_by=record.created_by,
-    )
-
-
-def _decode_bootstrap_jwt(token: str) -> dict[str, Any] | None:
-    public_key = get_bootstrap_public_key()
-    jwks_url = get_bootstrap_jwks_url()
-    issuer = get_bootstrap_issuer()
-    audience = get_bootstrap_audience()
-
-    if public_key is None and jwks_url is None:
-        return None
-
-    try:
-        if public_key is not None:
-            return jwt.decode(
-                token,
-                public_key,
-                algorithms=["RS256", "ES256", "EdDSA"],
-                audience=audience,
-                issuer=issuer,
-            )
-
-        global _jwks_client
-        if _jwks_client is None:
-            assert jwks_url is not None
-            _jwks_client = jwt.PyJWKClient(jwks_url)
-        signing_key = _jwks_client.get_signing_key_from_jwt(token)
-        return jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256", "ES256", "EdDSA"],
-            audience=audience,
-            issuer=issuer,
-        )
-    except jwt.PyJWTError:
-        return None
-
-
-def _bootstrap_context(token: str) -> ResolvedAuthContext | None:
-    claims = _decode_bootstrap_jwt(token)
-    if claims is None or claims.get("kind") != "bootstrap":
-        return None
-
-    exp_value = claims.get("exp")
-    jti = claims.get("jti")
-    system_id = claims.get("system_id")
-    org_id = claims.get("org_id")
-    actions_raw = claims.get("actions", [])
-    if not isinstance(exp_value, (int, float)) or not isinstance(jti, str):
-        return None
-    if not isinstance(system_id, str) or not isinstance(org_id, str):
-        return None
-    if isinstance(actions_raw, list) and all(isinstance(item, str) for item in actions_raw):
-        actions = list(actions_raw)
-    else:
-        actions = []
-
-    expires_at = datetime.fromtimestamp(float(exp_value), tz=UTC)
-
-    return ResolvedAuthContext(
-        principal_id=jti,
-        principal_label=f"bootstrap:{system_id}",
-        credential_type="bootstrap_jwt",
-        instance_scope=None,
-        role="admin",
-        effective_permission_mode=PermissionMode.ADMIN,
-        created_by=f"bootstrap:{system_id}",
-        system_id=system_id,
-        actions=actions,
-        bootstrap_jti=jti,
-        bootstrap_expires_at=expires_at,
-    )
-
-
 @contextmanager
 def _auth_context_scope(
     context: ResolvedAuthContext | None,
@@ -165,34 +60,6 @@ def _auth_context_scope(
         yield
     finally:
         _AUTH_CONTEXT.reset(token)
-
-
-def require_bootstrap_or_admin_auth(*, system_id: str | None = None) -> ResolvedAuthContext:
-    """Require either a bootstrap JWT or an admin runtime credential."""
-    context = get_current_auth_context()
-    if context is None:
-        raise AuthenticationError("Deploy route requires bootstrap or admin authentication")
-    if context.credential_type == "bootstrap_jwt":
-        if system_id is not None and context.system_id != system_id:
-            raise AuthenticationError("Bootstrap token is not valid for this system")
-        if not set(context.actions).intersection({"bootstrap", "admin"}):
-            raise AuthenticationError("Bootstrap token does not permit deploy bootstrap actions")
-        return context
-    if context.credential_type == "runtime_api_key" and context.role == "admin":
-        return context
-    if context.credential_type == "legacy_server_token":
-        return context
-    raise AuthenticationError("Deploy route requires bootstrap or admin authentication")
-
-
-def require_admin_runtime_auth() -> ResolvedAuthContext:
-    """Require an admin-scoped runtime credential for key-management routes."""
-    context = get_current_auth_context()
-    if context is None:
-        raise AuthenticationError("Admin runtime credential required")
-    if context.credential_type == "runtime_api_key" and context.role == "admin":
-        return context
-    raise AuthenticationError("Admin runtime credential required")
 
 
 async def token_auth_middleware(
@@ -214,29 +81,23 @@ async def token_auth_middleware(
             return _unauthorized_response()
 
     resolved_context: ResolvedAuthContext | None = None
+    configured_token = get_server_token()
 
     if bearer_token is not None:
-        runtime_record = get_auth_store().resolve_runtime_key(bearer_token)
-        if runtime_record is not None:
-            resolved_context = _runtime_key_context(runtime_record)
-        else:
-            resolved_context = _bootstrap_context(bearer_token)
-        if resolved_context is None:
-            legacy = get_server_token()
-            if legacy and hmac.compare_digest(bearer_token, legacy):
-                resolved_context = ResolvedAuthContext(
-                    principal_id="legacy_server_token",
-                    principal_label="legacy_server_token",
-                    credential_type="legacy_server_token",
-                    instance_scope=None,
-                    role="admin",
-                    effective_permission_mode=None,
-                    created_by="legacy_server_token",
-                )
-            else:
-                return _unauthorized_response()
+        if configured_token and hmac.compare_digest(bearer_token, configured_token):
+            resolved_context = ResolvedAuthContext(
+                principal_id="legacy_server_token",
+                principal_label="legacy_server_token",
+                credential_type="legacy_server_token",
+                instance_scope=None,
+                role="admin",
+                effective_permission_mode=None,
+                created_by="legacy_server_token",
+            )
+        elif is_server_auth_enabled():
+            return _unauthorized_response()
 
-    if resolved_context is None and is_server_auth_enabled():
+    if bearer_token is None and is_server_auth_enabled():
         return _unauthorized_response()
 
     with _auth_context_scope(resolved_context):
