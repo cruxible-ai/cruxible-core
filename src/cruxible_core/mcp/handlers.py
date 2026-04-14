@@ -13,7 +13,7 @@ from typing import Any, TypeVar
 import yaml
 
 from cruxible_client import CruxibleClient, contracts
-from cruxible_core.config.composer import compose_configs
+from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.runtime import local_api
@@ -92,21 +92,8 @@ def _config_yaml_for_upload(config_path: str, *, root_dir: str | None = None) ->
     if not path.is_absolute() and root_dir is not None:
         path = Path(root_dir) / path
     config = load_config(path)
-    if config.extends is None:
-        return path.read_text()
-
-    base_path = Path(config.extends)
-    if not base_path.is_absolute():
-        base_path = path.resolve().parent / base_path
-    if not base_path.exists():
-        raise ConfigError(f"Base config for extends not found: {base_path}")
-
-    base = load_config(base_path)
-    composed = compose_configs(
-        base,
-        config,
-        base_config_path=base_path,
-        overlay_config_path=path.resolve(),
+    composed = compose_config_sequence(
+        resolve_config_layers(config, config_path=path.resolve()),
     )
     composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
     return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)

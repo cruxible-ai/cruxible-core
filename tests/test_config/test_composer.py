@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.config.composer import (
+    ResolvedConfigLayer,
     compose_config_files,
+    compose_config_sequence,
     compose_configs,
+    compose_runtime_configs,
     write_composed_config,
 )
-from cruxible_core.config.loader import load_config
+from cruxible_core.config.loader import load_config, load_config_from_string
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 
@@ -46,6 +49,101 @@ def _overlay(extra: dict) -> CoreConfig:
         **extra,
     }
     return CoreConfig.model_validate(data)
+
+
+class TestSequenceComposition:
+    def test_two_layer_sequence_matches_pairwise_compose(self) -> None:
+        base = _base()
+        overlay = _overlay({
+            "feedback_profiles": {
+                "follows": {"version": 1, "reason_codes": {}, "scope_keys": {}},
+            },
+        })
+
+        pairwise = compose_configs(base, overlay)
+        sequence = compose_config_sequence(
+            [
+                ResolvedConfigLayer(config=base),
+                ResolvedConfigLayer(config=overlay),
+            ]
+        )
+
+        assert sequence.model_dump(mode="python") == pairwise.model_dump(mode="python")
+
+    def test_runtime_sequence_matches_pairwise_runtime_compose(self) -> None:
+        base = load_config_from_string(
+            """\
+version: "1.0"
+name: base
+kind: world_model
+entity_types:
+  Vendor:
+    properties:
+      vendor_id:
+        type: string
+        primary_key: true
+relationships: []
+contracts:
+  EmptyInput:
+    fields: {}
+  BundleRows:
+    fields:
+      items:
+        type: json
+artifacts:
+  canonical_bundle:
+    kind: directory
+    uri: ./bundle
+    sha256: sha256:bundle
+providers:
+  reference_loader:
+    kind: function
+    contract_in: EmptyInput
+    contract_out: BundleRows
+    ref: tests.support.workflow_test_providers.reference_bundle_loader
+    version: 1.0.0
+    deterministic: true
+    runtime: python
+    artifact: canonical_bundle
+workflows:
+  build_reference:
+    canonical: true
+    contract_in: EmptyInput
+    steps:
+      - id: rows
+        provider: reference_loader
+        input: {}
+        as: rows
+    returns: rows
+"""
+        )
+        overlay = load_config_from_string(
+            """\
+version: "1.0"
+name: fork
+extends: base.yaml
+entity_types: {}
+relationships: []
+named_queries:
+  vendor_index:
+    entry_point: Vendor
+    traversal: []
+    returns: "list[Vendor]"
+"""
+        )
+
+        pairwise = compose_runtime_configs(base, overlay)
+        sequence = compose_config_sequence(
+            [
+                ResolvedConfigLayer(config=base),
+                ResolvedConfigLayer(config=overlay),
+            ],
+            runtime=True,
+        )
+
+        assert sequence.model_dump(mode="python") == pairwise.model_dump(mode="python")
+        assert "build_reference" not in sequence.workflows
+        assert "reference_loader" not in sequence.providers
 
 
 # --- feedback_profiles (keyed-map merge) ---

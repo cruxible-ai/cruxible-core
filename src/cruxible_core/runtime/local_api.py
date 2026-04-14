@@ -8,8 +8,8 @@ from typing import Any, TypeVar
 import yaml
 
 from cruxible_client import contracts
-from cruxible_core.config.composer import _rebase_artifact_uris, compose_configs
-from cruxible_core.config.loader import load_config, load_config_from_string
+from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
+from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -142,21 +142,10 @@ def _normalize_governed_config_yaml(config_yaml: str, *, workspace_root: Path) -
     """
     overlay_path = workspace_root / "config.yaml"
     config = load_config_from_string(config_yaml)
-    if config.extends is not None:
-        base_path = Path(config.extends)
-        if not base_path.is_absolute():
-            base_path = overlay_path.parent / base_path
-        if not base_path.exists():
-            raise ConfigError(f"Base config for extends not found: {base_path}")
-        base = load_config(base_path)
-        config = compose_configs(
-            base,
-            config,
-            base_config_path=base_path,
-            overlay_config_path=overlay_path,
-        )
+    config = compose_config_sequence(
+        resolve_config_layers(config, config_path=overlay_path),
+    )
     data = config.model_dump(mode="python", by_alias=True, exclude_none=True)
-    data = _rebase_artifact_uris(data, overlay_path.parent)
     return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
 
 

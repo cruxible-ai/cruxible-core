@@ -1,7 +1,9 @@
-"""Explicit base+overlay config composition for release-backed forks."""
+"""Config composition helpers for current layered config shapes."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -24,6 +26,81 @@ _KEYED_MAP_KEYS = {
     "outcome_profiles",
 }
 
+_INLINE_RELATIVE_EXTENDS_ERROR = (
+    "Inline config_yaml with a relative extends path cannot be composed — use an "
+    "absolute path or validate from a file"
+)
+
+
+@dataclass(frozen=True)
+class ResolvedConfigLayer:
+    """One config contribution with its resolved source path, if any."""
+
+    config: CoreConfig
+    config_path: Path | None = None
+
+
+def resolve_config_layers(
+    config: CoreConfig,
+    *,
+    config_path: Path | None = None,
+) -> list[ResolvedConfigLayer]:
+    """Lower today's supported config shapes into an ordered layer sequence."""
+    resolved_path = config_path.resolve() if config_path is not None else None
+    if config.extends is None:
+        return [ResolvedConfigLayer(config=config, config_path=resolved_path)]
+
+    base_path = Path(config.extends)
+    if not base_path.is_absolute():
+        if resolved_path is None:
+            raise ConfigError(_INLINE_RELATIVE_EXTENDS_ERROR)
+        base_path = resolved_path.parent / base_path
+    if not base_path.exists():
+        raise ConfigError(f"Base config for extends not found: {base_path}")
+
+    resolved_base_path = base_path.resolve()
+    return [
+        ResolvedConfigLayer(config=load_config(resolved_base_path), config_path=resolved_base_path),
+        ResolvedConfigLayer(config=config, config_path=resolved_path),
+    ]
+
+
+def compose_config_sequence(
+    layers: Sequence[ResolvedConfigLayer],
+    *,
+    runtime: bool = False,
+) -> CoreConfig:
+    """Compose an ordered config sequence using current append-only semantics."""
+    if not layers:
+        raise ConfigError("Config composition requires at least one layer")
+
+    composed_data: dict[str, Any] | None = None
+    removed_provider_names: set[str] = set()
+    last_index = len(layers) - 1
+
+    for index, layer in enumerate(layers):
+        layer_data = layer.config.model_dump(mode="python", by_alias=True, exclude_none=True)
+        if runtime and index != last_index:
+            layer_data, _removed_workflow_names, removed = _strip_canonical_runtime_config(
+                layer_data
+            )
+            removed_provider_names.update(removed)
+        if layer.config_path is not None:
+            layer_data = _rebase_artifact_uris(layer_data, layer.config_path.resolve().parent)
+        if composed_data is None:
+            composed_data = layer_data
+        else:
+            composed_data = _compose_mapping(composed_data, layer_data)
+
+    assert composed_data is not None
+    if runtime:
+        composed_data = _strip_removed_runtime_providers(
+            composed_data,
+            removed_provider_names=removed_provider_names,
+        )
+    composed_data.pop("extends", None)
+    return CoreConfig.model_validate(composed_data)
+
 
 def compose_configs(
     base: CoreConfig,
@@ -33,15 +110,12 @@ def compose_configs(
     overlay_config_path: Path | None = None,
 ) -> CoreConfig:
     """Compose a base config and overlay using strict append-only semantics."""
-    base_data = base.model_dump(mode="python", by_alias=True, exclude_none=True)
-    overlay_data = overlay.model_dump(mode="python", by_alias=True, exclude_none=True)
-    if base_config_path is not None:
-        base_data = _rebase_artifact_uris(base_data, base_config_path.resolve().parent)
-    if overlay_config_path is not None:
-        overlay_data = _rebase_artifact_uris(overlay_data, overlay_config_path.resolve().parent)
-    composed = _compose_mapping(base_data, overlay_data)
-    composed.pop("extends", None)
-    return CoreConfig.model_validate(composed)
+    return compose_config_sequence(
+        [
+            ResolvedConfigLayer(config=base, config_path=base_config_path),
+            ResolvedConfigLayer(config=overlay, config_path=overlay_config_path),
+        ],
+    )
 
 
 def compose_runtime_configs(
@@ -57,21 +131,13 @@ def compose_runtime_configs(
     composition so downstream forks do not attempt to rebuild upstream
     reference state or verify build-only artifacts.
     """
-    base_data, _removed_workflow_names, removed_provider_names = _strip_canonical_runtime_config(
-        base.model_dump(mode="python", by_alias=True, exclude_none=True)
+    return compose_config_sequence(
+        [
+            ResolvedConfigLayer(config=base, config_path=base_config_path),
+            ResolvedConfigLayer(config=overlay, config_path=overlay_config_path),
+        ],
+        runtime=True,
     )
-    overlay_data = overlay.model_dump(mode="python", by_alias=True, exclude_none=True)
-    if base_config_path is not None:
-        base_data = _rebase_artifact_uris(base_data, base_config_path.resolve().parent)
-    if overlay_config_path is not None:
-        overlay_data = _rebase_artifact_uris(overlay_data, overlay_config_path.resolve().parent)
-    composed = _compose_mapping(base_data, overlay_data)
-    composed = _strip_removed_runtime_providers(
-        composed,
-        removed_provider_names=removed_provider_names,
-    )
-    composed.pop("extends", None)
-    return CoreConfig.model_validate(composed)
 
 
 def write_composed_config(
