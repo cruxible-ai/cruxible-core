@@ -9,13 +9,21 @@ Get from install to first query in 5 minutes.
 
 ## Install
 
-### Server / MCP Runtime
+### Local Daemon Runtime
 
 ```bash
-pip install "cruxible-core[mcp]"
+pip install "cruxible-core[server,mcp]"
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
 ```
 
-> Or use `uv tool install "cruxible-core[mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
+> Or use `uv tool install "cruxible-core[server,mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
+
+For a simple local hardening layer, add:
+
+```bash
+CRUXIBLE_SERVER_AUTH=true
+CRUXIBLE_SERVER_TOKEN=change-me
+```
 
 ### Client-Only Agent Environment
 
@@ -29,11 +37,26 @@ If permission modes matter, do not install `cruxible-core` in that agent environ
 
 If you need a real runtime boundary rather than advisory local permissions, see [Isolated Deployment](isolated-deployment.md).
 
+## Point the CLI at the Daemon
+
+Initialize a daemon-owned instance from your local config:
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 init --root-dir "$(pwd)" --config config.yaml
+```
+
+Then keep using the daemon-backed interface:
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> stats
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> query --query <query-name>
+```
+
 ## MCP Setup
 
 Add the MCP server to your AI agent:
 
-This is the convenience path for local development. It is not a hard isolation boundary.
+This is the convenience path for local development. Point MCP at the same local daemon the CLI uses.
 
 **Claude Code / Cursor** (project `.mcp.json` or `~/.claude.json` / `.cursor/mcp.json`):
 
@@ -43,7 +66,8 @@ This is the convenience path for local development. It is not a hard isolation b
     "cruxible": {
       "command": "cruxible-mcp",
       "env": {
-        "CRUXIBLE_MODE": "admin"
+        "CRUXIBLE_MODE": "admin",
+        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
       }
     }
   }
@@ -58,6 +82,7 @@ command = "cruxible-mcp"
 
 [mcp_servers.cruxible.env]
 CRUXIBLE_MODE = "admin"
+CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
 ```
 
 ## Try a Demo

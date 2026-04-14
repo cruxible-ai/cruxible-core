@@ -127,18 +127,29 @@ Duration: 0.41ms | 2 traversal steps
 
 ### Choose a Mode
 
-- **Local evaluation:** fastest way to try Cruxible, iterate on configs, and run demos. This is a convenience path for development and single-user exploration, not a hard isolation boundary.
-- **Governed daemon / deployment:** recommended when trust boundaries matter. Run `cruxible-core` in a separate daemon environment and give agents only `cruxible-client` access to that daemon.
+- **Local daemon:** recommended for the `0.2` release candidate. Run `cruxible-server` on `127.0.0.1` or a Unix socket, then point the CLI, GUI, or agent tools at that daemon.
+- **Direct local runtime:** still supported as a convenience path for development and single-user exploration, but it is not the primary RC story and it is not a hard isolation boundary.
 
-### Local Runtime / MCP
+### Local Daemon Runtime
 
 ```bash
-pip install "cruxible-core[mcp]"
+pip install "cruxible-core[server,mcp]"
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
 ```
 
 > Or use `uv tool install "cruxible-core[mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
 
-This is the easiest way to evaluate Cruxible locally. If the same environment can import `cruxible-core` or reach the runtime files directly, permission modes are advisory rather than isolating.
+By default the daemon is local-only and binds to `127.0.0.1:8100`. If you want a simple local hardening layer, add `CRUXIBLE_SERVER_AUTH=true` and `CRUXIBLE_SERVER_TOKEN=...`.
+
+### Connect the CLI or GUI
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 init \
+  --root-dir "$(pwd)" \
+  --config config.yaml
+```
+
+The returned `instance_id` is the handle the CLI, GUI, and local integrations use for later queries, workflows, and mutations.
 
 ### Client-Only Agent Environment
 
@@ -146,11 +157,11 @@ This is the easiest way to evaluate Cruxible locally. If the same environment ca
 pip install cruxible-client
 ```
 
-Use `cruxible-client` when the agent only needs typed HTTP/API access to a separate remote or governed Cruxible daemon.
+Use `cruxible-client` when the caller only needs typed HTTP/API access to a separate Cruxible daemon.
 
 Permission modes are enforced at the daemon boundary. If an agent can import `cruxible-core` or access the same runtime/filesystem directly, those modes are advisory rather than isolating. If trust levels matter, keep `cruxible-core` out of the agent environment and talk to a separate daemon through `cruxible-client`.
 
-For local development, CLI and MCP are just two adapters over the same local runtime. The API-first/authenticated model matters for remote or governed instances.
+For the `0.2` RC, the daemon-backed API is the primary interface for the CLI, GUI, and local integrations. Direct local runtime remains available as a convenience path.
 
 For agent setups, prefer:
 
@@ -173,7 +184,8 @@ Add the MCP server to your AI agent:
     "cruxible": {
       "command": "cruxible-mcp",
       "env": {
-        "CRUXIBLE_MODE": "admin"
+        "CRUXIBLE_MODE": "admin",
+        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
       }
     }
   }
@@ -188,6 +200,7 @@ command = "cruxible-mcp"
 
 [mcp_servers.cruxible.env]
 CRUXIBLE_MODE = "admin"
+CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
 ```
 
 ### Try a demo
@@ -199,7 +212,7 @@ cd cruxible-core/demos/drug-interactions
 
 Each demo is a starter kit with a config, prebuilt graph, example queries, and receipts. If you're new, start with `drug-interactions`.
 
-Treat the demo flow as local evaluation mode. For production or multi-user use, run against a separate daemon or managed deployment instead of relying on a same-machine local runtime boundary.
+Treat the demo flow as local evaluation mode. For a real process boundary, run against a separate daemon instead of relying on a same-machine local runtime boundary.
 
 First, load the instance:
 
@@ -280,8 +293,6 @@ Cruxible is for the cases where humans and agents need to coordinate around shar
 ## Technology
 
 Built on [Pydantic](https://docs.pydantic.dev/) (validation), [NetworkX](https://networkx.org/) (graph), [Polars](https://pola.rs/) (data ops), [SQLite](https://sqlite.org/) (persistence), and [FastMCP](https://github.com/jlowin/fastmcp) (MCP server).
-
-**Cruxible Cloud:** Managed deployment with expert support. [Coming soon.](https://cruxible.ai)
 
 ## License
 

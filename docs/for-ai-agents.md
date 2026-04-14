@@ -2,9 +2,9 @@
 
 This guide explains how AI agents (Claude Code, Cursor, Codex, or any MCP-capable agent) should orchestrate Cruxible Core. You provide the intelligence; Core provides deterministic execution with proof.
 
-For **local instances**, CLI and MCP are the same shape over the same local runtime. Use whichever fits the host better.
+For the `0.2` RC, the primary execution shape is a **local `cruxible-server` daemon**. CLI, GUI, MCP, and any local integrations should talk to that daemon over HTTP or a Unix socket.
 
-For **remote / governed instances**, the authenticated HTTP API is the primary execution interface. CLI and MCP are client adapters over that API. Today the CLI has broader parity than MCP, so treat MCP as the tool-calling adapter rather than the canonical surface.
+Direct local runtime remains available as a convenience path, but it is not the primary RC interface and it is not a strong boundary.
 
 Workflow guidance should live in agent-side skills; MCP should remain a deterministic execution adapter, not the source of the workflow itself.
 
@@ -13,7 +13,7 @@ Starter `SKILL.md` files for the old prompt workflows now live in the repo-level
 ## Install Boundary
 
 - Agent/client environment: `pip install cruxible-client`
-- Daemon/MCP runtime: `pip install "cruxible-core[mcp]"`
+- Daemon/MCP runtime: `pip install "cruxible-core[server,mcp]"`
 
 Permission modes are enforced at the daemon boundary. If an agent can import `cruxible-core` or access the daemon's runtime/filesystem directly, those modes are advisory rather than isolating.
 
