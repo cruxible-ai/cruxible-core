@@ -117,10 +117,9 @@ class _WikiGenerator:
         subjects = self._select_subjects(options)
         rendered_subjects = set(subjects)
         receipt_ids = self._collect_receipt_ids(subjects)
-        trace_ids = self._collect_trace_ids(receipt_ids, subjects)
         query_names = self._collect_query_names(receipt_ids)
-        workflow_names = self._collect_workflow_names(receipt_ids, subjects, trace_ids)
-        provider_names = self._collect_provider_names(trace_ids, receipt_ids)
+        workflow_names = self._collect_workflow_names(receipt_ids, subjects)
+        provider_names = self._collect_provider_names(receipt_ids)
 
         pages: dict[Path, str] = {}
         pages[Path("index.md")] = self._render_index_page(
@@ -153,12 +152,6 @@ class _WikiGenerator:
                 receipt,
                 rendered_subjects=rendered_subjects,
             )
-
-        for trace_id in trace_ids:
-            trace = self.traces.get(trace_id)
-            if trace is None:
-                continue
-            pages[self._trace_path(trace_id)] = self._render_trace_page(trace)
 
         for query_name in sorted(query_names):
             schema = self.config.named_queries.get(query_name)
@@ -341,19 +334,6 @@ class _WikiGenerator:
                     receipt_ids.add(group.source_workflow_receipt_id)
         return receipt_ids
 
-    def _collect_trace_ids(self, receipt_ids: set[str], subjects: list[SubjectRef]) -> set[str]:
-        trace_ids: set[str] = set()
-        for receipt_id in receipt_ids:
-            receipt = self.receipts.get(receipt_id)
-            if receipt is not None:
-                trace_ids.update(_extract_trace_ids_from_receipt(receipt))
-        for subject in subjects:
-            for group in self.groups_by_subject.get(subject.key, []):
-                trace_ids.update(group.source_trace_ids)
-            for outcome in self._subject_outcomes(subject):
-                trace_ids.update(_extract_trace_ids_from_lineage(outcome.lineage_snapshot))
-        return trace_ids
-
     def _collect_query_names(self, receipt_ids: set[str]) -> set[str]:
         return {
             receipt.query_name
@@ -366,7 +346,6 @@ class _WikiGenerator:
         self,
         receipt_ids: set[str],
         subjects: list[SubjectRef],
-        trace_ids: set[str],
     ) -> set[str]:
         workflow_names = {
             receipt.query_name
@@ -378,19 +357,10 @@ class _WikiGenerator:
             for group in self.groups_by_subject.get(subject.key, []):
                 if group.source_workflow_name:
                     workflow_names.add(group.source_workflow_name)
-        for trace_id in trace_ids:
-            trace = self.traces.get(trace_id)
-            if trace is not None:
-                workflow_names.add(trace.workflow_name)
         return workflow_names
 
-    def _collect_provider_names(self, trace_ids: set[str], receipt_ids: set[str]) -> set[str]:
-        provider_names = {
-            trace.provider_name
-            for trace_id in trace_ids
-            for trace in [self.traces.get(trace_id)]
-            if trace is not None
-        }
+    def _collect_provider_names(self, receipt_ids: set[str]) -> set[str]:
+        provider_names: set[str] = set()
         for receipt_id in receipt_ids:
             receipt = self.receipts.get(receipt_id)
             if receipt is None:
@@ -409,19 +379,6 @@ class _WikiGenerator:
             self.receipts[receipt_id] for receipt_id in receipt_ids if receipt_id in self.receipts
         ]
         return sorted(receipts, key=lambda receipt: receipt.created_at, reverse=True)
-
-    def _subject_traces(self, subject: SubjectRef) -> list[ExecutionTrace]:
-        trace_ids: set[str] = set()
-        for receipt in self._subject_receipts(subject):
-            trace_ids.update(_extract_trace_ids_from_receipt(receipt))
-        for group in self.groups_by_subject.get(subject.key, []):
-            trace_ids.update(group.source_trace_ids)
-        for outcome in self._subject_outcomes(subject):
-            trace_ids.update(_extract_trace_ids_from_lineage(outcome.lineage_snapshot))
-        traces = [
-            self.traces[trace_id] for trace_id in sorted(trace_ids) if trace_id in self.traces
-        ]
-        return sorted(traces, key=lambda trace: trace.started_at, reverse=True)
 
     def _subject_outcomes(self, subject: SubjectRef) -> list[OutcomeRecord]:
         receipt_ids = self.receipt_index.get(subject.key, set())
@@ -444,9 +401,6 @@ class _WikiGenerator:
 
     def _receipt_path(self, receipt_id: str) -> Path:
         return Path("evidence") / "receipts" / f"{_slugify(receipt_id)}.md"
-
-    def _trace_path(self, trace_id: str) -> Path:
-        return Path("evidence") / "traces" / f"{_slugify(trace_id)}.md"
 
     def _query_path(self, query_name: str) -> Path:
         return Path("reference") / "queries" / f"{_slugify(query_name)}.md"
@@ -517,7 +471,6 @@ class _WikiGenerator:
         entity = self.subject_entities[subject]
         entity_schema = self.config.get_entity_type(subject.entity_type)
         receipts = self._subject_receipts(subject)
-        traces = self._subject_traces(subject)
         feedback_records = sorted(
             self.feedback_by_subject.get(subject.key, []),
             key=lambda record: record.created_at,
@@ -534,7 +487,6 @@ class _WikiGenerator:
         lines.extend(self._render_record_section(subject, entity, entity_schema))
         lines.extend(self._render_world_state_section(subject, rendered_subjects))
         lines.extend(self._render_production_section(subject, receipts, rendered_subjects))
-        lines.extend(self._render_records_considered_section(subject, receipts, rendered_subjects))
         lines.extend(self._render_conclusions_section(subject, groups, rendered_subjects))
         lines.extend(
             self._render_review_history_section(
@@ -543,7 +495,7 @@ class _WikiGenerator:
         )
         lines.extend(self._render_outcome_history_section(outcomes))
         lines.extend(
-            self._render_full_evidence_section(self._subject_path(subject), receipts, traces)
+            self._render_full_evidence_section(self._subject_path(subject), receipts)
         )
         return "\n".join(lines).rstrip() + "\n"
 
@@ -661,20 +613,13 @@ class _WikiGenerator:
                         if provider_name in self.config.providers
                         else provider_name or "unknown provider"
                     )
+                    line = f"- Provider: {provider_ref}"
                     if trace_id and trace_id in self.traces:
                         trace = self.traces[trace_id]
-                        trace_href = _relpath(
-                            self._subject_path(subject),
-                            self._trace_path(trace_id),
-                        )
-                        trace_link = f"[{trace_id}]({trace_href})"
-                        line = f"- Provider: {provider_ref} via trace {trace_link}"
                         if trace.provider_version:
                             line += f" (version {trace.provider_version})"
                         if trace.artifact_name:
                             line += f"; artifact {trace.artifact_name}"
-                    else:
-                        line = f"- Provider: {provider_ref}"
                     lines.append(line)
             else:
                 lines.append("- No provider steps recorded on this receipt.")
@@ -702,60 +647,6 @@ class _WikiGenerator:
                     lines.append(f"  - {result_link}")
             lines.append("")
 
-        return lines
-
-    def _render_records_considered_section(
-        self,
-        subject: SubjectRef,
-        receipts: list[Receipt],
-        rendered_subjects: set[SubjectRef],
-    ) -> list[str]:
-        if not receipts:
-            return []
-
-        starting: set[SubjectRef] = set()
-        related: set[SubjectRef] = set()
-        for receipt in receipts:
-            for node in receipt.nodes:
-                if node.node_type == "entity_lookup" and node.entity_type and node.entity_id:
-                    starting.add(SubjectRef(node.entity_type, node.entity_id))
-                elif node.entity_type and node.entity_id:
-                    related.add(SubjectRef(node.entity_type, node.entity_id))
-                if node.node_type == "edge_traversal":
-                    from_type = str(node.detail.get("from_entity_type", "")).strip()
-                    from_id = str(node.detail.get("from_entity_id", "")).strip()
-                    if from_type and from_id:
-                        related.add(SubjectRef(from_type, from_id))
-            related.update(_entity_refs_from_results(receipt.results))
-
-        starting.discard(subject)
-        related.discard(subject)
-        related.difference_update(starting)
-
-        lines = ["## Records Considered"]
-        if starting:
-            lines.append("### Starting Records")
-            for ref in sorted(starting):
-                subject_link = self._subject_markdown_link(
-                    ref,
-                    current_path=self._subject_path(subject),
-                    rendered_subjects=rendered_subjects,
-                )
-                lines.append(f"- {subject_link}")
-            lines.append("")
-        if related:
-            lines.append("### Related Records Considered")
-            for ref in sorted(related):
-                subject_link = self._subject_markdown_link(
-                    ref,
-                    current_path=self._subject_path(subject),
-                    rendered_subjects=rendered_subjects,
-                )
-                lines.append(f"- {subject_link}")
-            lines.append("")
-        if not starting and not related:
-            lines.append("- No additional records captured in receipts.")
-            lines.append("")
         return lines
 
     def _render_conclusions_section(
@@ -927,22 +818,14 @@ class _WikiGenerator:
         self,
         current_path: Path,
         receipts: list[Receipt],
-        traces: list[ExecutionTrace],
     ) -> list[str]:
         lines = ["## Full Evidence"]
         if receipts:
-            lines.append("### Receipts")
             for receipt in receipts:
                 receipt_link = _relpath(current_path, self._receipt_path(receipt.receipt_id))
                 lines.append(f"- [{receipt.receipt_id}]({receipt_link})")
             lines.append("")
-        if traces:
-            lines.append("### Traces")
-            for trace in traces:
-                trace_link = _relpath(current_path, self._trace_path(trace.trace_id))
-                lines.append(f"- [{trace.trace_id}]({trace_link})")
-            lines.append("")
-        if not receipts and not traces:
+        else:
             lines.append("- No evidence pages linked yet.")
             lines.append("")
         return lines
@@ -969,35 +852,15 @@ class _WikiGenerator:
         )
         lines.append("")
 
-        starting = sorted(
-            {
-                SubjectRef(node.entity_type, node.entity_id)
-                for node in receipt.nodes
-                if node.node_type == "entity_lookup" and node.entity_type and node.entity_id
-            }
-        )
-        related = sorted(_entity_refs_from_receipt(receipt) - set(starting))
-
-        lines.extend(
-            _render_subject_ref_section(
-                title="Starting Records",
-                refs=starting,
-                current_path=self._receipt_path(receipt.receipt_id),
-                rendered_subjects=rendered_subjects,
-                config=self.config,
-                path_for_subject=self._subject_path,
-            )
-        )
-        lines.extend(
-            _render_subject_ref_section(
-                title="Related Records Considered",
-                refs=related,
-                current_path=self._receipt_path(receipt.receipt_id),
-                rendered_subjects=rendered_subjects,
-                config=self.config,
-                path_for_subject=self._subject_path,
-            )
-        )
+        entity_refs = _entity_refs_from_receipt(receipt)
+        if entity_refs:
+            by_type: dict[str, int] = defaultdict(int)
+            for ref in entity_refs:
+                by_type[ref.entity_type] += 1
+            lines.append("## Scope")
+            for etype in sorted(by_type):
+                lines.append(f"- {_humanize(etype)}: {by_type[etype]}")
+            lines.append("")
 
         checks = self._render_receipt_checks(receipt)
         if checks:
@@ -1050,35 +913,50 @@ class _WikiGenerator:
             provider_name = str(node.detail.get("provider_name", "")).strip()
             if provider_name:
                 line += f" ({provider_name})"
-            trace_id = str(node.detail.get("trace_id", "")).strip()
-            if trace_id and trace_id in self.traces:
-                line += f" [trace: {trace_id}]"
             lines.append(line)
         return lines
 
     def _render_receipt_changes(self, receipt: Receipt) -> list[str]:
-        lines: list[str] = []
+        entity_adds: dict[str, int] = defaultdict(int)
+        entity_updates: dict[str, int] = defaultdict(int)
+        rel_adds: dict[str, int] = defaultdict(int)
+        rel_updates: dict[str, int] = defaultdict(int)
+        other_lines: list[str] = []
+
         for node in receipt.nodes:
             if node.node_type == "entity_write":
-                action = "updated" if node.detail.get("is_update") else "added"
-                lines.append(f"- Entity {action}: {node.entity_type}:{node.entity_id}")
+                etype = node.entity_type or "unknown"
+                if node.detail.get("is_update"):
+                    entity_updates[etype] += 1
+                else:
+                    entity_adds[etype] += 1
             elif node.node_type == "relationship_write":
-                detail = node.detail
-                action = "updated" if detail.get("is_update") else "added"
-                from_ref = f"{detail.get('from_type')}:{detail.get('from_id')}"
-                to_ref = f"{detail.get('to_type')}:{detail.get('to_id')}"
-                lines.append(
-                    f"- Recorded link {action}: {from_ref} -> {to_ref} "
-                    f"({detail.get('relationship')})"
-                )
+                rtype = str(node.detail.get("relationship", "unknown"))
+                if node.detail.get("is_update"):
+                    rel_updates[rtype] += 1
+                else:
+                    rel_adds[rtype] += 1
             elif node.node_type == "feedback_applied":
                 status = "applied" if node.detail.get("applied") else "not applied"
-                lines.append(f"- Feedback {status}: {node.detail.get('action', '')}")
+                other_lines.append(f"- Feedback {status}: {node.detail.get('action', '')}")
             elif node.node_type == "ingest_batch":
                 mapping = node.detail.get("mapping", "")
                 added = node.detail.get("added", 0)
                 updated = node.detail.get("updated", 0)
-                lines.append(f"- Ingestion batch: {mapping} (added={added}, updated={updated})")
+                other_lines.append(
+                    f"- Ingestion batch: {mapping} (added={added}, updated={updated})"
+                )
+
+        lines: list[str] = []
+        for etype in sorted(entity_adds):
+            lines.append(f"- {_humanize(etype)} added: {entity_adds[etype]}")
+        for etype in sorted(entity_updates):
+            lines.append(f"- {_humanize(etype)} updated: {entity_updates[etype]}")
+        for rtype in sorted(rel_adds):
+            lines.append(f"- {rtype} links added: {rel_adds[rtype]}")
+        for rtype in sorted(rel_updates):
+            lines.append(f"- {rtype} links updated: {rel_updates[rtype]}")
+        lines.extend(other_lines)
         return lines
 
     def _render_receipt_results(
@@ -1094,60 +972,25 @@ class _WikiGenerator:
 
         entity_refs = _entity_refs_from_results(receipt.results)
         if entity_refs:
-            for ref in sorted(entity_refs):
-                result_link = self._subject_markdown_link(
-                    ref,
-                    current_path=self._receipt_path(receipt.receipt_id),
-                    rendered_subjects=rendered_subjects,
-                )
-                lines.append(f"- {result_link}")
+            by_type: dict[str, int] = defaultdict(int)
+            for ref in entity_refs:
+                by_type[ref.entity_type] += 1
+            for etype in sorted(by_type):
+                lines.append(f"- {_humanize(etype)}: {by_type[etype]}")
             lines.append("")
             return lines
 
+        # Non-entity results: show compact JSON (capped to avoid bloat).
+        result_json = json.dumps(receipt.results, indent=2, sort_keys=True, default=str)
+        result_lines = result_json.splitlines()
+        max_lines = 60
         lines.append("```json")
-        lines.append(json.dumps(receipt.results, indent=2, sort_keys=True, default=str))
+        lines.extend(result_lines[:max_lines])
+        if len(result_lines) > max_lines:
+            lines.append(f"  ... ({len(result_lines) - max_lines} more lines)")
         lines.append("```")
         lines.append("")
         return lines
-
-    def _render_trace_page(self, trace: ExecutionTrace) -> str:
-        lines = [f"# Trace {trace.trace_id}", "", "## Provider"]
-        lines.append(f"- Name: {trace.provider_name}")
-        lines.append(f"- Version: {trace.provider_version}")
-        lines.append(f"- Ref: `{trace.provider_ref}`")
-        lines.append(f"- Runtime: {trace.runtime}")
-        lines.append(f"- Deterministic: {trace.deterministic}")
-        lines.append(f"- Status: {trace.status}")
-        lines.append("")
-
-        lines.append("## Workflow Context")
-        lines.append(f"- Workflow: {trace.workflow_name}")
-        lines.append(f"- Step: {trace.step_id}")
-        lines.append(f"- Started at: {trace.started_at.isoformat()}")
-        lines.append(f"- Finished at: {trace.finished_at.isoformat()}")
-        lines.append(f"- Duration: {trace.duration_ms}ms")
-        lines.append("")
-
-        if trace.artifact_name or trace.artifact_sha256:
-            lines.append("## Artifact")
-            if trace.artifact_name:
-                lines.append(f"- Name: {trace.artifact_name}")
-            if trace.artifact_sha256:
-                lines.append(f"- SHA256: {trace.artifact_sha256}")
-            lines.append("")
-
-        lines.append("## Input Payload")
-        lines.append("```json")
-        lines.append(json.dumps(trace.input_payload, indent=2, sort_keys=True, default=str))
-        lines.append("```")
-        lines.append("")
-
-        lines.append("## Output Payload")
-        lines.append("```json")
-        lines.append(json.dumps(trace.output_payload, indent=2, sort_keys=True, default=str))
-        lines.append("```")
-        lines.append("")
-        return "\n".join(lines).rstrip() + "\n"
 
     def _render_query_page(self, query_name: str, schema: NamedQuerySchema) -> str:
         lines = [f"# Reference: {query_name}", ""]
@@ -1503,28 +1346,6 @@ def _counterpart_for_subject(subject: SubjectRef, member: CandidateMember) -> Su
         return from_ref
     return None
 
-
-def _render_subject_ref_section(
-    *,
-    title: str,
-    refs: list[SubjectRef],
-    current_path: Path,
-    rendered_subjects: set[SubjectRef],
-    config: CoreConfig,
-    path_for_subject: Any,
-) -> list[str]:
-    if not refs:
-        return []
-    lines = [f"## {title}"]
-    for ref in refs:
-        label = f"{_humanize(ref.entity_type)}: {ref.entity_id}"
-        path = path_for_subject(ref)
-        if ref in rendered_subjects:
-            lines.append(f"- [{label}]({_relpath(current_path, path)})")
-        else:
-            lines.append(f"- {label}")
-    lines.append("")
-    return lines
 
 
 def _summarize_properties(properties: dict[str, Any]) -> str:

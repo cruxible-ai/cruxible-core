@@ -19,3 +19,4 @@ htmlcov/
 .venv/
 venv/
 docs/dev/
+demos/**/wiki/

@@ -611,34 +611,28 @@ def test_render_wiki_builds_subject_and_evidence_pages(tmp_path: Path) -> None:
 
     subject_page = project / "wiki" / "subjects" / "asset" / "prod-web-01.md"
     receipt_page = project / "wiki" / "evidence" / "receipts" / f"{query_receipt_id.lower()}.md"
-    trace_page = project / "wiki" / "evidence" / "traces" / "trc-exposure-001.md"
+    trace_dir = project / "wiki" / "evidence" / "traces"
     workflow_reference = project / "wiki" / "reference" / "workflows" / "propose-asset-exposure.md"
     provider_reference = project / "wiki" / "reference" / "providers" / "assess-asset-exposure.md"
 
     assert subject_page.exists()
     assert receipt_page.exists()
-    assert trace_page.exists()
+    assert not trace_dir.exists(), "Trace pages should no longer be generated"
     assert workflow_reference.exists()
     assert provider_reference.exists()
 
     subject_text = subject_page.read_text()
     receipt_text = receipt_page.read_text()
-    trace_text = trace_page.read_text()
 
     assert "## How This Was Produced" in subject_text
     assert "load_software_inventory" in subject_text
     assert "assess_asset_exposure" in subject_text
-    assert "TRC-exposure-001" in subject_text
     assert "## Outcome History" in subject_text
     assert "validated_in_triage" in subject_text
     assert "scope_narrowed" in subject_text
     assert "## Full Evidence" in subject_text
     assert "../../evidence/receipts/" in subject_text
 
-    assert "## Starting Records" in receipt_text
-    assert "## Related Records Considered" in receipt_text
+    assert "## Scope" in receipt_text
     assert "## Workflow Steps" not in receipt_text
     assert "Traversals" not in receipt_text
-
-    assert "# Trace TRC-exposure-001" in trace_text
-    assert "assess_asset_exposure" in trace_text
