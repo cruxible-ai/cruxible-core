@@ -13,7 +13,6 @@ from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
 from cruxible_core.group.types import CandidateMember, CandidateSignal
-from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.mcp.permissions import (
     PermissionMode,
     check_permission,
@@ -24,6 +23,8 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
+    AnalyzeFeedbackResult,
+    AnalyzeOutcomesResult,
     EntityUpsertInput,
     RelationshipUpsertInput,
     service_add_constraint,
@@ -33,6 +34,7 @@ from cruxible_core.service import (
     service_analyze_feedback,
     service_analyze_outcomes,
     service_apply_workflow,
+    service_config_compatibility_warnings,
     service_create_snapshot,
     service_evaluate,
     service_feedback,
@@ -48,6 +50,7 @@ from cruxible_core.service import (
     service_ingest,
     service_init,
     service_inspect_entity,
+    service_lint,
     service_list,
     service_list_groups,
     service_list_resolutions,
@@ -78,33 +81,6 @@ WorkflowExecutionContractT = TypeVar(
     contracts.WorkflowRunResult,
     contracts.WorkflowApplyResult,
 )
-
-
-def _check_config_compatibility(instance: InstanceProtocol) -> list[str]:
-    """Check if graph contents are compatible with the current config."""
-    warnings: list[str] = []
-    config = instance.load_config()
-    graph = instance.load_graph()
-
-    config_entity_types = set(config.entity_types.keys())
-    for graph_type in graph.list_entity_types():
-        if graph_type not in config_entity_types:
-            count = graph.entity_count(graph_type)
-            warnings.append(
-                f"Entity type '{graph_type}' exists in graph ({count} entities) "
-                "but is missing from config"
-            )
-
-    config_rel_types = {relationship.name for relationship in config.relationships}
-    for graph_rel in graph.list_relationship_types():
-        if graph_rel not in config_rel_types:
-            count = graph.edge_count(graph_rel)
-            warnings.append(
-                f"Relationship type '{graph_rel}' exists in graph ({count} edges) "
-                "but is missing from config"
-            )
-
-    return warnings
 
 
 def _build_workflow_execution_contract(
@@ -182,7 +158,7 @@ def _handle_init_local(
         instance = CruxibleInstance.load(root)
         instance_id = str(root)
         get_manager().register(instance_id, instance)
-        warnings = _check_config_compatibility(instance)
+        warnings = service_config_compatibility_warnings(instance)
         return contracts.InitResult(instance_id=instance_id, status="loaded", warnings=warnings)
 
     result = service_init(
@@ -226,7 +202,7 @@ def _handle_init_governed(
             )
         instance = CruxibleInstance.load(governed_root)
         get_manager().register(registered.record.instance_id, instance)
-        warnings = _check_config_compatibility(instance)
+        warnings = service_config_compatibility_warnings(instance)
         return contracts.InitResult(
             instance_id=registered.record.instance_id,
             status="loaded",
@@ -771,7 +747,11 @@ def _handle_evaluate_local(
     exclude_orphan_types: list[str] | None = None,
 ) -> contracts.EvaluateResult:
     """Evaluate graph quality."""
-    check_permission("cruxible_evaluate")
+    check_permission(
+        "cruxible_evaluate",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
     instance = get_manager().get(instance_id)
     report = service_evaluate(
         instance,
@@ -786,6 +766,58 @@ def _handle_evaluate_local(
         summary=report.summary,
         constraint_summary=report.constraint_summary,
         quality_summary=report.quality_summary,
+    )
+
+
+def _handle_lint_local(
+    instance_id: str,
+    *,
+    confidence_threshold: float = 0.5,
+    max_findings: int = 100,
+    analysis_limit: int = 200,
+    min_support: int = 5,
+    exclude_orphan_types: list[str] | None = None,
+) -> contracts.LintResult:
+    """Run the aggregate read-only lint pass."""
+    check_permission(
+        "cruxible_evaluate",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    result = service_lint(
+        instance,
+        confidence_threshold=confidence_threshold,
+        max_findings=max_findings,
+        analysis_limit=analysis_limit,
+        min_support=min_support,
+        exclude_orphan_types=exclude_orphan_types,
+    )
+    report = result.evaluation
+    return contracts.LintResult(
+        config_name=result.config_name,
+        config_warnings=result.config_warnings,
+        compatibility_warnings=result.compatibility_warnings,
+        evaluation=contracts.EvaluateResult(
+            entity_count=report.entity_count,
+            edge_count=report.edge_count,
+            findings=[f.model_dump(mode="json") for f in report.findings],
+            summary=report.summary,
+            constraint_summary=report.constraint_summary,
+            quality_summary=report.quality_summary,
+        ),
+        feedback_reports=[_analyze_feedback_contract(report) for report in result.feedback_reports],
+        outcome_reports=[_analyze_outcomes_contract(report) for report in result.outcome_reports],
+        summary=contracts.LintSummary(
+            config_warning_count=result.summary.config_warning_count,
+            compatibility_warning_count=result.summary.compatibility_warning_count,
+            evaluation_finding_count=result.summary.evaluation_finding_count,
+            feedback_report_count=result.summary.feedback_report_count,
+            feedback_issue_count=result.summary.feedback_issue_count,
+            outcome_report_count=result.summary.outcome_report_count,
+            outcome_issue_count=result.summary.outcome_issue_count,
+        ),
+        has_issues=result.has_issues,
     )
 
 
@@ -889,6 +921,11 @@ def _handle_analyze_feedback_local(
             else None
         ),
     )
+    return _analyze_feedback_contract(result)
+
+
+def _analyze_feedback_contract(result: AnalyzeFeedbackResult) -> contracts.AnalyzeFeedbackResult:
+    """Convert a service feedback analysis result into the shared daemon contract."""
     return contracts.AnalyzeFeedbackResult(
         relationship_type=result.relationship_type,
         feedback_count=result.feedback_count,
@@ -1003,6 +1040,11 @@ def _handle_analyze_outcomes_local(
         limit=limit,
         min_support=min_support,
     )
+    return _analyze_outcomes_contract(result)
+
+
+def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.AnalyzeOutcomesResult:
+    """Convert a service outcome analysis result into the shared daemon contract."""
     return contracts.AnalyzeOutcomesResult(
         anchor_type=result.anchor_type,  # type: ignore[arg-type]
         outcome_count=result.outcome_count,

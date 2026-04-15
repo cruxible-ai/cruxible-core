@@ -199,6 +199,14 @@ def test_init_then_ingest_then_query_round_trip(
     assert evaluate.status_code == 200
     assert "quality_summary" in evaluate.json()
 
+    lint = app_client.post(f"/api/v1/{instance_id}/lint", json={})
+    assert lint.status_code == 200
+    lint_payload = lint.json()
+    assert lint_payload["config_name"] == "car_parts_compatibility"
+    assert isinstance(lint_payload["has_issues"], bool)
+    assert "summary" in lint_payload
+    assert "evaluation" in lint_payload
+
 
 def test_stats_and_inspect_routes_return_expected_shapes(
     app_client: TestClient,

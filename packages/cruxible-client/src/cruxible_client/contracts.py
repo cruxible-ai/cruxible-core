@@ -180,6 +180,16 @@ class EvaluateResult(BaseModel):
     quality_summary: dict[str, int] = Field(default_factory=dict)
 
 
+class LintSummary(BaseModel):
+    config_warning_count: int = 0
+    compatibility_warning_count: int = 0
+    evaluation_finding_count: int = 0
+    feedback_report_count: int = 0
+    feedback_issue_count: int = 0
+    outcome_report_count: int = 0
+    outcome_issue_count: int = 0
+
+
 class SampleResult(BaseModel):
     entities: list[dict[str, Any]]
     entity_type: str
@@ -608,6 +618,17 @@ class AnalyzeOutcomesResult(BaseModel):
     debug_packages: list[DebugPackage] = Field(default_factory=list)
     workflow_debug_packages: list[DebugPackage] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class LintResult(BaseModel):
+    config_name: str
+    config_warnings: list[str] = Field(default_factory=list)
+    compatibility_warnings: list[str] = Field(default_factory=list)
+    evaluation: EvaluateResult
+    feedback_reports: list[AnalyzeFeedbackResult] = Field(default_factory=list)
+    outcome_reports: list[AnalyzeOutcomesResult] = Field(default_factory=list)
+    summary: LintSummary = Field(default_factory=LintSummary)
+    has_issues: bool = False
 
 
 class ResolveGroupToolResult(BaseModel):

@@ -51,6 +51,7 @@ from cruxible_core.service import (
     service_get_receipt,
     service_get_relationship,
     service_inspect_entity,
+    service_lint,
     service_query,
     service_sample,
     service_schema,
@@ -338,6 +339,181 @@ def evaluate(threshold: float, limit: int, output_json: bool) -> None:
             severity, "white"
         )
         click.secho(f"  [{severity.upper()}] {message}", fg=severity_color)
+
+
+@click.command("lint")
+@click.option(
+    "--threshold",
+    default=0.5,
+    type=float,
+    help="Confidence threshold for graph evaluation findings.",
+)
+@click.option("--max-findings", default=100, type=int, help="Max graph findings to include.")
+@click.option(
+    "--analysis-limit",
+    default=200,
+    type=int,
+    help="Rows to inspect for feedback and outcome analysis.",
+)
+@click.option(
+    "--min-support",
+    default=5,
+    type=int,
+    help="Minimum support for lint suggestions.",
+)
+@click.option(
+    "--exclude-orphan-type",
+    "exclude_orphan_types",
+    multiple=True,
+    help="Entity type to exclude from orphan checks.",
+)
+@json_option
+@handle_errors
+def lint_cmd(
+    threshold: float,
+    max_findings: int,
+    analysis_limit: int,
+    min_support: int,
+    exclude_orphan_types: tuple[str, ...],
+    output_json: bool,
+) -> None:
+    """Run the aggregate read-only corpus lint pass."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.lint(
+            instance_id,
+            confidence_threshold=threshold,
+            max_findings=max_findings,
+            analysis_limit=analysis_limit,
+            min_support=min_support,
+            exclude_orphan_types=list(exclude_orphan_types) or None,
+        ),
+        lambda instance: service_lint(
+            instance,
+            confidence_threshold=threshold,
+            max_findings=max_findings,
+            analysis_limit=analysis_limit,
+            min_support=min_support,
+            exclude_orphan_types=list(exclude_orphan_types) or None,
+        ),
+    )
+
+    payload = (
+        result.model_dump(mode="python")
+        if isinstance(result, contracts.LintResult)
+        else asdict(result)
+    )
+
+    if output_json:
+        _emit_json(payload)
+        if payload["has_issues"]:
+            raise SystemExit(1)
+        return
+
+    summary = payload["summary"]
+    click.echo(f"Lint report for '{payload['config_name']}'")
+    click.echo(
+        "Summary: "
+        f"config_warnings={summary['config_warning_count']}, "
+        f"compatibility_warnings={summary['compatibility_warning_count']}, "
+        f"graph_findings={summary['evaluation_finding_count']}, "
+        f"feedback_reports={summary['feedback_report_count']}, "
+        f"feedback_issues={summary['feedback_issue_count']}, "
+        f"outcome_reports={summary['outcome_report_count']}, "
+        f"outcome_issues={summary['outcome_issue_count']}"
+    )
+
+    if payload["config_warnings"]:
+        click.echo("Config warnings:")
+        for warning in payload["config_warnings"]:
+            click.secho(f"  Warning: {warning}", fg="yellow")
+
+    if payload["compatibility_warnings"]:
+        click.echo("Compatibility warnings:")
+        for warning in payload["compatibility_warnings"]:
+            click.secho(f"  Warning: {warning}", fg="yellow")
+
+    evaluation = payload["evaluation"]
+    if evaluation["findings"]:
+        click.echo("Graph findings:")
+        for finding in evaluation["findings"]:
+            severity = finding["severity"]
+            severity_color = {"error": "red", "warning": "yellow", "info": "blue"}.get(
+                severity,
+                "white",
+            )
+            click.secho(
+                f"  [{severity.upper()}] {finding['message']}",
+                fg=severity_color,
+            )
+
+    if payload["feedback_reports"]:
+        click.echo("Feedback maintenance suggestions:")
+        for report in payload["feedback_reports"]:
+            click.echo(f"  {report['relationship_type']}:")
+            if report["warnings"]:
+                click.echo(f"    warnings={len(report['warnings'])}")
+            if report["uncoded_feedback_count"]:
+                click.echo(f"    uncoded_feedback={report['uncoded_feedback_count']}")
+            for suggestion in report["constraint_suggestions"]:
+                click.echo(
+                    f"    constraint {suggestion['name']}: {suggestion['rule']} "
+                    f"(support={suggestion['support_count']})"
+                )
+            for suggestion in report["decision_policy_suggestions"]:
+                click.echo(
+                    f"    policy {suggestion['name']}: {suggestion['applies_to']}/"
+                    f"{suggestion['effect']} (support={suggestion['support_count']})"
+                )
+            for candidate in report["quality_check_candidates"]:
+                click.echo(
+                    f"    quality_check {candidate['reason_code']} "
+                    f"(support={candidate['support_count']})"
+                )
+            for candidate in report["provider_fix_candidates"]:
+                click.echo(
+                    f"    provider_fix {candidate['reason_code']} "
+                    f"(support={candidate['support_count']})"
+                )
+
+    if payload["outcome_reports"]:
+        click.echo("Outcome maintenance suggestions:")
+        for report in payload["outcome_reports"]:
+            click.echo(f"  {report['anchor_type']}:")
+            if report["warnings"]:
+                click.echo(f"    warnings={len(report['warnings'])}")
+            if report["uncoded_outcome_count"]:
+                click.echo(f"    uncoded_outcomes={report['uncoded_outcome_count']}")
+            for suggestion in report["trust_adjustment_suggestions"]:
+                click.echo(
+                    f"    trust_adjustment {suggestion['resolution_id']} -> "
+                    f"{suggestion['suggested_trust_status']} "
+                    f"(support={suggestion['support_count']})"
+                )
+            for suggestion in report["workflow_review_policy_suggestions"]:
+                click.echo(
+                    f"    workflow_review {suggestion['name']} "
+                    f"(support={suggestion['support_count']})"
+                )
+            for suggestion in report["query_policy_suggestions"]:
+                click.echo(
+                    f"    query_policy {suggestion['surface_name']}:{suggestion['outcome_code']} "
+                    f"(support={suggestion['support_count']})"
+                )
+            for candidate in report["provider_fix_candidates"]:
+                click.echo(
+                    f"    provider_fix {candidate['surface_name']}:{candidate['outcome_code']} "
+                    f"(support={candidate['support_count']})"
+                )
+            if report["debug_packages"]:
+                click.echo(f"    debug_packages={len(report['debug_packages'])}")
+            if report["workflow_debug_packages"]:
+                click.echo(f"    workflow_debug_packages={len(report['workflow_debug_packages'])}")
+
+    if payload["has_issues"]:
+        click.secho("Lint found issues.", fg="yellow")
+        raise SystemExit(1)
+
+    click.secho("Lint clean.", fg="green")
 
 
 @click.command("find-candidates")

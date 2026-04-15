@@ -335,6 +335,28 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.EvaluateResult)
 
+    def lint(
+        self,
+        instance_id: str,
+        *,
+        confidence_threshold: float = 0.5,
+        max_findings: int = 100,
+        analysis_limit: int = 200,
+        min_support: int = 5,
+        exclude_orphan_types: builtins.list[str] | None = None,
+    ) -> contracts.LintResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/lint",
+            json={
+                "confidence_threshold": confidence_threshold,
+                "max_findings": max_findings,
+                "analysis_limit": analysis_limit,
+                "min_support": min_support,
+                "exclude_orphan_types": exclude_orphan_types,
+            },
+        )
+        return self._parse_model(response, contracts.LintResult)
+
     def get_feedback_profile(
         self,
         instance_id: str,

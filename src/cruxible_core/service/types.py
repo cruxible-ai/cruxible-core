@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cruxible_core.config.schema import CoreConfig
+from cruxible_core.evaluate import EvaluationReport
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -343,6 +344,29 @@ class AnalyzeOutcomesResult:
     debug_packages: list[DebugPackage] = field(default_factory=list)
     workflow_debug_packages: list[DebugPackage] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class LintSummary:
+    config_warning_count: int = 0
+    compatibility_warning_count: int = 0
+    evaluation_finding_count: int = 0
+    feedback_report_count: int = 0
+    feedback_issue_count: int = 0
+    outcome_report_count: int = 0
+    outcome_issue_count: int = 0
+
+
+@dataclass
+class LintServiceResult:
+    config_name: str = ""
+    config_warnings: list[str] = field(default_factory=list)
+    compatibility_warnings: list[str] = field(default_factory=list)
+    evaluation: EvaluationReport = field(default_factory=lambda: EvaluationReport(entity_count=0, edge_count=0, findings=[], summary={}))
+    feedback_reports: list[AnalyzeFeedbackResult] = field(default_factory=list)
+    outcome_reports: list[AnalyzeOutcomesResult] = field(default_factory=list)
+    summary: LintSummary = field(default_factory=LintSummary)
+    has_issues: bool = False
 
 
 @dataclass

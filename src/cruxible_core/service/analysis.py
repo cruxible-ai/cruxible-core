@@ -1,10 +1,11 @@
-"""Analysis service functions — find_candidates, evaluate, analyze_feedback."""
+"""Analysis service functions — find_candidates, evaluate, analyze_feedback, lint."""
 
 from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any, Literal
 
+from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.evaluate import EvaluationReport, evaluate_graph
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
@@ -17,6 +18,8 @@ from cruxible_core.service.types import (
     DebugPackage,
     DecisionPolicySuggestion,
     FeedbackGroupSummary,
+    LintServiceResult,
+    LintSummary,
     OutcomeDecisionPolicySuggestion,
     OutcomeGroupSummary,
     OutcomeProviderFixCandidate,
@@ -80,6 +83,95 @@ def service_evaluate(
         confidence_threshold=confidence_threshold,
         max_findings=max_findings,
         exclude_orphan_types=exclude_orphan_types,
+    )
+
+
+def service_config_compatibility_warnings(instance: InstanceProtocol) -> list[str]:
+    """Check whether graph contents still match the active config surface."""
+    return _compute_config_compatibility_warnings(
+        config=instance.load_config(),
+        graph=instance.load_graph(),
+    )
+
+
+def service_lint(
+    instance: InstanceProtocol,
+    *,
+    confidence_threshold: float = 0.5,
+    max_findings: int = 100,
+    analysis_limit: int = 200,
+    min_support: int = 5,
+    exclude_orphan_types: list[str] | None = None,
+) -> LintServiceResult:
+    """Aggregate deterministic maintenance checks for one instance."""
+    config = instance.load_config()
+    graph = instance.load_graph()
+
+    try:
+        config_warnings = validate_config(config)
+    except ConfigError as exc:
+        config_warnings = [f"[ERROR] {e}" for e in exc.errors]
+
+    compatibility_warnings = _compute_config_compatibility_warnings(config=config, graph=graph)
+    evaluation = evaluate_graph(
+        config,
+        graph,
+        confidence_threshold=confidence_threshold,
+        max_findings=max_findings,
+        exclude_orphan_types=exclude_orphan_types,
+    )
+
+    feedback_reports: list[AnalyzeFeedbackResult] = []
+    for relationship in config.relationships:
+        report = service_analyze_feedback(
+            instance,
+            relationship.name,
+            limit=analysis_limit,
+            min_support=min_support,
+        )
+        if _feedback_report_has_issues(report):
+            feedback_reports.append(report)
+
+    outcome_reports: list[AnalyzeOutcomesResult] = []
+    for anchor_type in ("receipt", "resolution"):
+        report = service_analyze_outcomes(
+            instance,
+            anchor_type=anchor_type,
+            limit=analysis_limit,
+            min_support=min_support,
+        )
+        if _outcome_report_has_issues(report):
+            outcome_reports.append(report)
+
+    summary = LintSummary(
+        config_warning_count=len(config_warnings),
+        compatibility_warning_count=len(compatibility_warnings),
+        evaluation_finding_count=len(evaluation.findings),
+        feedback_report_count=len(feedback_reports),
+        feedback_issue_count=sum(_feedback_issue_count(report) for report in feedback_reports),
+        outcome_report_count=len(outcome_reports),
+        outcome_issue_count=sum(_outcome_issue_count(report) for report in outcome_reports),
+    )
+
+    has_issues = any(
+        (
+            summary.config_warning_count,
+            summary.compatibility_warning_count,
+            summary.evaluation_finding_count,
+            summary.feedback_issue_count,
+            summary.outcome_issue_count,
+        )
+    )
+
+    return LintServiceResult(
+        config_name=config.name,
+        config_warnings=config_warnings,
+        compatibility_warnings=compatibility_warnings,
+        evaluation=evaluation,
+        feedback_reports=feedback_reports,
+        outcome_reports=outcome_reports,
+        summary=summary,
+        has_issues=has_issues,
     )
 
 
@@ -436,6 +528,67 @@ def service_analyze_outcomes(
 def _freeze_mapping(mapping: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     """Build a stable tuple key for exact grouping."""
     return tuple(sorted((key, _freeze_value(value)) for key, value in mapping.items()))
+
+
+def _compute_config_compatibility_warnings(*, config, graph) -> list[str]:
+    """Check if graph contents are compatible with the current config."""
+    warnings: list[str] = []
+
+    config_entity_types = set(config.entity_types.keys())
+    for graph_type in graph.list_entity_types():
+        if graph_type not in config_entity_types:
+            count = graph.entity_count(graph_type)
+            warnings.append(
+                f"Entity type '{graph_type}' exists in graph ({count} entities) "
+                "but is missing from config"
+            )
+
+    config_rel_types = {relationship.name for relationship in config.relationships}
+    for graph_rel in graph.list_relationship_types():
+        if graph_rel not in config_rel_types:
+            count = graph.edge_count(graph_rel)
+            warnings.append(
+                f"Relationship type '{graph_rel}' exists in graph ({count} edges) "
+                "but is missing from config"
+            )
+
+    return warnings
+
+
+def _feedback_report_has_issues(result: AnalyzeFeedbackResult) -> bool:
+    """Return whether a feedback analysis report contains actionable maintenance work."""
+    return _feedback_issue_count(result) > 0
+
+
+def _feedback_issue_count(result: AnalyzeFeedbackResult) -> int:
+    """Count actionable items in a feedback analysis report."""
+    return (
+        len(result.warnings)
+        + result.uncoded_feedback_count
+        + len(result.constraint_suggestions)
+        + len(result.decision_policy_suggestions)
+        + len(result.quality_check_candidates)
+        + len(result.provider_fix_candidates)
+    )
+
+
+def _outcome_report_has_issues(result: AnalyzeOutcomesResult) -> bool:
+    """Return whether an outcome analysis report contains actionable maintenance work."""
+    return _outcome_issue_count(result) > 0
+
+
+def _outcome_issue_count(result: AnalyzeOutcomesResult) -> int:
+    """Count actionable items in an outcome analysis report."""
+    return (
+        len(result.warnings)
+        + result.uncoded_outcome_count
+        + len(result.trust_adjustment_suggestions)
+        + len(result.workflow_review_policy_suggestions)
+        + len(result.query_policy_suggestions)
+        + len(result.provider_fix_candidates)
+        + len(result.debug_packages)
+        + len(result.workflow_debug_packages)
+    )
 
 
 def _normalize_outcome_surface_filters(

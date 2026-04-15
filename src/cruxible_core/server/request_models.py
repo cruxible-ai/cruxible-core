@@ -116,6 +116,14 @@ class EvaluateRequest(BaseModel):
     exclude_orphan_types: list[str] | None = None
 
 
+class LintRequest(BaseModel):
+    confidence_threshold: float = 0.5
+    max_findings: int = 100
+    analysis_limit: int = 200
+    min_support: int = 5
+    exclude_orphan_types: list[str] | None = None
+
+
 class AnalyzeFeedbackRequest(BaseModel):
     relationship_type: str
     limit: int = 200

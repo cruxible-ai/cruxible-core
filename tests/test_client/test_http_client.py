@@ -230,6 +230,62 @@ def test_evaluate_uses_expected_route():
     assert captured["payload"]["max_findings"] == 5
 
 
+def test_lint_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "config_name": "car_parts_compatibility",
+                "config_warnings": [],
+                "compatibility_warnings": [],
+                "evaluation": {
+                    "entity_count": 4,
+                    "edge_count": 3,
+                    "findings": [],
+                    "summary": {},
+                    "constraint_summary": {},
+                    "quality_summary": {},
+                },
+                "feedback_reports": [],
+                "outcome_reports": [],
+                "summary": {
+                    "config_warning_count": 0,
+                    "compatibility_warning_count": 0,
+                    "evaluation_finding_count": 0,
+                    "feedback_report_count": 0,
+                    "feedback_issue_count": 0,
+                    "outcome_report_count": 0,
+                    "outcome_issue_count": 0,
+                },
+                "has_issues": False,
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.lint(
+        "inst_123",
+        confidence_threshold=0.7,
+        max_findings=5,
+        analysis_limit=50,
+        min_support=2,
+        exclude_orphan_types=["Vehicle"],
+    )
+    assert result.config_name == "car_parts_compatibility"
+    assert result.has_issues is False
+    assert captured["path"].endswith("/api/v1/inst_123/lint")
+    assert captured["payload"] == {
+        "confidence_threshold": 0.7,
+        "max_findings": 5,
+        "analysis_limit": 50,
+        "min_support": 2,
+        "exclude_orphan_types": ["Vehicle"],
+    }
+
+
 def test_snapshot_create_uses_expected_route():
     captured: dict[str, Any] = {}
 

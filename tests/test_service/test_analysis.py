@@ -16,7 +16,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import EdgeTarget
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.query.candidates import MatchRule
 from cruxible_core.receipt.types import Receipt
@@ -26,6 +26,7 @@ from cruxible_core.service import (
     service_evaluate,
     service_feedback,
     service_find_candidates,
+    service_lint,
     service_outcome,
     service_propose_group,
     service_query,
@@ -713,6 +714,145 @@ class TestAnalyzeOutcomes:
         suggestion = result.workflow_review_policy_suggestions[0]
         assert suggestion.workflow_name == "propose_kev_product_links"
         assert suggestion.match["context"]["vendor"] == "Honda"
+
+
+class TestLint:
+    def test_clean_instance_returns_no_issues(self, populated_instance: CruxibleInstance) -> None:
+        graph = populated_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_entity_type="Part",
+                from_entity_id="BP-1001",
+                to_entity_type="Part",
+                to_entity_id="BP-1002",
+                properties={"direction": "downgrade", "confidence": 0.95},
+            )
+        )
+        populated_instance.save_graph(graph)
+
+        result = service_lint(populated_instance)
+
+        assert result.config_name == "car_parts_compatibility"
+        assert result.has_issues is False
+        assert result.summary.config_warning_count == 0
+        assert result.summary.compatibility_warning_count == 0
+        assert result.summary.evaluation_finding_count == 0
+        assert result.feedback_reports == []
+        assert result.outcome_reports == []
+
+    def test_includes_compatibility_warnings(self, populated_instance: CruxibleInstance) -> None:
+        graph = populated_instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="UnknownEntity",
+                entity_id="UNK-1",
+                properties={"unknown_id": "UNK-1"},
+            )
+        )
+        populated_instance.save_graph(graph)
+
+        result = service_lint(populated_instance)
+
+        assert result.has_issues is True
+        assert result.summary.compatibility_warning_count == 1
+        assert any("UnknownEntity" in warning for warning in result.compatibility_warnings)
+
+    def test_returns_only_actionable_feedback_and_outcome_reports(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "fitment_mismatch": FeedbackReasonCodeSchema(
+                    description="Part category mismatches vehicle make",
+                    remediation_hint="quality_check",
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={
+                "category": "FROM.category",
+                "make": "TO.make",
+            },
+        )
+        config.outcome_profiles["query_quality"] = OutcomeProfileSchema(
+            anchor_type="receipt",
+            version=1,
+            surface_type="query",
+            surface_name="parts_for_vehicle",
+            outcome_codes={
+                "bad_result": OutcomeCodeSchema(
+                    description="Bad query result",
+                    remediation_hint="provider_fix",
+                    required_scope_keys=["surface"],
+                )
+            },
+            scope_keys={"surface": "SURFACE.name"},
+        )
+        populated_instance.save_config(config)
+
+        query_one = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        query_two = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query_one.receipt_id is not None
+        assert query_two.receipt_id is not None
+
+        service_feedback(
+            populated_instance,
+            receipt_id=query_one.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1001"),
+            reason="Mismatch",
+            reason_code="fitment_mismatch",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+        service_feedback(
+            populated_instance,
+            receipt_id=query_two.receipt_id,
+            action="reject",
+            source="system",
+            target=_feedback_target("BP-1002"),
+            reason="Mismatch",
+            reason_code="fitment_mismatch",
+            scope_hints={"category": "brakes", "make": "Honda"},
+        )
+        service_outcome(
+            populated_instance,
+            receipt_id=query_one.receipt_id,
+            outcome="incorrect",
+            source="system",
+            outcome_code="bad_result",
+            scope_hints={"surface": "parts_for_vehicle"},
+        )
+        service_outcome(
+            populated_instance,
+            receipt_id=query_one.receipt_id,
+            outcome="incorrect",
+            source="system",
+            outcome_code="bad_result",
+            scope_hints={"surface": "parts_for_vehicle"},
+        )
+
+        result = service_lint(populated_instance, min_support=2)
+
+        assert result.has_issues is True
+        assert result.summary.feedback_report_count == 1
+        assert result.summary.outcome_report_count == 1
+        assert len(result.feedback_reports) == 1
+        assert result.feedback_reports[0].relationship_type == "fits"
+        assert len(result.feedback_reports[0].quality_check_candidates) == 1
+        assert len(result.outcome_reports) == 1
+        assert result.outcome_reports[0].anchor_type == "receipt"
+        assert len(result.outcome_reports[0].provider_fix_candidates) == 1
 
 
 def _feedback_target(part_id: str) -> EdgeTarget:

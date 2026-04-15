@@ -8,8 +8,10 @@ permission checks, and protocol-specific concerns.
 from cruxible_core.service.analysis import (
     service_analyze_feedback,
     service_analyze_outcomes,
+    service_config_compatibility_warnings,
     service_evaluate,
     service_find_candidates,
+    service_lint,
 )
 from cruxible_core.service.config_mutations import (
     service_add_constraint,
@@ -85,6 +87,8 @@ from cruxible_core.service.types import (
     InitResult,
     InspectEntityResult,
     InspectNeighborResult,
+    LintServiceResult,
+    LintSummary,
     ListGroupsResult,
     ListResolutionsResult,
     ListResult,
@@ -158,6 +162,9 @@ __all__ = [
     "ListGroupsResult",
     "ListResolutionsResult",
     "ListResult",
+
+    "LintServiceResult",
+    "LintSummary",
     "OutcomeServiceResult",
     "OutcomeDecisionPolicySuggestion",
     "OutcomeGroupSummary",
@@ -202,6 +209,8 @@ __all__ = [
     "service_find_candidates",
     "service_analyze_feedback",
     "service_analyze_outcomes",
+    "service_config_compatibility_warnings",
+    "service_lint",
     # Feedback
     "service_feedback",
     "service_feedback_batch",

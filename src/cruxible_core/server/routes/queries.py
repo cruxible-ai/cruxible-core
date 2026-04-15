@@ -10,7 +10,12 @@ from fastapi import APIRouter, Query
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
 from cruxible_core.runtime import local_api
-from cruxible_core.server.request_models import EvaluateRequest, FindCandidatesRequest, QueryRequest
+from cruxible_core.server.request_models import (
+    EvaluateRequest,
+    FindCandidatesRequest,
+    LintRequest,
+    QueryRequest,
+)
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["queries"])
@@ -99,6 +104,19 @@ async def evaluate(instance_id: str, req: EvaluateRequest) -> contracts.Evaluate
         instance_id=resolved_instance_id,
         confidence_threshold=req.confidence_threshold,
         max_findings=req.max_findings,
+        exclude_orphan_types=req.exclude_orphan_types,
+    )
+
+
+@router.post("/{instance_id}/lint", response_model=contracts.LintResult)
+async def lint(instance_id: str, req: LintRequest) -> contracts.LintResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return local_api._handle_lint_local(
+        instance_id=resolved_instance_id,
+        confidence_threshold=req.confidence_threshold,
+        max_findings=req.max_findings,
+        analysis_limit=req.analysis_limit,
+        min_support=req.min_support,
         exclude_orphan_types=req.exclude_orphan_types,
     )
 

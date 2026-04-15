@@ -125,6 +125,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     ingest,
     init,
     inspect_group,
+    lint_cmd,
     list_group,
     lock_cmd,
     outcome_cmd,
@@ -172,6 +173,7 @@ cli.add_command(schema)  # type: ignore[has-type]
 cli.add_command(stats_cmd, "stats")  # type: ignore[has-type]
 cli.add_command(sample)  # type: ignore[has-type]
 cli.add_command(evaluate)  # type: ignore[has-type]
+cli.add_command(lint_cmd, "lint")  # type: ignore[has-type]
 cli.add_command(inspect_group, "inspect")  # type: ignore[has-type]
 cli.add_command(get_entity_cmd, "get-entity")  # type: ignore[has-type]
 cli.add_command(get_relationship_cmd, "get-relationship")  # type: ignore[has-type]

@@ -338,6 +338,145 @@ def test_server_mode_validate_composes_overlay_before_upload(
     assert "Config 'fork' is valid." in result.output
 
 
+def test_server_mode_lint_delegates_to_client_and_exits_one_on_issues(
+    monkeypatch,
+    runner: CliRunner,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def lint(
+            self,
+            instance_id,
+            *,
+            confidence_threshold=0.5,
+            max_findings=100,
+            analysis_limit=200,
+            min_support=5,
+            exclude_orphan_types=None,
+        ):
+            captured["instance_id"] = instance_id
+            captured["payload"] = {
+                "confidence_threshold": confidence_threshold,
+                "max_findings": max_findings,
+                "analysis_limit": analysis_limit,
+                "min_support": min_support,
+                "exclude_orphan_types": exclude_orphan_types,
+            }
+            return contracts.LintResult(
+                config_name="car_parts_compatibility",
+                config_warnings=[],
+                compatibility_warnings=[],
+                evaluation=contracts.EvaluateResult(
+                    entity_count=4,
+                    edge_count=3,
+                    findings=[
+                        {
+                            "severity": "warning",
+                            "message": "Unreviewed relationship found",
+                        }
+                    ],
+                    summary={"unreviewed": 1},
+                    constraint_summary={},
+                    quality_summary={},
+                ),
+                feedback_reports=[],
+                outcome_reports=[],
+                summary=contracts.LintSummary(
+                    evaluation_finding_count=1,
+                ),
+                has_issues=True,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "lint",
+            "--threshold",
+            "0.7",
+            "--max-findings",
+            "5",
+            "--analysis-limit",
+            "50",
+            "--min-support",
+            "2",
+            "--exclude-orphan-type",
+            "Vehicle",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert captured["instance_id"] == "inst_123"
+    assert captured["payload"] == {
+        "confidence_threshold": 0.7,
+        "max_findings": 5,
+        "analysis_limit": 50,
+        "min_support": 2,
+        "exclude_orphan_types": ["Vehicle"],
+    }
+    assert "Lint report for 'car_parts_compatibility'" in result.output
+    assert "Graph findings:" in result.output
+    assert "Lint found issues." in result.output
+
+
+def test_server_mode_lint_json_exits_zero_when_clean(
+    monkeypatch,
+    runner: CliRunner,
+):
+    class StubClient:
+        def lint(
+            self,
+            instance_id,
+            *,
+            confidence_threshold=0.5,
+            max_findings=100,
+            analysis_limit=200,
+            min_support=5,
+            exclude_orphan_types=None,
+        ):
+            return contracts.LintResult(
+                config_name="car_parts_compatibility",
+                config_warnings=[],
+                compatibility_warnings=[],
+                evaluation=contracts.EvaluateResult(
+                    entity_count=0,
+                    edge_count=0,
+                    findings=[],
+                    summary={},
+                    constraint_summary={},
+                    quality_summary={},
+                ),
+                feedback_reports=[],
+                outcome_reports=[],
+                summary=contracts.LintSummary(),
+                has_issues=False,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "lint",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["config_name"] == "car_parts_compatibility"
+    assert payload["has_issues"] is False
+    assert payload["summary"]["evaluation_finding_count"] == 0
+
+
 def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
     result = runner.invoke(
