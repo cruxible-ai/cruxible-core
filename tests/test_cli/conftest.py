@@ -102,6 +102,7 @@ ingestion:
 @pytest.fixture(autouse=True)
 def reset_server_mode_env(monkeypatch):
     """Clear server-mode env and caches between CLI tests."""
+    monkeypatch.delenv("CRUXIBLE_AGENT_MODE", raising=False)
     monkeypatch.delenv("CRUXIBLE_REQUIRE_SERVER", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)

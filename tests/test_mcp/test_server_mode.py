@@ -16,6 +16,12 @@ def test_create_server_fails_when_server_required_without_endpoint(monkeypatch: 
         create_server()
 
 
+def test_create_server_fails_when_agent_mode_without_endpoint(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "true")
+    with pytest.raises(ConfigError, match="Server mode is required"):
+        create_server()
+
+
 def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
         def query(self, instance_id, query_name, params, limit=None):

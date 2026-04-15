@@ -32,6 +32,7 @@ def reset_permission_mode(monkeypatch):
     """Reset permission mode cache between tests."""
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
     monkeypatch.delenv("CRUXIBLE_ALLOWED_ROOTS", raising=False)
+    monkeypatch.delenv("CRUXIBLE_AGENT_MODE", raising=False)
     monkeypatch.delenv("CRUXIBLE_REQUIRE_SERVER", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)

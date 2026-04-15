@@ -56,10 +56,23 @@ Do not spend time on named queries, review loops, or advanced workflows yet.
 
 ## Phase 2: Validate the base graph config
 
-Use the real CLI:
+Use the real CLI to validate:
 
 ```bash
 cruxible validate --config config.yaml
+```
+
+Then initialize the instance. If you are connected to a governed daemon (server mode), use:
+
+```bash
+cruxible init --config config.yaml
+```
+
+The daemon manages the instance directory. Do **not** pass `--root-dir .` or create a local `.cruxible/` directory when running in server mode — the daemon owns instance state.
+
+If you are working locally without a daemon (developer mode only):
+
+```bash
 cruxible init --config config.yaml --root-dir .
 ```
 

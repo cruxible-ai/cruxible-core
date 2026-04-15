@@ -14,6 +14,12 @@ def _is_truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def is_agent_mode(environ: Mapping[str, str] | None = None) -> bool:
+    """Return whether CRUXIBLE_AGENT_MODE is active."""
+    env = environ or os.environ
+    return _is_truthy(env.get("CRUXIBLE_AGENT_MODE"))
+
+
 @dataclass(frozen=True)
 class ServerSettings:
     """Resolved server transport settings."""
@@ -40,7 +46,9 @@ def resolve_server_settings(
     resolved_socket = (
         server_socket if server_socket is not None else env.get("CRUXIBLE_SERVER_SOCKET")
     )
-    require_server = _is_truthy(env.get("CRUXIBLE_REQUIRE_SERVER"))
+    require_server = _is_truthy(env.get("CRUXIBLE_REQUIRE_SERVER")) or _is_truthy(
+        env.get("CRUXIBLE_AGENT_MODE")
+    )
 
     if resolved_url and resolved_socket:
         raise ConfigError(
