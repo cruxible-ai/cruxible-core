@@ -10,8 +10,9 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from cruxible_client import contracts
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, PermissionDeniedError
 from cruxible_core.runtime import local_api
+from cruxible_core.server.config import is_agent_mode
 from cruxible_core.server.request_models import (
     AddConstraintRequest,
     AddDecisionPolicyRequest,
@@ -25,6 +26,15 @@ from cruxible_core.server.routes import resolve_server_instance_id
 router = APIRouter(prefix="/api/v1", tags=["mutations"])
 
 
+def _reject_in_agent_mode(operation: str) -> None:
+    """Raise if the operation is blocked under CRUXIBLE_AGENT_MODE."""
+    if is_agent_mode():
+        raise PermissionDeniedError(
+            f"{operation} is disabled in agent mode. "
+            "Use 'group propose' to submit governed relationship proposals."
+        )
+
+
 def _normalize_data_json(raw: str | None) -> str | list[dict[str, Any]] | None:
     if raw is None:
         return None
@@ -36,6 +46,7 @@ def _normalize_data_json(raw: str | None) -> str | list[dict[str, Any]] | None:
 
 @router.post("/{instance_id}/ingest", response_model=contracts.IngestResult)
 async def ingest(instance_id: str, request: Request) -> contracts.IngestResult:
+    _reject_in_agent_mode("ingest")
     resolved_instance_id = resolve_server_instance_id(instance_id)
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data"):
@@ -109,6 +120,7 @@ async def add_relationships(
     instance_id: str,
     req: AddRelationshipsRequest,
 ) -> contracts.AddRelationshipResult:
+    _reject_in_agent_mode("add-relationship")
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return local_api._handle_add_relationship_impl(
         instance_id=resolved_instance_id,
