@@ -173,6 +173,24 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.QueryToolResult)
 
+    def render_wiki(
+        self,
+        instance_id: str,
+        *,
+        focus: list[str] | None = None,
+        include_types: list[str] | None = None,
+        all_subjects: bool = False,
+    ) -> contracts.WikiRenderResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/wiki/render",
+            json={
+                "focus": focus or [],
+                "include_types": include_types or [],
+                "all_subjects": all_subjects,
+            },
+        )
+        return self._parse_model(response, contracts.WikiRenderResult)
+
     def receipt(self, instance_id: str, receipt_id: str) -> dict[str, Any]:
         response = self._client.get(f"/api/v1/{instance_id}/receipts/{receipt_id}")
         return self._parse_json(response)

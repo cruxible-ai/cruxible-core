@@ -75,6 +75,8 @@ from cruxible_core.service import (
     service_validate,
     service_world_status,
 )
+from cruxible_core.wiki import WikiOptions, build_wiki_pages
+from cruxible_core.wiki.generator import parse_subject_ref
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
@@ -538,6 +540,37 @@ def _handle_query_local(
             if result.param_hints is not None
             else None
         ),
+    )
+
+
+def _handle_render_wiki_local(
+    instance_id: str,
+    *,
+    focus: list[str] | None = None,
+    include_types: list[str] | None = None,
+    all_subjects: bool = False,
+) -> contracts.WikiRenderResult:
+    """Build wiki pages for a governed instance and return them as payloads."""
+    check_permission(
+        "cruxible_render_wiki",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    options = WikiOptions(
+        output_dir=Path("."),
+        focus=tuple(parse_subject_ref(raw) for raw in (focus or [])),
+        include_types=tuple(include_types or []),
+        all_subjects=all_subjects,
+    )
+    pages = build_wiki_pages(instance, options)
+    serialized_pages = [
+        contracts.WikiPageResult(path=path.as_posix(), content=content)
+        for path, content in sorted(pages.items())
+    ]
+    return contracts.WikiRenderResult(
+        pages=serialized_pages,
+        page_count=len(serialized_pages),
     )
 
 

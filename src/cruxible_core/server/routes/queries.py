@@ -15,6 +15,7 @@ from cruxible_core.server.request_models import (
     FindCandidatesRequest,
     LintRequest,
     QueryRequest,
+    RenderWikiRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 
@@ -41,6 +42,20 @@ async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResul
         query_name=req.query_name,
         params=req.params,
         limit=req.limit,
+    )
+
+
+@router.post("/{instance_id}/wiki/render", response_model=contracts.WikiRenderResult)
+async def render_wiki(
+    instance_id: str,
+    req: RenderWikiRequest,
+) -> contracts.WikiRenderResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return local_api._handle_render_wiki_local(
+        instance_id=resolved_instance_id,
+        focus=req.focus,
+        include_types=req.include_types,
+        all_subjects=req.all_subjects,
     )
 
 

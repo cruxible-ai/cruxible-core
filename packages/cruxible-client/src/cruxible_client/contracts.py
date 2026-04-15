@@ -248,6 +248,16 @@ class StatsResult(BaseModel):
     head_snapshot_id: str | None = None
 
 
+class WikiPageResult(BaseModel):
+    path: str
+    content: str
+
+
+class WikiRenderResult(BaseModel):
+    pages: list[WikiPageResult] = Field(default_factory=list)
+    page_count: int = 0
+
+
 class InspectNeighborResult(BaseModel):
     direction: Literal["incoming", "outgoing"]
     relationship_type: str

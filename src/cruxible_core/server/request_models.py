@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from cruxible_client import contracts
 
@@ -25,6 +25,12 @@ class QueryRequest(BaseModel):
     query_name: str
     params: dict[str, Any] | None = None
     limit: int | None = None
+
+
+class RenderWikiRequest(BaseModel):
+    focus: list[str] = Field(default_factory=list)
+    include_types: list[str] = Field(default_factory=list)
+    all_subjects: bool = False
 
 
 class IngestRequest(BaseModel):
