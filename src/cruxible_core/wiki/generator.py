@@ -545,11 +545,23 @@ class _WikiGenerator:
 
         lines = ["## Current World State"]
         for entity_type in sorted(groups):
-            lines.append(f"### {_humanize(entity_type)}")
             items = sorted(
                 groups[entity_type], key=lambda item: _display_label(item[0], self.config)
             )
-            for neighbor, relationship_schema, properties in items:
+            rendered_items = [
+                item for item in items
+                if SubjectRef(item[0].entity_type, item[0].entity_id) in rendered_subjects
+            ]
+            other_count = len(items) - len(rendered_items)
+
+            if not rendered_items and other_count:
+                lines.append(f"### {_humanize(entity_type)}")
+                lines.append(f"- {other_count} linked record(s) outside current scope")
+                lines.append("")
+                continue
+
+            lines.append(f"### {_humanize(entity_type)}")
+            for neighbor, relationship_schema, properties in rendered_items:
                 link = self._subject_markdown_link(
                     SubjectRef(neighbor.entity_type, neighbor.entity_id),
                     current_path=self._subject_path(subject),
@@ -565,6 +577,8 @@ class _WikiGenerator:
                     line += f" — {description}"
                 lines.append(line)
                 lines.extend(_render_property_bullets(properties))
+            if other_count:
+                lines.append(f"- +{other_count} more outside current scope")
             lines.append("")
         return lines
 
