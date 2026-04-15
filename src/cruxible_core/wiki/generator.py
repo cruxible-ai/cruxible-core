@@ -560,13 +560,11 @@ class _WikiGenerator:
                     if relationship_schema and relationship_schema.description
                     else None
                 )
-                detail = _summarize_properties(properties)
                 line = f"- {link}"
                 if description:
                     line += f" — {description}"
-                if detail:
-                    line += f" ({detail})"
                 lines.append(line)
+                lines.extend(_render_property_bullets(properties))
             lines.append("")
         return lines
 
@@ -675,13 +673,11 @@ class _WikiGenerator:
                 current_path=self._subject_path(subject),
                 rendered_subjects=rendered_subjects,
             )
-            detail = _summarize_properties(dict(row.get("properties", {})))
             line = f"- {link}"
             if relationship_schema.description:
                 line += f" — {relationship_schema.description.strip()}"
-            if detail:
-                line += f" ({detail})"
             current_lines.append(line)
+            current_lines.extend(_render_property_bullets(dict(row.get("properties", {}))))
 
         if current_lines:
             lines.append("### Current Accepted Records")
@@ -692,12 +688,36 @@ class _WikiGenerator:
         if pending_groups:
             lines.append("### Pending Review")
             for group in pending_groups:
-                line = f"- {group.relationship_type}"
-                if group.thesis_text:
-                    line += f" — {group.thesis_text}"
+                members = self.members_by_group.get(group.group_id, [])
+                counterparts = []
+                for member in members:
+                    cp = _counterpart_for_subject(subject, member)
+                    if cp is not None:
+                        counterparts.append(cp)
+                if counterparts:
+                    for cp in sorted(counterparts):
+                        cp_link = self._subject_markdown_link(
+                            cp,
+                            current_path=self._subject_path(subject),
+                            rendered_subjects=rendered_subjects,
+                        )
+                        line = f"- {group.relationship_type} → {cp_link}"
+                        if group.thesis_text:
+                            line += f" — {group.thesis_text.strip()}"
+                        lines.append(line)
+                else:
+                    line = f"- {group.relationship_type}"
+                    if group.thesis_text:
+                        line += f" — {group.thesis_text.strip()}"
+                    lines.append(line)
                 if group.source_workflow_name:
-                    line += f" (workflow: {group.source_workflow_name})"
-                lines.append(line)
+                    wf_link = _relpath(
+                        self._subject_path(subject),
+                        self._workflow_path(group.source_workflow_name),
+                    )
+                    lines.append(
+                        f"  Source: [{group.source_workflow_name}]({wf_link})"
+                    )
             lines.append("")
 
         if not current_lines and not pending_groups:
@@ -1030,8 +1050,39 @@ class _WikiGenerator:
             lines.extend([schema.description.strip(), ""])
         lines.append("## Summary")
         lines.append(f"- Canonical: {schema.canonical}")
-        lines.append(f"- Contract in: {schema.contract_in}")
-        lines.append(f"- Returns: {schema.returns}")
+        lines.append("")
+
+        lines.append("## Contracts")
+        lines.extend(
+            self._render_contract_subsection("Input", schema.contract_in)
+        )
+        returns_step = next(
+            (step for step in schema.steps if step.id == schema.returns), None
+        )
+        lines.append("### Output")
+        if returns_step is not None and returns_step.provider is not None:
+            provider_schema = self.config.providers.get(returns_step.provider)
+            if provider_schema is not None:
+                out_contract = self.config.contracts.get(provider_schema.contract_out)
+                if out_contract is not None and out_contract.fields:
+                    for fn, fs in out_contract.fields.items():
+                        line = f"- **{fn}** ({fs.type})"
+                        if fs.description:
+                            line += f" — {fs.description.strip()}"
+                        lines.append(line)
+                else:
+                    lines.append(f"- Provider result from `{returns_step.provider}`")
+            else:
+                lines.append(f"- Provider result from `{returns_step.provider}`")
+        elif returns_step is not None and returns_step.propose_relationship_group is not None:
+            rtype = returns_step.propose_relationship_group.relationship_type
+            lines.append(f"- Governed proposal for **{rtype}** relationships")
+        elif returns_step is not None and returns_step.apply_relationships is not None:
+            lines.append(f"- Applied relationships from step `{returns_step.apply_relationships.relationships_from}`")
+        elif returns_step is not None and returns_step.apply_entities is not None:
+            lines.append(f"- Applied entities from step `{returns_step.apply_entities.entities_from}`")
+        else:
+            lines.append(f"- Result of step `{schema.returns}`")
         lines.append("")
 
         lines.append("## Steps")
@@ -1075,6 +1126,30 @@ class _WikiGenerator:
                 lines.append(f"- {step.id}: check {step.assert_spec.message}")
         lines.append("")
         return "\n".join(lines).rstrip() + "\n"
+
+    def _render_contract_subsection(self, label: str, contract_name: str) -> list[str]:
+        """Render a ### Input or ### Output contract subsection."""
+        lines = [f"### {label}"]
+        contract = self.config.contracts.get(contract_name)
+        if contract is not None and contract.fields:
+            if contract.description:
+                lines.append(contract.description.strip())
+            for field_name, field_schema in contract.fields.items():
+                parts = [f"**{field_name}**", f"({field_schema.type})"]
+                if field_schema.optional:
+                    parts.append("*optional*")
+                if field_schema.default is not None:
+                    parts.append(f"default: {field_schema.default}")
+                if field_schema.enum is not None:
+                    parts.append(f"one of: {', '.join(field_schema.enum)}")
+                line = f"- {' '.join(parts)}"
+                if field_schema.description:
+                    line += f" — {field_schema.description.strip()}"
+                lines.append(line)
+        else:
+            lines.append("- No fields required.")
+        lines.append("")
+        return lines
 
     def _render_provider_page(self, provider_name: str, schema: ProviderSchema) -> str:
         lines = [f"# Provider: {provider_name}", ""]
@@ -1348,16 +1423,46 @@ def _counterpart_for_subject(subject: SubjectRef, member: CandidateMember) -> Su
 
 
 
-def _summarize_properties(properties: dict[str, Any]) -> str:
+def _render_property_bullets(properties: dict[str, Any], depth: int = 1) -> list[str]:
+    """Render non-empty properties as indented sub-bullets, recursing into nested structures."""
     filtered = {
         key: value
         for key, value in sorted(properties.items())
         if not key.startswith("_") and value not in (None, "", [], {})
     }
-    if not filtered:
-        return ""
-    pairs = [f"{key}={_render_scalar(value)}" for key, value in list(filtered.items())[:4]]
-    return ", ".join(pairs)
+    indent = "  " * depth
+    lines: list[str] = []
+    for key, value in filtered.items():
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            # If every dict has the same single key, flatten to values on one line.
+            single_keys = {
+                next(iter(d.keys())) for d in value
+                if isinstance(d, dict) and len(d) == 1
+            }
+            if len(single_keys) == 1 and all(isinstance(d, dict) and len(d) == 1 for d in value):
+                common_key = single_keys.pop()
+                vals = [_render_scalar(d[common_key]) for d in value[:8]]
+                label = f"{key} ({common_key})" if common_key != key else key
+                lines.append(f"{indent}- {label}: {', '.join(vals)}")
+                if len(value) > 8:
+                    lines[-1] += f", (+{len(value) - 8} more)"
+            else:
+                lines.append(f"{indent}- {key}:")
+                for item in value[:8]:
+                    lines.extend(_render_property_bullets(item, depth + 1))
+                if len(value) > 8:
+                    lines.append(f"{indent}  (+{len(value) - 8} more)")
+        elif isinstance(value, dict):
+            lines.append(f"{indent}- {key}:")
+            lines.extend(_render_property_bullets(value, depth + 1))
+        elif isinstance(value, list):
+            items = [_render_scalar(item) for item in value[:8]]
+            lines.append(f"{indent}- {key}: {'; '.join(items)}")
+            if len(value) > 8:
+                lines.append(f"{indent}  (+{len(value) - 8} more)")
+        else:
+            lines.append(f"{indent}- {key}: {_render_scalar(value)}")
+    return lines
 
 
 def _render_scalar(value: Any) -> str:
@@ -1367,7 +1472,21 @@ def _render_scalar(value: Any) -> str:
         return str(value)
     if isinstance(value, str):
         return value
-    return json.dumps(value, sort_keys=True, default=str)
+    if isinstance(value, dict):
+        flat = {k: v for k, v in value.items() if v not in (None, "", [], {})}
+        if not flat:
+            return "(empty)"
+        pairs = [f"{k}: {_render_scalar(v)}" for k, v in sorted(flat.items())]
+        return ", ".join(pairs)
+    if isinstance(value, list):
+        if not value:
+            return "(none)"
+        items = [_render_scalar(item) for item in value[:8]]
+        result = "; ".join(items)
+        if len(value) > 8:
+            result += f"; (+{len(value) - 8} more)"
+        return result
+    return str(value)
 
 
 def _humanize(value: str) -> str:
