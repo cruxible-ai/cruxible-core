@@ -502,6 +502,68 @@ def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
     assert "not available in server mode" in result.output
 
 
+def test_render_wiki_delegates_to_client_and_writes_files(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def render_wiki(
+            self,
+            instance_id,
+            *,
+            focus=None,
+            include_types=None,
+            all_subjects=False,
+        ):
+            captured["instance_id"] = instance_id
+            captured["focus"] = focus
+            captured["include_types"] = include_types
+            captured["all_subjects"] = all_subjects
+            return contracts.WikiRenderResult(
+                pages=[
+                    contracts.WikiPageResult(path="index.md", content="# Demo Wiki\n"),
+                    contracts.WikiPageResult(
+                        path="subjects/asset/a1.md",
+                        content="# Asset A1\n",
+                    ),
+                ],
+                page_count=2,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    output_dir = tmp_path / "wiki"
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "render-wiki",
+            "--output",
+            str(output_dir),
+            "--focus",
+            "Asset:A1",
+            "--include-type",
+            "Asset",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "instance_id": "inst_123",
+        "focus": ["Asset:A1"],
+        "include_types": ["Asset"],
+        "all_subjects": False,
+    }
+    assert "Rendered" in result.output
+    assert (output_dir / "index.md").read_text() == "# Demo Wiki\n"
+    assert (output_dir / "subjects" / "asset" / "a1.md").read_text() == "# Asset A1\n"
+
+
 def test_workflow_commands_delegate_to_client_in_server_mode(
     monkeypatch,
     runner: CliRunner,

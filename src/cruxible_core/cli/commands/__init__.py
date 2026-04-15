@@ -52,6 +52,7 @@ from cruxible_core.cli.commands.workflows import (
     test_cmd,
     validate,
 )
+from cruxible_core.cli.commands.wiki import render_wiki_cmd
 from cruxible_core.cli.commands.world import world_group
 
 __all__ = [
@@ -87,6 +88,7 @@ __all__ = [
     "propose_cmd",
     "query",
     "reload_config_cmd",
+    "render_wiki_cmd",
     "run_cmd",
     "sample",
     "schema",
