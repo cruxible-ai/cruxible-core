@@ -213,12 +213,18 @@ class _WikiGenerator:
             groups = store.list_groups(limit=MAX_STORE_SCAN)
             members_by_group: dict[str, list[CandidateMember]] = {}
             groups_by_subject: dict[str, list[CandidateGroup]] = defaultdict(list)
+            seen_per_subject: dict[str, set[str]] = defaultdict(set)
             for group in groups:
                 members = store.get_members(group.group_id)
                 members_by_group[group.group_id] = members
                 for member in members:
-                    groups_by_subject[f"{member.from_type}:{member.from_id}"].append(group)
-                    groups_by_subject[f"{member.to_type}:{member.to_id}"].append(group)
+                    for key in (
+                        f"{member.from_type}:{member.from_id}",
+                        f"{member.to_type}:{member.to_id}",
+                    ):
+                        if group.group_id not in seen_per_subject[key]:
+                            seen_per_subject[key].add(group.group_id)
+                            groups_by_subject[key].append(group)
             resolutions = {
                 record["resolution_id"]: record
                 for record in store.list_resolutions(limit=MAX_STORE_SCAN)
@@ -668,7 +674,7 @@ class _WikiGenerator:
         rendered_subjects: set[SubjectRef],
     ) -> list[str]:
         lines = ["## Conclusions Recorded"]
-        current_lines: list[str] = []
+        current_groups: list[list[str]] = []
         inspect_rows = self.graph.get_neighbor_relationships(
             subject.entity_type,
             subject.entity_id,
@@ -699,15 +705,22 @@ class _WikiGenerator:
                 line = f"- {neighbor_link} →({relationship_type}) {subject_link}"
             if relationship_schema.description:
                 line += f" — {relationship_schema.description.strip()}"
-            current_lines.append(line)
-            current_lines.extend(_render_property_bullets(dict(row.get("properties", {}))))
+            group = [line]
+            group.extend(_render_property_bullets(dict(row.get("properties", {}))))
+            current_groups.append(group)
 
-        if current_lines:
+        if current_groups:
             lines.append("### Current Accepted Records")
-            lines.extend(sorted(current_lines))
+            for group in sorted(current_groups, key=lambda g: g[0]):
+                lines.extend(group)
             lines.append("")
 
-        pending_groups = [group for group in groups if group.status == "pending_review"]
+        seen_pending_ids: set[str] = set()
+        pending_groups: list[CandidateGroup] = []
+        for group in groups:
+            if group.status == "pending_review" and group.group_id not in seen_pending_ids:
+                seen_pending_ids.add(group.group_id)
+                pending_groups.append(group)
         if pending_groups:
             lines.append("### Pending Review")
             for group in pending_groups:
@@ -745,7 +758,7 @@ class _WikiGenerator:
                     )
             lines.append("")
 
-        if not current_lines and not pending_groups:
+        if not current_groups and not pending_groups:
             lines.append("- No governed conclusions recorded yet.")
             lines.append("")
         return lines
@@ -760,7 +773,12 @@ class _WikiGenerator:
         lines = ["## Review History"]
         emitted = False
 
-        resolved_groups = [group for group in groups if group.resolution_id]
+        seen_resolution_ids: set[str] = set()
+        resolved_groups: list[CandidateGroup] = []
+        for group in groups:
+            if group.resolution_id and group.resolution_id not in seen_resolution_ids:
+                seen_resolution_ids.add(group.resolution_id)
+                resolved_groups.append(group)
         if resolved_groups:
             lines.append("### Resolutions")
             emitted = True
