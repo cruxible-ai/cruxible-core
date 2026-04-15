@@ -682,12 +682,21 @@ class _WikiGenerator:
             neighbor = row.get("entity")
             if not isinstance(neighbor, EntityInstance):
                 continue
-            link = self._subject_markdown_link(
-                SubjectRef(neighbor.entity_type, neighbor.entity_id),
+            neighbor_ref = SubjectRef(neighbor.entity_type, neighbor.entity_id)
+            neighbor_link = self._subject_markdown_link(
+                neighbor_ref,
                 current_path=self._subject_path(subject),
                 rendered_subjects=rendered_subjects,
             )
-            line = f"- {link}"
+            subject_link = self._subject_markdown_link(
+                subject,
+                current_path=self._subject_path(subject),
+                rendered_subjects=rendered_subjects,
+            )
+            if row.get("direction") == "outgoing":
+                line = f"- {subject_link} →({relationship_type}) {neighbor_link}"
+            else:
+                line = f"- {neighbor_link} →({relationship_type}) {subject_link}"
             if relationship_schema.description:
                 line += f" — {relationship_schema.description.strip()}"
             current_lines.append(line)
@@ -703,19 +712,21 @@ class _WikiGenerator:
             lines.append("### Pending Review")
             for group in pending_groups:
                 members = self.members_by_group.get(group.group_id, [])
-                counterparts = []
-                for member in members:
-                    cp = _counterpart_for_subject(subject, member)
-                    if cp is not None:
-                        counterparts.append(cp)
-                if counterparts:
-                    for cp in sorted(counterparts):
-                        cp_link = self._subject_markdown_link(
-                            cp,
+                if members:
+                    for member in sorted(members, key=lambda m: (m.from_id, m.to_id)):
+                        from_ref = SubjectRef(member.from_type, member.from_id)
+                        to_ref = SubjectRef(member.to_type, member.to_id)
+                        from_link = self._subject_markdown_link(
+                            from_ref,
                             current_path=self._subject_path(subject),
                             rendered_subjects=rendered_subjects,
                         )
-                        line = f"- {group.relationship_type} → {cp_link}"
+                        to_link = self._subject_markdown_link(
+                            to_ref,
+                            current_path=self._subject_path(subject),
+                            rendered_subjects=rendered_subjects,
+                        )
+                        line = f"- {from_link} →({group.relationship_type}) {to_link}"
                         if group.thesis_text:
                             line += f" — {group.thesis_text.strip()}"
                         lines.append(line)
