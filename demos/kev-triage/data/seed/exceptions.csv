@@ -1,1 +1,3 @@
 exception_id,reason,review_due_at,status
+EXC-LEGACY-001,Legacy partner integration blocks immediate Apache upgrade,2026-05-15,approved
+EXC-PARTNER-002,Partner certification freeze delays WebLogic patch rollout,2026-04-29,approved

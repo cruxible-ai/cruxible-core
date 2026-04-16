@@ -4,3 +4,6 @@ ASSET-2,prod-api-01,server,high,production,false
 ASSET-3,stage-web-01,server,medium,staging,false
 ASSET-4,corp-laptop-01,laptop,low,corporate,false
 ASSET-5,batch-worker-01,server,medium,production,false
+ASSET-6,prod-web-02,server,high,production,true
+ASSET-7,legacy-web-01,server,medium,production,true
+ASSET-8,partner-api-01,server,high,production,false

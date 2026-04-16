@@ -1,0 +1,9 @@
+asset_id,hostname,asset_type,criticality,environment,internet_exposed,owner_id,business_unit,patch_window_id,lifecycle_status
+ASSET-1,prod-web-01,server,critical,production,true,OWNER-2,commerce,PW-1,active
+ASSET-2,prod-api-01,server,high,production,false,OWNER-3,commerce,PW-2,active
+ASSET-3,stage-web-01,server,medium,staging,false,OWNER-2,commerce,PW-1,active
+ASSET-4,corp-laptop-01,laptop,low,corporate,false,OWNER-5,corporate_it,,active
+ASSET-5,batch-worker-01,server,medium,production,false,OWNER-4,finance_ops,PW-3,active
+ASSET-6,prod-web-02,server,high,production,true,OWNER-2,commerce,PW-1,active
+ASSET-7,legacy-web-01,server,medium,production,true,OWNER-2,partner_integrations,PW-3,active
+ASSET-8,partner-api-01,server,high,production,false,OWNER-3,partner_integrations,PW-2,active

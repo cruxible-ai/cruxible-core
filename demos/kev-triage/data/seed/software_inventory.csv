@@ -1,2 +1,15 @@
 asset_id,software_name,vendor,version,evidence_source,last_seen
 ASSET-1,Apache HTTP Server,Apache,2.4.49,qualys,2026-03-20
+ASSET-2,Oracle WebLogic Server,Oracle,12.2.1.4.0,qualys,2026-03-20
+ASSET-2,Java SE,Oracle,8.0.401,qualys,2026-03-20
+ASSET-3,Apache HTTP Server,Apache,2.4.50,qualys,2026-03-18
+ASSET-4,Google Chrome,Google,124.0.6367.207,qualys,2026-03-21
+ASSET-4,Mozilla Firefox,Mozilla,125.0,qualys,2026-03-21
+ASSET-5,Apache ActiveMQ,Apache,5.18.3,qualys,2026-03-19
+ASSET-5,Apache Tomcat,Apache,9.0.86,qualys,2026-03-19
+ASSET-5,Java SE,Oracle,11.0.22,qualys,2026-03-19
+ASSET-6,Apache HTTP Server,Apache,2.4.58,qualys,2026-03-20
+ASSET-7,Apache HTTP Server,Apache,2.4.50,qualys,2026-03-19
+ASSET-7,Confluence Server,Atlassian,8.5.0,qualys,2026-03-19
+ASSET-8,Oracle WebLogic Server,Oracle,12.2.1.4.0,qualys,2026-03-21
+ASSET-8,Java SE,Oracle,8.0.401,qualys,2026-03-21

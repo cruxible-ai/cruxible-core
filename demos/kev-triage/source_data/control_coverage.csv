@@ -1,0 +1,5 @@
+asset_id,control_id,deployment_status,last_validated_at,evidence_source
+ASSET-1,CTRL-1,active,2026-03-15,waf_inventory
+ASSET-4,CTRL-2,active,2026-03-10,edr_console
+ASSET-6,CTRL-1,active,2026-03-15,waf_inventory
+ASSET-8,CTRL-3,active,2026-03-11,network_change_db

@@ -1,0 +1,7 @@
+service_id,asset_id,dependency_type,dependency_status
+SVC-1,ASSET-1,frontend,active
+SVC-1,ASSET-5,background_processing,active
+SVC-2,ASSET-1,frontend,active
+SVC-2,ASSET-2,api_backend,active
+SVC-2,ASSET-6,frontend,active
+SVC-3,ASSET-8,api_backend,active
