@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.instance_protocol import FeedbackStoreProtocol
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS feedback (
@@ -70,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_receipt ON outcomes(receipt_id);
 """
 
 
-class FeedbackStore:
+class FeedbackStore(FeedbackStoreProtocol):
     """Stores and retrieves feedback and outcome records."""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
@@ -162,6 +163,7 @@ class FeedbackStore:
 
     def list_feedback(
         self,
+        *,
         receipt_id: str | None = None,
         relationship_type: str | None = None,
         action: str | None = None,
@@ -218,7 +220,7 @@ class FeedbackStore:
         ).fetchall()
         return [self._row_to_feedback(r) for r in rows]
 
-    def count_feedback(self, receipt_id: str | None = None) -> int:
+    def count_feedback(self, *, receipt_id: str | None = None) -> int:
         """Count feedback records with optional receipt filter."""
         if receipt_id is None:
             row = self._conn.execute("SELECT COUNT(*) AS count FROM feedback").fetchone()
@@ -391,6 +393,7 @@ class FeedbackStore:
 
     def list_outcomes(
         self,
+        *,
         receipt_id: str | None = None,
         anchor_type: str | None = None,
         anchor_id: str | None = None,
@@ -430,7 +433,7 @@ class FeedbackStore:
         rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [self._row_to_outcome(r) for r in rows]
 
-    def count_outcomes(self, receipt_id: str | None = None) -> int:
+    def count_outcomes(self, *, receipt_id: str | None = None) -> int:
         """Count outcome records with optional receipt filter."""
         if receipt_id is None:
             row = self._conn.execute("SELECT COUNT(*) AS count FROM outcomes").fetchone()

@@ -28,6 +28,7 @@ from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.store import GroupStore
+from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
 from cruxible_core.storage.sqlite import SQLiteStore
 from cruxible_core.workflow.compiler import (
@@ -39,7 +40,7 @@ from cruxible_core.workflow.compiler import (
 logger = logging.getLogger(__name__)
 
 
-class CruxibleInstance:
+class CruxibleInstance(InstanceProtocol):
     """Manages a .cruxible/ project instance."""
 
     INSTANCE_DIR = ".cruxible"

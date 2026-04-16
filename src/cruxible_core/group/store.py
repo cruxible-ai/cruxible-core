@@ -20,6 +20,7 @@ from cruxible_core.group.types import (
     CandidateMember,
     CandidateSignal,
 )
+from cruxible_core.instance_protocol import GroupStoreProtocol
 
 # group_resolutions FIRST (referenced by candidate_groups.resolution_id)
 _SCHEMA = """\
@@ -79,7 +80,7 @@ CREATE TABLE IF NOT EXISTS candidate_members (
 """
 
 
-class GroupStore:
+class GroupStore(GroupStoreProtocol):
     """Stores and retrieves candidate groups, members, and resolutions."""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
