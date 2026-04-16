@@ -14,6 +14,7 @@ htmlcov/
 *.db
 *.csv
 !demos/kev-triage/data/seed/*.csv
+!demos/kev-triage/source_data/*.csv
 .DS_Store
 /.cruxible/
 .venv/
