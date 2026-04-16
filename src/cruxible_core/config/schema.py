@@ -161,14 +161,15 @@ class TraversalStep(BaseModel):
     """A single step in a named query's traversal path.
 
     Each step follows one or more relationships in a direction, optionally
-    filtering on edge/target properties and applying constraints. When
-    multiple relationships are listed, the engine traverses all of them
+    filtering on edge and/or target entity properties and applying constraints.
+    When multiple relationships are listed, the engine traverses all of them
     from the current entities and merges results (fan-out).
     """
 
     relationship: str | list[str]
     direction: Literal["outgoing", "incoming", "both"] = "outgoing"
     filter: dict[str, Any] | None = None
+    target_filter: dict[str, Any] | None = None
     constraint: str | None = None
     max_depth: int = Field(default=1, ge=1)
 

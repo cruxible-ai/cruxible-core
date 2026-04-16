@@ -109,6 +109,63 @@ entity_types:
         type: string
         optional: true
 
+  Incident:
+    description: A security event from a SIEM, PagerDuty, or manual report.
+    properties:
+      incident_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      severity:
+        type: string
+        optional: true
+        enum: [critical, high, medium, low]
+      status:
+        type: string
+        optional: true
+        enum: [open, investigating, resolved, closed]
+      occurred_at:
+        type: date
+        optional: true
+      resolved_at:
+        type: date
+        optional: true
+      source:
+        type: string
+        optional: true
+      summary:
+        type: string
+        optional: true
+
+  Finding:
+    description: A root cause or contributing factor identified during incident investigation.
+    properties:
+      finding_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      category:
+        type: string
+        optional: true
+        enum: [misconfiguration, missing_control, stale_data, access_violation, process_gap]
+      detail:
+        type: string
+        optional: true
+      status:
+        type: string
+        optional: true
+        enum: [open, remediated, accepted_risk]
+      remediation_action:
+        type: string
+        optional: true
+      remediated_at:
+        type: date
+        optional: true
+
 # ─── Fork: deterministic internal mappings ────────────────────────────
 
 relationships:
@@ -263,6 +320,72 @@ relationships:
           role: required
           always_review_on_unsure: true
 
+# ─── Governed incident relationships ─────────────────────────────────
+#
+# These are proposed by an agent reading incident reports and
+# post-mortems, or by a human via group propose. They go through the
+# same governance flow as vulnerability triage relationships.
+
+  - name: incident_owned_by
+    description: Governed judgment of which team or individual is accountable for investigating and resolving an incident.
+    from: Incident
+    to: Owner
+    properties:
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_attribution:
+          role: required
+
+  - name: incident_involved_asset
+    description: Governed judgment that an asset was involved in an incident.
+    from: Incident
+    to: Asset
+    properties:
+      role:
+        type: string
+        optional: true
+        description: How the asset was involved (target, lateral_movement, staging, etc.)
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_attribution:
+          role: required
+
+  - name: incident_exploited_vulnerability
+    description: Governed judgment that a specific CVE was exploited during an incident.
+    from: Incident
+    to: Vulnerability
+    properties:
+      evidence:
+        type: string
+        optional: true
+        description: Summary of evidence linking this CVE to the incident.
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_attribution:
+          role: required
+
+  - name: finding_from_incident
+    description: Governed judgment linking a root cause or contributing factor to an incident.
+    from: Finding
+    to: Incident
+    properties:
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_attribution:
+          role: required
+
 # ─── Named queries (fork-specific, traverse across both layers) ──────
 
 named_queries:
@@ -361,6 +484,57 @@ named_queries:
       - relationship: asset_has_control
         direction: outgoing
 
+  incident_history_for_product:
+    description: >
+      Starting from a product, find incidents where vulnerabilities
+      affecting this product were exploited. Answers: "Has this product
+      been exploited before in our environment?"
+    entry_point: Product
+    returns: Incident
+    traversal:
+      - relationship: vulnerability_affects_product
+        direction: incoming
+      - relationship: incident_exploited_vulnerability
+        direction: incoming
+
+  open_findings_for_asset:
+    description: >
+      Starting from an asset, find open findings from incidents that
+      involved this asset. Filters out remediated findings. Answers:
+      "What unresolved root causes exist for this asset?"
+    entry_point: Asset
+    returns: Finding
+    traversal:
+      - relationship: incident_involved_asset
+        direction: incoming
+      - relationship: finding_from_incident
+        direction: incoming
+        target_filter:
+          status: open
+
+  prior_exploitation_context:
+    description: >
+      Starting from a vulnerability, find incidents where it was exploited
+      and the findings from those investigations. Answers: "What did we
+      learn last time this CVE was exploited?"
+    entry_point: Vulnerability
+    returns: Finding
+    traversal:
+      - relationship: incident_exploited_vulnerability
+        direction: incoming
+      - relationship: finding_from_incident
+        direction: incoming
+
+  finding_status_for_incident:
+    description: >
+      Starting from an incident, find all findings. Answers: "Are all
+      root causes from this incident addressed?"
+    entry_point: Incident
+    returns: Finding
+    traversal:
+      - relationship: finding_from_incident
+        direction: incoming
+
 # ─── Constraints ──────────────────────────────────────────────────────
 
 constraints: []
@@ -441,6 +615,15 @@ integrations:
     notes: >
       Reviews whether a patch exception is still valid per
       organizational remediation policy.
+
+  incident_attribution:
+    kind: incident_investigation
+    contract: null
+    notes: >
+      Agent or human judgment linking incidents to assets,
+      vulnerabilities, and findings based on investigation
+      evidence. Typically proposed one at a time via group
+      propose after reading incident reports or post-mortems.
 
 # ─── Contracts ────────────────────────────────────────────────────────
 
@@ -1335,6 +1518,66 @@ feedback_profiles:
       control_type: FROM.control_type
       cve: TO.cve_id
 
+  incident_exploited_vulnerability:
+    version: 1
+    reason_codes:
+      wrong_cve_attribution:
+        description: The CVE was not actually exploited in this incident.
+        remediation_hint: provider_fix
+        required_scope_keys: [cve, incident]
+      correlation_not_causation:
+        description: CVE was present but not the attack vector used.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve]
+    scope_keys:
+      cve: TO.cve_id
+      incident: FROM.incident_id
+
+  incident_involved_asset:
+    version: 1
+    reason_codes:
+      wrong_asset:
+        description: This asset was not actually involved in the incident.
+        remediation_hint: provider_fix
+        required_scope_keys: [hostname, incident]
+      misidentified_role:
+        description: Asset was involved but its role was mischaracterized.
+        remediation_hint: quality_check
+        required_scope_keys: [hostname]
+    scope_keys:
+      hostname: TO.hostname
+      incident: FROM.incident_id
+
+  finding_from_incident:
+    version: 1
+    reason_codes:
+      wrong_root_cause:
+        description: This finding was not actually a root cause of this incident.
+        remediation_hint: decision_policy
+        required_scope_keys: [finding, incident]
+      duplicate_finding:
+        description: This finding duplicates another finding for the same incident.
+        remediation_hint: quality_check
+        required_scope_keys: [finding]
+    scope_keys:
+      finding: FROM.finding_id
+      incident: TO.incident_id
+
+  incident_owned_by:
+    version: 1
+    reason_codes:
+      wrong_team:
+        description: This team is not the correct owner for this incident.
+        remediation_hint: provider_fix
+        required_scope_keys: [owner, incident]
+      ownership_transferred:
+        description: Ownership was transferred to a different team.
+        remediation_hint: quality_check
+        required_scope_keys: [owner]
+    scope_keys:
+      owner: TO.owner_id
+      incident: FROM.incident_id
+
 # ─── Outcome profiles (Loop 2) ───────────────────────────────────────
 
 outcome_profiles:
@@ -1387,6 +1630,22 @@ outcome_profiles:
         required_scope_keys: [relationship_type]
       underestimated_exposure:
         description: An attack path was missed during exposure assessment.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  incident_attribution_resolution:
+    anchor_type: resolution
+    relationship_type: incident_exploited_vulnerability
+    version: 1
+    outcome_codes:
+      confirmed_exploitation:
+        description: Post-incident analysis confirmed this CVE was the attack vector.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      attribution_incorrect:
+        description: Further investigation showed a different CVE or attack vector was used.
         remediation_hint: require_review
         required_scope_keys: [relationship_type]
     scope_keys:

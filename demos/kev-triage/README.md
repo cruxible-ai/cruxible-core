@@ -26,7 +26,6 @@ relationships that go through the proposal/group resolution flow.
 graph LR
   classDef ref fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef fork fill:#6ab04c,stroke:#3d7a28,color:#fff
-  classDef governed stroke-dasharray:5 5
 
   %% Reference layer entities
   Vendor:::ref
@@ -40,6 +39,8 @@ graph LR
   CompensatingControl:::fork
   Exception:::fork
   PatchWindow:::fork
+  Incident:::fork
+  Finding:::fork
 
   %% Reference relationships (deterministic)
   Product -->|product_from_vendor| Vendor
@@ -59,8 +60,12 @@ graph LR
   BusinessService -.->|service_impacted_by_vulnerability| Vulnerability
   Asset -.->|asset_patch_exception_for| Vulnerability
   CompensatingControl -.->|control_reduces_exposure_to| Vulnerability
+  Incident -.->|incident_owned_by| Owner
+  Incident -.->|incident_involved_asset| Asset
+  Incident -.->|incident_exploited_vulnerability| Vulnerability
+  Finding -.->|finding_from_incident| Incident
 
-  linkStyle 7,8,9,10,11,12 stroke:#e74c3c
+  linkStyle 7,8,9,10,11,12,13,14,15,16 stroke:#e74c3c
 ```
 
 **Legend:** Blue = reference layer (upstream, read-only) | Green = fork (internal) | Solid lines = deterministic | Dashed red lines = governed (proposal/review)
@@ -77,6 +82,10 @@ Each governed relationship has a `matching` block, integrations that provide sig
 | `service_impacted_by_vulnerability` | `dependency_context` | required | all_support | `service_impacted_by_vulnerability` | — |
 | `asset_patch_exception_for` | `policy_review` | required | all_support | `asset_patch_exception_for` | — |
 | `control_reduces_exposure_to` | `control_effectiveness` | required | all_support | `control_reduces_exposure_to` | — |
+| `incident_owned_by` | `incident_attribution` | required | — | `incident_owned_by` | — |
+| `incident_involved_asset` | `incident_attribution` | required | — | `incident_involved_asset` | — |
+| `incident_exploited_vulnerability` | `incident_attribution` | required | — | `incident_exploited_vulnerability` | `incident_attribution_resolution` |
+| `finding_from_incident` | `incident_attribution` | required | — | `finding_from_incident` | — |
 
 ### Integration signals
 
@@ -88,6 +97,7 @@ Each governed relationship has a `matching` block, integrations that provide sig
 | `control_effectiveness` | compensating_control_review | Does a control block the exploit path? |
 | `dependency_context` | service_dependency_context | Does a real dependency path connect service to affected asset? |
 | `policy_review` | remediation_policy_review | Is the patch exception still valid per policy? |
+| `incident_attribution` | incident_investigation | Agent/human judgment linking incidents to assets, vulnerabilities, and findings |
 
 ## Rules Summary
 
@@ -157,6 +167,10 @@ across the reference and fork layers.
 | `product_kev_exposure` | Product | Asset | <- vulnerability_affects_product <- asset_affected_by_vulnerability |
 | `asset_exception_context` | Asset | Exception | -> asset_has_exception |
 | `asset_control_context` | Asset | CompensatingControl | -> asset_has_control |
+| `incident_history_for_product` | Product | Incident | <- vulnerability_affects_product <- incident_exploited_vulnerability |
+| `open_findings_for_asset` | Asset | Finding | <- incident_involved_asset <- finding_from_incident (target_filter: status=open) |
+| `prior_exploitation_context` | Vulnerability | Finding | <- incident_exploited_vulnerability <- finding_from_incident |
+| `finding_status_for_incident` | Incident | Finding | <- finding_from_incident |
 
 ## Workflows
 
@@ -212,3 +226,43 @@ reference-layer product IDs is the fuzzy matching problem that the
 See `data/seed/software_inventory.csv` for the key file — it contains software
 names and versions as the business knows them, which need to be matched to
 reference-layer products through `software_product_match` proposals.
+
+## Incident History Layer
+
+Adds incident investigation knowledge that compounds across triage cycles. The
+vulnerability triage layer tells you what's exposed *now*. The incident layer
+tells you what's been exploited *before* — and what you learned from it.
+
+### Why this compounds
+
+When a new CVE drops and the triage agent runs the exposure assessment, it can
+also query `incident_history_for_product` to check: "has this product been
+exploited before in our environment?" If yes, the triage summary includes what
+happened last time — which assets were hit, what the root cause was, what
+findings are still open. The priority isn't just CVSS × EPSS anymore; it's
+informed by organizational history.
+
+### Proposed entity types
+
+| Entity | Properties | Source |
+|---|---|---|
+| `Incident` | incident_id (PK), title, severity, status (open/investigating/resolved/closed), occurred_at, resolved_at, source, summary | PagerDuty export, SIEM, manual |
+| `Finding` | finding_id (PK), title, category (misconfiguration/missing_control/stale_data/access_violation/process_gap), detail, status (open/remediated/accepted_risk), remediation_action, remediated_at | Post-mortem extraction (agent or manual) |
+
+### Proposed relationships
+
+| Relationship | From → To | Governed? | How it's created |
+|---|---|---|---|
+| `incident_owned_by` | Incident → Owner | Yes | Agent proposes accountable owner for incident |
+| `incident_involved_asset` | Incident → Asset | Yes | Agent reads incident report, proposes link |
+| `incident_exploited_vulnerability` | Incident → Vulnerability | Yes | Agent reads post-mortem, proposes CVE attribution |
+| `finding_from_incident` | Finding → Incident | Yes | Agent extracts findings from post-mortem |
+
+### Proposed named queries
+
+| Query | Traversal | What it answers |
+|---|---|---|
+| `incident_history_for_product` | Product ← vulnerability_affects_product ← incident_exploited_vulnerability | "Has this product been exploited before?" |
+| `open_findings_for_asset` | Asset ← incident_involved_asset ← finding_from_incident (status ≠ remediated) | "What unresolved root causes exist for this asset?" |
+| `prior_exploitation_context` | Vulnerability ← incident_exploited_vulnerability → finding_from_incident | "What did we learn last time this CVE was exploited?" |
+| `finding_status_for_incident` | Incident ← finding_from_incident | "Are all findings from this incident remediated?" |

@@ -244,12 +244,26 @@ def _execute_step(
                         parent_id=parent_tid,
                     )
 
-                # Apply filter (blocks subtree on failure)
+                # Apply edge filter (blocks subtree on failure)
                 if step.filter:
                     passed = matches_exact_filter(edge_props, step.filter)
                     if builder is not None and traversal_id is not None:
                         builder.record_filter(
                             filter_spec=step.filter,
+                            passed=passed,
+                            parent_id=traversal_id,
+                        )
+                    if not passed:
+                        continue
+
+                # Apply target entity filter (blocks subtree on failure)
+                if step.target_filter:
+                    passed = matches_exact_filter(
+                        neighbor.properties, step.target_filter
+                    )
+                    if builder is not None and traversal_id is not None:
+                        builder.record_filter(
+                            filter_spec=step.target_filter,
                             passed=passed,
                             parent_id=traversal_id,
                         )
