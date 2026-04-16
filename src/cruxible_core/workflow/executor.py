@@ -13,7 +13,7 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateSignal
+from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import evaluate_comparison
 from cruxible_core.provider.registry import resolve_provider
@@ -39,9 +39,7 @@ from cruxible_core.workflow.types import (
     EntitySet,
     EntitySetMember,
     RelationshipGroupProposalArtifact,
-    RelationshipGroupProposalMember,
     RelationshipSet,
-    RelationshipSetMember,
     SignalBatch,
     SignalBatchSignal,
     WorkflowExecutionResult,
@@ -777,12 +775,13 @@ def _build_relationship_group_proposal(
             f"but received '{candidate_set.relationship_type}'"
         )
 
-    members_by_pair: dict[tuple[str, str], RelationshipGroupProposalMember] = {
-        (candidate.from_id, candidate.to_id): RelationshipGroupProposalMember(
+    members_by_pair: dict[tuple[str, str], CandidateMember] = {
+        (candidate.from_id, candidate.to_id): CandidateMember(
             from_type=candidate.from_type,
             from_id=candidate.from_id,
             to_type=candidate.to_type,
             to_id=candidate.to_id,
+            relationship_type=relationship_type,
             properties=candidate.properties,
         )
         for candidate in candidate_set.candidates
@@ -922,12 +921,12 @@ def _make_relationship_set(
         )
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
-    relationships: list[RelationshipSetMember] = []
+    relationships: list[CandidateSetMember] = []
     duplicate_input_count = 0
     conflicting_duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
     for item in items:
-        member = RelationshipSetMember.model_validate(
+        member = CandidateSetMember.model_validate(
             {
                 "from_type": resolve_value(
                     spec.from_type,
@@ -1111,10 +1110,10 @@ def _apply_relationship_set(
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type=relationship_set.relationship_type,
-                    from_entity_type=rel.from_type,
-                    from_entity_id=rel.from_id,
-                    to_entity_type=rel.to_type,
-                    to_entity_id=rel.to_id,
+                    from_type=rel.from_type,
+                    from_id=rel.from_id,
+                    to_type=rel.to_type,
+                    to_id=rel.to_id,
                     properties=new_properties,
                 )
             )

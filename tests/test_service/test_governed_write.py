@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from cruxible_core.errors import ReceiptNotFoundError
-from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
+from cruxible_core.feedback.types import FeedbackBatchItem
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     service_feedback_batch,
     service_query,
@@ -27,10 +28,10 @@ def test_service_feedback_batch_applies_atomically(populated_instance):
             FeedbackBatchItem(
                 receipt_id=receipt_id,
                 action="approve",
-                target=EdgeTarget(
+                target=RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1001",
-                    relationship="fits",
+                    relationship_type="fits",
                     to_type="Vehicle",
                     to_id="V-2024-CIVIC-EX",
                 ),
@@ -38,10 +39,10 @@ def test_service_feedback_batch_applies_atomically(populated_instance):
             FeedbackBatchItem(
                 receipt_id=receipt_id,
                 action="reject",
-                target=EdgeTarget(
+                target=RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1002",
-                    relationship="fits",
+                    relationship_type="fits",
                     to_type="Vehicle",
                     to_id="V-2024-CIVIC-EX",
                 ),
@@ -81,10 +82,10 @@ def test_service_feedback_batch_invalid_receipt_rolls_back(populated_instance):
                 FeedbackBatchItem(
                     receipt_id="RCP-missing",
                     action="approve",
-                    target=EdgeTarget(
+                    target=RelationshipInstance(
                         from_type="Part",
                         from_id="BP-1001",
-                        relationship="fits",
+                        relationship_type="fits",
                         to_type="Vehicle",
                         to_id="V-2024-CIVIC-EX",
                     ),

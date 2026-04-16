@@ -206,7 +206,7 @@ Add the named queries to the YAML config, re-validate with `cruxible_validate`, 
 
 ### Step 10 — Provide Feedback
 
-1. Use `cruxible_feedback` on key edges (pass `source="ai_review"` when you are the reviewer, `source="human"` when relaying a human's judgment)
+1. Use `cruxible_feedback` on key edges (pass `source="agent"` when you are the reviewer, `source="human"` when relaying a human's judgment)
 2. Record end-to-end correctness with `cruxible_outcome`
 3. Use `cruxible_find_candidates` to discover missing links
 4. Use `cruxible_add_relationship` to persist confirmed candidates

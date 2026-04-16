@@ -17,9 +17,8 @@ from cruxible_core.cli.commands._common import (
     _require_instance_id,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
-    EntityUpsertInput,
-    RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
     service_reload_config,
@@ -54,7 +53,7 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
         lambda instance: service_add_entities(
             instance,
             [
-                EntityUpsertInput(
+                EntityInstance(
                     entity_type=entity_type,
                     entity_id=entity_id,
                     properties=properties,
@@ -115,10 +114,10 @@ def add_relationship_cmd(
         lambda instance: service_add_relationships(
             instance,
             [
-                RelationshipUpsertInput(
+                RelationshipInstance(
                     from_type=from_type,
                     from_id=from_id,
-                    relationship=relationship,
+                    relationship_type=relationship,
                     to_type=to_type,
                     to_id=to_id,
                     properties=properties,

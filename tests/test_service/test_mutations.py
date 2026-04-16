@@ -8,9 +8,8 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
-    EntityUpsertInput,
-    RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
     service_ingest,
@@ -19,16 +18,16 @@ from cruxible_core.service import (
 
 def _vehicle(
     vid: str, year: int = 2024, make: str = "Honda", model: str = "Civic"
-) -> EntityUpsertInput:
-    return EntityUpsertInput(
+) -> EntityInstance:
+    return EntityInstance(
         entity_type="Vehicle",
         entity_id=vid,
         properties={"vehicle_id": vid, "year": year, "make": make, "model": model},
     )
 
 
-def _part(pid: str, name: str = "Pads", category: str = "brakes") -> EntityUpsertInput:
-    return EntityUpsertInput(
+def _part(pid: str, name: str = "Pads", category: str = "brakes") -> EntityInstance:
+    return EntityInstance(
         entity_type="Part",
         entity_id=pid,
         properties={"part_number": pid, "name": name, "category": category},
@@ -70,7 +69,7 @@ class TestAddEntities:
         with pytest.raises(DataValidationError, match="not found in config"):
             service_add_entities(
                 initialized_instance,
-                [EntityUpsertInput(entity_type="Spaceship", entity_id="X-1")],
+                [EntityInstance(entity_type="Spaceship", entity_id="X-1")],
             )
 
     def test_update(self, populated_instance: CruxibleInstance) -> None:
@@ -97,7 +96,7 @@ class TestAddRelationships:
         result = service_add_relationships(
             populated_instance,
             [
-                RelationshipUpsertInput(
+                RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1002",
                     relationship="fits",
@@ -121,7 +120,7 @@ class TestAddRelationships:
         result = service_add_relationships(
             populated_instance,
             [
-                RelationshipUpsertInput(
+                RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1002",
                     relationship="fits",
@@ -129,7 +128,7 @@ class TestAddRelationships:
                     to_id="V-2024-ACCORD-SPORT",
                     properties={"verified": True},
                 ),
-                RelationshipUpsertInput(
+                RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1001",
                     relationship="replaces",
@@ -146,14 +145,14 @@ class TestAddRelationships:
 
     def test_dedup_error(self, populated_instance: CruxibleInstance) -> None:
         edges = [
-            RelationshipUpsertInput(
+            RelationshipInstance(
                 from_type="Part",
                 from_id="BP-1002",
                 relationship="fits",
                 to_type="Vehicle",
                 to_id="V-2024-ACCORD-SPORT",
             ),
-            RelationshipUpsertInput(
+            RelationshipInstance(
                 from_type="Part",
                 from_id="BP-1002",
                 relationship="fits",
@@ -168,7 +167,7 @@ class TestAddRelationships:
         service_add_relationships(
             populated_instance,
             [
-                RelationshipUpsertInput(
+                RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1002",
                     relationship="fits",

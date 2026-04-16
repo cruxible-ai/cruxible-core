@@ -8,7 +8,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.instance_protocol import FeedbackStoreProtocol
 
 _SCHEMA = """\
@@ -127,7 +128,7 @@ class FeedbackStore(FeedbackStoreProtocol):
                 record.receipt_id,
                 record.action,
                 record.target.model_dump_json(),
-                record.target.relationship,
+                record.target.relationship_type,
                 record.target.from_type,
                 record.target.from_id,
                 record.target.to_type,
@@ -237,7 +238,7 @@ class FeedbackStore(FeedbackStoreProtocol):
             feedback_id=row["feedback_id"],
             receipt_id=row["receipt_id"],
             action=row["action"],
-            target=EdgeTarget.model_validate_json(row["target_json"]),
+            target=RelationshipInstance.model_validate_json(row["target_json"]),
             reason=row["reason"],
             reason_code=row["reason_code"],
             reason_remediation_hint=row["reason_remediation_hint"],

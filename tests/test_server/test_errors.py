@@ -10,7 +10,6 @@ from cruxible_core.errors import (
     ConstraintViolationError,
     CoreError,
     DataValidationError,
-    EdgeAmbiguityError,
     EntityNotFoundError,
     EntityTypeNotFoundError,
     GroupNotFoundError,
@@ -22,6 +21,7 @@ from cruxible_core.errors import (
     QueryExecutionError,
     QueryNotFoundError,
     ReceiptNotFoundError,
+    RelationshipAmbiguityError,
     RelationshipNotFoundError,
 )
 from cruxible_core.server.errors import (
@@ -80,8 +80,8 @@ from cruxible_core.server.errors import (
             {"entity_type": "Vehicle", "entity_id": "V-1"},
         ),
         (
-            EdgeAmbiguityError("Part", "P-1", "Vehicle", "V-1", "fits"),
-            client_errors.EdgeAmbiguityError,
+            RelationshipAmbiguityError("Part", "P-1", "Vehicle", "V-1", "fits"),
+            client_errors.RelationshipAmbiguityError,
             {
                 "from_type": "Part",
                 "from_id": "P-1",

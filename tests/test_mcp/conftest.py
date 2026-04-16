@@ -271,7 +271,7 @@ class GovernedLocalClient:
         thesis_facts: dict | None = None,
         analysis_state: dict | None = None,
         integrations_used: list[str] | None = None,
-        proposed_by: str = "ai_review",
+        proposed_by: str = "agent",
         suggested_priority: str | None = None,
     ):
         return local_api._handle_propose_group_local(

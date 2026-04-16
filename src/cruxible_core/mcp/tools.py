@@ -229,8 +229,7 @@ def register_tools(server: FastMCP) -> list[str]:
         """Record edge-level feedback tied to a receipt.
 
         ``source`` identifies who produced this feedback:
-        ``"human"`` for human review, ``"ai_review"`` for AI agent review,
-        ``"system"`` for automated/programmatic feedback.
+        ``"human"`` for human review, ``"agent"`` for AI agent review.
 
         Rejected edges are excluded from future query results.
         Approved edges are trusted in traversals.
@@ -597,7 +596,7 @@ def register_tools(server: FastMCP) -> list[str]:
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
         integrations_used: list[str] | None = None,
-        proposed_by: contracts.GroupProposedBy = "ai_review",
+        proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
     ) -> contracts.ProposeGroupToolResult:
         """Propose a candidate group of edges for batch review.

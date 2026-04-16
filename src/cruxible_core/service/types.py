@@ -16,32 +16,6 @@ from cruxible_core.snapshot.types import PublishedWorldManifest, UpstreamMetadat
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
 
 # ---------------------------------------------------------------------------
-# Input types
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class EntityUpsertInput:
-    """Service-layer input for entity upsert operations."""
-
-    entity_type: str
-    entity_id: str
-    properties: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class RelationshipUpsertInput:
-    """Service-layer input for relationship upsert operations."""
-
-    from_type: str
-    from_id: str
-    relationship: str
-    to_type: str
-    to_id: str
-    properties: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
 

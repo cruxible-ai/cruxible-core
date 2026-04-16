@@ -138,10 +138,10 @@ def validate_relationship(
 
     rel = RelationshipInstance(
         relationship_type=relationship,
-        from_entity_type=from_type,
-        from_entity_id=from_id,
-        to_entity_type=to_type,
-        to_entity_id=to_id,
+        from_type=from_type,
+        from_id=from_id,
+        to_type=to_type,
+        to_id=to_id,
         properties=props,
     )
     return ValidatedRelationship(relationship=rel, is_update=is_update)
@@ -166,10 +166,10 @@ def apply_relationship(
     rel = validated.relationship
     if validated.is_update:
         existing_rel = graph.get_relationship(
-            rel.from_entity_type,
-            rel.from_entity_id,
-            rel.to_entity_type,
-            rel.to_entity_id,
+            rel.from_type,
+            rel.from_id,
+            rel.to_type,
+            rel.to_id,
             rel.relationship_type,
         )
         replace_props = dict(rel.properties)
@@ -181,10 +181,10 @@ def apply_relationship(
                 prov["last_modified_by"] = source
                 replace_props["_provenance"] = prov
         graph.replace_edge_properties(
-            rel.from_entity_type,
-            rel.from_entity_id,
-            rel.to_entity_type,
-            rel.to_entity_id,
+            rel.from_type,
+            rel.from_id,
+            rel.to_type,
+            rel.to_id,
             rel.relationship_type,
             replace_props,
         )

@@ -693,7 +693,7 @@ class ProposeRelationshipGroupSpec(BaseModel):
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     suggested_priority: Any | None = None
-    proposed_by: Literal["human", "ai_review"] = "ai_review"
+    proposed_by: Literal["human", "agent"] = "agent"
 
     model_config = {"extra": "forbid"}
 

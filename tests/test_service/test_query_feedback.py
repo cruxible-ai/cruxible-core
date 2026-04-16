@@ -19,7 +19,7 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     ReceiptNotFoundError,
 )
-from cruxible_core.feedback.types import EdgeTarget
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     service_feedback,
     service_get_outcome_profile,
@@ -117,11 +117,11 @@ class TestQuery:
 # ---------------------------------------------------------------------------
 
 
-def _edge_target() -> EdgeTarget:
-    return EdgeTarget(
+def _edge_target() -> RelationshipInstance:
+    return RelationshipInstance(
         from_type="Part",
         from_id="BP-1001",
-        relationship="fits",
+        relationship_type="fits",
         to_type="Vehicle",
         to_id="V-2024-CIVIC-EX",
     )
@@ -263,7 +263,7 @@ class TestFeedback:
                 populated_instance,
                 receipt_id=receipt_id,
                 action="reject",
-                source="system",
+                source="agent",
                 target=_edge_target(),
             )
 
@@ -316,7 +316,7 @@ class TestOutcome:
                 populated_instance,
                 receipt_id=receipt_id,
                 outcome="incorrect",
-                source="system",
+                source="agent",
             )
 
     def test_human_receipt_outcome_may_omit_code(

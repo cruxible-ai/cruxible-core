@@ -164,7 +164,7 @@ def group_propose(
 @click.option("--rationale", default="", help="Rationale for this resolution.")
 @click.option(
     "--source",
-    type=click.Choice(["human", "ai_review"]),
+    type=click.Choice(["human", "agent"]),
     default="human",
     help="Who resolved (default: human).",
 )

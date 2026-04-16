@@ -813,7 +813,7 @@ def handle_propose_group(
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
     integrations_used: list[str] | None = None,
-    proposed_by: contracts.GroupProposedBy = "ai_review",
+    proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""

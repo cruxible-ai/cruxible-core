@@ -211,10 +211,10 @@ def ingest_relationships(
             (
                 RelationshipInstance(
                     relationship_type=relationship_type,
-                    from_entity_type=rel_schema.from_entity,
-                    from_entity_id=from_id,
-                    to_entity_type=rel_schema.to_entity,
-                    to_entity_id=to_id,
+                    from_type=rel_schema.from_entity,
+                    from_id=from_id,
+                    to_type=rel_schema.to_entity,
+                    to_id=to_id,
                     properties=properties,
                 ),
                 is_update,
@@ -234,10 +234,10 @@ def ingest_relationships(
         if is_update:
             # Read existing provenance and add modification fields
             existing_rel = graph.get_relationship(
-                rel.from_entity_type,
-                rel.from_entity_id,
-                rel.to_entity_type,
-                rel.to_entity_id,
+                rel.from_type,
+                rel.from_id,
+                rel.to_type,
+                rel.to_id,
                 rel.relationship_type,
             )
             update_props = dict(rel.properties)
@@ -249,10 +249,10 @@ def ingest_relationships(
                     prov["last_modified_by"] = "ingest"
                     update_props["_provenance"] = prov
             graph.update_edge_properties(
-                rel.from_entity_type,
-                rel.from_entity_id,
-                rel.to_entity_type,
-                rel.to_entity_id,
+                rel.from_type,
+                rel.from_id,
+                rel.to_type,
+                rel.to_id,
                 rel.relationship_type,
                 update_props,
             )

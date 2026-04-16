@@ -41,7 +41,7 @@ def _group(
         thesis_facts=thesis_facts or {"style": "casual"},
         analysis_state=analysis_state or {"centroid": [0.1, 0.2]},
         integrations_used=["cosine_v1"],
-        proposed_by="ai_review",
+        proposed_by="agent",
         member_count=2,
         review_priority=review_priority,
         suggested_priority=suggested_priority,

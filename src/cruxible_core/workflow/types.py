@@ -19,7 +19,7 @@ from cruxible_core.config.schema import (
     MapSignalsSpec,
     ProposeRelationshipGroupSpec,
 )
-from cruxible_core.group.types import CandidateSignal
+from cruxible_core.group.types import CandidateMember
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 
@@ -176,28 +176,17 @@ class SignalBatch(BaseModel):
     signals: list[SignalBatchSignal] = Field(default_factory=list)
 
 
-class RelationshipGroupProposalMember(BaseModel):
-    """Candidate group member assembled by built-in workflow steps."""
-
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    signals: list[CandidateSignal] = Field(default_factory=list)
-    properties: dict[str, Any] = Field(default_factory=dict)
-
-
 class RelationshipGroupProposalArtifact(BaseModel):
     """Internal workflow artifact bridged into a governed relationship proposal."""
 
     relationship_type: str
-    members: list[RelationshipGroupProposalMember]
+    members: list[CandidateMember]
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
     suggested_priority: str | None = None
-    proposed_by: Literal["human", "ai_review"] = "ai_review"
+    proposed_by: Literal["human", "agent"] = "agent"
 
 
 class EntitySetMember(BaseModel):
@@ -217,21 +206,11 @@ class EntitySet(BaseModel):
     duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class RelationshipSetMember(BaseModel):
-    """Relationship payload assembled inside a workflow."""
-
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    properties: dict[str, Any] = Field(default_factory=dict)
-
-
 class RelationshipSet(BaseModel):
     """Internal workflow artifact containing relationship upserts."""
 
     relationship_type: str
-    relationships: list[RelationshipSetMember] = Field(default_factory=list)
+    relationships: list[CandidateSetMember] = Field(default_factory=list)
     duplicate_input_count: int = 0
     conflicting_duplicate_count: int = 0
     duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)

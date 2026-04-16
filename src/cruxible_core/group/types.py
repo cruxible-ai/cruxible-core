@@ -39,7 +39,7 @@ class CandidateGroup(BaseModel):
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
-    proposed_by: Literal["human", "ai_review"] = "ai_review"
+    proposed_by: Literal["human", "agent"] = "agent"
     member_count: int = 0
     review_priority: Literal["critical", "review", "normal"] = "normal"
     suggested_priority: str | None = None

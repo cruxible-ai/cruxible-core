@@ -17,7 +17,8 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
+from cruxible_core.feedback.types import FeedbackBatchItem
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     service_feedback,
     service_feedback_batch,
@@ -48,7 +49,7 @@ from cruxible_core.service import (
 )
 @click.option(
     "--source",
-    type=click.Choice(["human", "ai_review", "system"]),
+    type=click.Choice(["human", "agent"]),
     default="human",
     help="Who produced this feedback (default: human).",
 )
@@ -81,10 +82,10 @@ def feedback_cmd(
     if corrections_dict is not None and not isinstance(corrections_dict, dict):
         raise click.BadParameter("--corrections must be a JSON object")
 
-    target = EdgeTarget(
+    target = RelationshipInstance(
         from_type=from_type,
         from_id=from_id,
-        relationship=relationship,
+        relationship_type=relationship,
         to_type=to_type,
         to_id=to_id,
         edge_key=edge_key,
@@ -138,7 +139,7 @@ def feedback_cmd(
 @click.option("--items", "items_json", default=None, help="Inline JSON array of feedback items.")
 @click.option(
     "--source",
-    type=click.Choice(["human", "ai_review", "system"]),
+    type=click.Choice(["human", "agent"]),
     default="human",
     help="Who produced this feedback batch (default: human).",
 )
@@ -189,10 +190,10 @@ def feedback_batch_cmd(
                 FeedbackBatchItem(
                     receipt_id=item.receipt_id,
                     action=item.action,
-                    target=EdgeTarget(
+                    target=RelationshipInstance(
                         from_type=item.target.from_type,
                         from_id=item.target.from_id,
-                        relationship=item.target.relationship,
+                        relationship_type=item.target.relationship,
                         to_type=item.target.to_type,
                         to_id=item.target.to_id,
                         edge_key=item.target.edge_key,

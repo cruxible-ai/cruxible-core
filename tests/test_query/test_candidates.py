@@ -110,20 +110,20 @@ def graph_with_edges(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-1",
-            to_entity_type="Vehicle",
-            to_entity_id="V-1",
+            from_type="Part",
+            from_id="P-1",
+            to_type="Vehicle",
+            to_id="V-1",
             properties={},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-1",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2",
+            from_type="Part",
+            from_id="P-1",
+            to_type="Vehicle",
+            to_id="V-2",
             properties={},
         )
     )
@@ -132,20 +132,20 @@ def graph_with_edges(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-2",
-            to_entity_type="Vehicle",
-            to_entity_id="V-1",
+            from_type="Part",
+            from_id="P-2",
+            to_type="Vehicle",
+            to_id="V-1",
             properties={},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-2",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2",
+            from_type="Part",
+            from_id="P-2",
+            to_type="Vehicle",
+            to_id="V-2",
             properties={},
         )
     )
@@ -154,10 +154,10 @@ def graph_with_edges(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-3",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2",
+            from_type="Part",
+            from_id="P-3",
+            to_type="Vehicle",
+            to_id="V-2",
             properties={},
         )
     )
@@ -351,10 +351,10 @@ class TestSharedNeighbors:
         graph_with_edges.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Part",
-                to_entity_id="P-2",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Part",
+                to_id="P-2",
                 properties={"direction": "equivalent", "confidence": 0.9},
             )
         )
@@ -417,20 +417,20 @@ class TestSharedNeighbors:
         g.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-A",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-A",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={},
             )
         )
         g.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-B",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-B",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={},
             )
         )
@@ -454,20 +454,20 @@ class TestSharedNeighbors:
         g.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-A",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-A",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={},
             )
         )
         g.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-B",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-B",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={},
             )
         )
@@ -491,10 +491,10 @@ class TestSharedNeighbors:
             g.add_relationship(
                 RelationshipInstance(
                     relationship_type="fits",
-                    from_entity_type="Part",
-                    from_entity_id=f"P-{i}",
-                    to_entity_type="Vehicle",
-                    to_entity_id="V-SHARED",
+                    from_type="Part",
+                    from_id=f"P-{i}",
+                    to_type="Vehicle",
+                    to_id="V-SHARED",
                     properties={},
                 )
             )

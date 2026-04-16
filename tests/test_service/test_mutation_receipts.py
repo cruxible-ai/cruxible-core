@@ -9,12 +9,9 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.feedback.types import EdgeTarget
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.service import (
-    EntityUpsertInput,
-    RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
     service_feedback,
@@ -34,7 +31,7 @@ class TestAddEntityReceipts:
         result = service_add_entities(
             initialized_instance,
             [
-                EntityUpsertInput(
+                EntityInstance(
                     entity_type="Vehicle",
                     entity_id="V-NEW",
                     properties={
@@ -69,7 +66,7 @@ class TestAddEntityReceipts:
             service_add_entities(
                 initialized_instance,
                 [
-                    EntityUpsertInput(
+                    EntityInstance(
                         entity_type="NonExistent",
                         entity_id="X-1",
                         properties={},
@@ -106,7 +103,7 @@ class TestAddEntityReceipts:
             result = service_add_entities(
                 initialized_instance,
                 [
-                    EntityUpsertInput(
+                    EntityInstance(
                         entity_type="Vehicle",
                         entity_id="V-PERSIST",
                         properties={
@@ -127,7 +124,7 @@ class TestAddEntityReceipts:
         result = service_add_entities(
             initialized_instance,
             [
-                EntityUpsertInput(
+                EntityInstance(
                     entity_type="Vehicle",
                     entity_id="V-NORCPT",
                     properties={"vehicle_id": "V-NORCPT", "year": 2025, "make": "X", "model": "Y"},
@@ -148,10 +145,10 @@ class TestAddRelationshipReceipts:
         result = service_add_relationships(
             populated_instance,
             [
-                RelationshipUpsertInput(
+                RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1002",
-                    relationship="fits",
+                    relationship_type="fits",
                     to_type="Vehicle",
                     to_id="V-2024-ACCORD-SPORT",
                     properties={"verified": True, "source": "test"},
@@ -179,10 +176,10 @@ class TestAddRelationshipReceipts:
             service_add_relationships(
                 populated_instance,
                 [
-                    RelationshipUpsertInput(
+                    RelationshipInstance(
                         from_type="Part",
                         from_id="NONEXISTENT",
-                        relationship="fits",
+                        relationship_type="fits",
                         to_type="Vehicle",
                         to_id="V-2024-CIVIC-EX",
                         properties={},
@@ -263,11 +260,11 @@ class TestIngestReceipts:
 # ---------------------------------------------------------------------------
 
 
-def _edge_target() -> EdgeTarget:
-    return EdgeTarget(
+def _edge_target() -> RelationshipInstance:
+    return RelationshipInstance(
         from_type="Part",
         from_id="BP-1001",
-        relationship="fits",
+        relationship_type="fits",
         to_type="Vehicle",
         to_id="V-2024-CIVIC-EX",
     )

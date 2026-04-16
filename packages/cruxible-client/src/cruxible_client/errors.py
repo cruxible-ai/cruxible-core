@@ -106,7 +106,7 @@ class DataValidationError(GraphError):
         return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
 
 
-class EdgeAmbiguityError(GraphError):
+class RelationshipAmbiguityError(GraphError):
     def __init__(
         self,
         from_type: str,
@@ -256,8 +256,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("entity_type", "unknown"),
             context.get("entity_id", "unknown"),
         )
-    elif body.error_type == "EdgeAmbiguityError":
-        exc = EdgeAmbiguityError(
+    elif body.error_type == "RelationshipAmbiguityError":
+        exc = RelationshipAmbiguityError(
             from_type=context.get("from_type", "unknown"),
             from_id=context.get("from_id", "unknown"),
             to_type=context.get("to_type", "unknown"),

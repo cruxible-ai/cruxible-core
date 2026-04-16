@@ -236,10 +236,10 @@ class TestPerMemberValidation:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"verified": True},
             )
         )
@@ -739,10 +739,10 @@ class TestApplyingRetry:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"verified": False},
             )
         )
@@ -781,10 +781,10 @@ class TestApplyingRetry:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"verified": False},
             )
         )
@@ -828,10 +828,10 @@ class TestZeroEdgeApprove:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"verified": False},
             )
         )

@@ -14,6 +14,7 @@ from cruxible_core.errors import (
     GroupNotFoundError,
 )
 from cruxible_core.graph.operations import validate_relationship
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -25,7 +26,6 @@ from cruxible_core.service.types import (
     ListGroupsResult,
     ListResolutionsResult,
     ProposeGroupResult,
-    RelationshipUpsertInput,
     ResolveGroupResult,
 )
 
@@ -90,7 +90,7 @@ def service_propose_group(
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
     integrations_used: list[str] | None = None,
-    proposed_by: Literal["human", "ai_review"] = "ai_review",
+    proposed_by: Literal["human", "agent"] = "agent",
     suggested_priority: str | None = None,
     source_workflow_name: str | None = None,
     source_workflow_receipt_id: str | None = None,
@@ -405,14 +405,14 @@ def service_resolve_group(
     group_id: str,
     action: Literal["approve", "reject"],
     rationale: str = "",
-    resolved_by: Literal["human", "ai_review"] = "human",
+    resolved_by: Literal["human", "agent"] = "human",
 ) -> ResolveGroupResult:
     """Resolve a candidate group — approve creates edges, reject records decision."""
     # 1. Validate inputs
     _VALID_ACTIONS = ("approve", "reject")
     if action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
-    _VALID_SOURCES = ("human", "ai_review")
+    _VALID_SOURCES = ("human", "agent")
     if resolved_by not in _VALID_SOURCES:
         raise ConfigError(f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_SOURCES)}")
 
@@ -481,7 +481,7 @@ def service_resolve_group(
             config = instance.load_config()
             graph = instance.load_graph()
 
-            valid_inputs: list[RelationshipUpsertInput] = []
+            valid_inputs: list[RelationshipInstance] = []
             edges_skipped = 0
 
             for m in members:
@@ -532,10 +532,10 @@ def service_resolve_group(
 
                 # 5c. Valid — add to batch
                 valid_inputs.append(
-                    RelationshipUpsertInput(
+                    RelationshipInstance(
                         from_type=m.from_type,
                         from_id=m.from_id,
-                        relationship=m.relationship_type,
+                        relationship_type=m.relationship_type,
                         to_type=m.to_type,
                         to_id=m.to_id,
                         properties=m.properties,
@@ -589,7 +589,7 @@ def service_resolve_group(
                     from_id=inp.from_id,
                     to_type=inp.to_type,
                     to_id=inp.to_id,
-                    relationship=inp.relationship,
+                    relationship=inp.relationship_type,
                     is_update=False,
                 )
 

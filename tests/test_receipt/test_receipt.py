@@ -109,10 +109,10 @@ def graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-1",
-            to_entity_type="Vehicle",
-            to_entity_id="V-1",
+            from_type="Part",
+            from_id="P-1",
+            to_type="Vehicle",
+            to_id="V-1",
             properties={"verified": True},
         )
     )
@@ -120,10 +120,10 @@ def graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-2",
-            to_entity_type="Vehicle",
-            to_entity_id="V-1",
+            from_type="Part",
+            from_id="P-2",
+            to_type="Vehicle",
+            to_id="V-1",
             properties={"verified": False},
         )
     )

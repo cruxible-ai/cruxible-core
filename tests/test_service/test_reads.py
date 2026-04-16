@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, EdgeAmbiguityError, ReceiptNotFoundError
+from cruxible_core.errors import ConfigError, ReceiptNotFoundError, RelationshipAmbiguityError
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     service_add_constraint,
@@ -434,22 +434,22 @@ class TestGetRelationship:
         assert rel.relationship_type == "fits"
 
     def test_ambiguous(self, populated_instance: CruxibleInstance) -> None:
-        """Multi-edge without edge_key raises EdgeAmbiguityError."""
+        """Multi-edge without edge_key raises RelationshipAmbiguityError."""
         graph = populated_instance.load_graph()
         # Add a second fits edge between same endpoints
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1001",
-                to_entity_type="Vehicle",
-                to_entity_id="V-2024-CIVIC-EX",
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC-EX",
                 properties={"verified": False, "source": "duplicate"},
             )
         )
         populated_instance.save_graph(graph)
 
-        with pytest.raises(EdgeAmbiguityError):
+        with pytest.raises(RelationshipAmbiguityError):
             service_get_relationship(
                 populated_instance,
                 from_type="Part",

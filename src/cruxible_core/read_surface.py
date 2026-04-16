@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import EdgeAmbiguityError
+from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.engine import QueryResult, execute_query
@@ -113,12 +113,12 @@ def get_relationship(
             from_type, from_id, to_type, to_id, relationship_type
         )
         if count > 1:
-            raise EdgeAmbiguityError(
+            raise RelationshipAmbiguityError(
                 from_type=from_type,
                 from_id=from_id,
                 to_type=to_type,
                 to_id=to_id,
-                relationship=relationship_type,
+                relationship_type=relationship_type,
             )
 
     return graph.get_relationship(

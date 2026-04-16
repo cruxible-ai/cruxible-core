@@ -11,7 +11,8 @@ from cruxible_client import contracts
 from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import ConfigError
-from cruxible_core.feedback.types import EdgeTarget, FeedbackBatchItem
+from cruxible_core.feedback.types import FeedbackBatchItem
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.mcp.permissions import (
     PermissionMode,
@@ -25,8 +26,6 @@ from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
-    EntityUpsertInput,
-    RelationshipUpsertInput,
     service_add_constraint,
     service_add_decision_policy,
     service_add_entities,
@@ -570,10 +569,10 @@ def _handle_feedback_local(
     check_permission("cruxible_feedback", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
-    target = EdgeTarget(
+    target = RelationshipInstance(
         from_type=from_type,
         from_id=from_id,
-        relationship=relationship,
+        relationship_type=relationship,
         to_type=to_type,
         to_id=to_id,
         edge_key=edge_key,
@@ -612,10 +611,10 @@ def _handle_feedback_batch_local(
             FeedbackBatchItem(
                 receipt_id=item.receipt_id,
                 action=item.action,
-                target=EdgeTarget(
+                target=RelationshipInstance(
                     from_type=item.target.from_type,
                     from_id=item.target.from_id,
-                    relationship=item.target.relationship,
+                    relationship_type=item.target.relationship,
                     to_type=item.target.to_type,
                     to_id=item.target.to_id,
                     edge_key=item.target.edge_key,
@@ -1276,10 +1275,10 @@ def _handle_add_relationship_impl(
     instance = get_manager().get(instance_id)
 
     inputs = [
-        RelationshipUpsertInput(
+        RelationshipInstance(
             from_type=edge.from_type,
             from_id=edge.from_id,
-            relationship=edge.relationship,
+            relationship_type=edge.relationship,
             to_type=edge.to_type,
             to_id=edge.to_id,
             properties=edge.properties,
@@ -1321,7 +1320,7 @@ def _handle_add_entity_local(
     instance = get_manager().get(instance_id)
 
     inputs = [
-        EntityUpsertInput(
+        EntityInstance(
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
             properties=entity.properties,
@@ -1450,11 +1449,11 @@ def _handle_get_relationship_local(
         )
     return contracts.GetRelationshipResult(
         found=True,
-        from_type=relationship.from_entity_type,
-        from_id=relationship.from_entity_id,
+        from_type=relationship.from_type,
+        from_id=relationship.from_id,
         relationship_type=relationship.relationship_type,
-        to_type=relationship.to_entity_type,
-        to_id=relationship.to_entity_id,
+        to_type=relationship.to_type,
+        to_id=relationship.to_id,
         edge_key=relationship.edge_key,
         properties=relationship.properties,
     )
@@ -1468,7 +1467,7 @@ def _handle_propose_group_local(
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
     integrations_used: list[str] | None = None,
-    proposed_by: contracts.GroupProposedBy = "ai_review",
+    proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""

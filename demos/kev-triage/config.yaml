@@ -1017,7 +1017,7 @@ workflows:
           signals_from: [signals]
           thesis_text: >
             Fuzzy software-to-product matching from CMDB inventory
-          proposed_by: ai_review
+          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1079,7 +1079,7 @@ workflows:
           thesis_text: >
             Installed versions fall within KEV reference-layer affected
             ranges
-          proposed_by: ai_review
+          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1163,7 +1163,7 @@ workflows:
           thesis_text: >
             Approved affected assets are materially exposed after
             posture and control review
-          proposed_by: ai_review
+          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1227,7 +1227,7 @@ workflows:
           thesis_text: >
             Approved exposed assets create downstream business-service
             impact
-          proposed_by: ai_review
+          proposed_by: agent
         as: proposal
     returns: proposal
 

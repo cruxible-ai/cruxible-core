@@ -752,7 +752,7 @@ class CruxibleClient:
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
         integrations_used: builtins.list[str] | None = None,
-        proposed_by: contracts.GroupProposedBy = "ai_review",
+        proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
     ) -> contracts.ProposeGroupToolResult:
         response = self._client.post(

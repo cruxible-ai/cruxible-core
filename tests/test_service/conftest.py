@@ -85,40 +85,40 @@ def populated_graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1001",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2024-CIVIC-EX",
+            from_type="Part",
+            from_id="BP-1001",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
             properties={"verified": True, "source": "catalog"},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1001",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2024-ACCORD-SPORT",
+            from_type="Part",
+            from_id="BP-1001",
+            to_type="Vehicle",
+            to_id="V-2024-ACCORD-SPORT",
             properties={"verified": True, "source": "catalog"},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1002",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2024-CIVIC-EX",
+            from_type="Part",
+            from_id="BP-1002",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
             properties={"verified": True, "source": "user_report"},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="replaces",
-            from_entity_type="Part",
-            from_entity_id="BP-1002",
-            to_entity_type="Part",
-            to_entity_id="BP-1001",
+            from_type="Part",
+            from_id="BP-1002",
+            to_type="Part",
+            to_id="BP-1001",
             properties={"direction": "upgrade", "confidence": 0.95},
         )
     )

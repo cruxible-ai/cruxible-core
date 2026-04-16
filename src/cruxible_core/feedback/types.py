@@ -8,25 +8,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-
-class EdgeTarget(BaseModel):
-    """Identifies a specific edge in the graph."""
-
-    from_type: str
-    from_id: str
-    relationship: str
-    to_type: str
-    to_id: str
-    edge_key: int | None = None
+from cruxible_core.graph.types import RelationshipInstance
 
 
 class FeedbackRecord(BaseModel):
-    """Human or AI feedback on a query result or specific edge."""
+    """Human or AI feedback on a query result or specific relationship."""
 
     feedback_id: str = Field(default_factory=lambda: f"FB-{uuid.uuid4().hex[:12]}")
     receipt_id: str
     action: Literal["approve", "reject", "correct", "flag"]
-    target: EdgeTarget
+    target: RelationshipInstance
     reason: str = ""
     reason_code: str | None = None
     reason_remediation_hint: str | None = None
@@ -35,7 +26,7 @@ class FeedbackRecord(BaseModel):
     feedback_profile_version: int | None = None
     decision_context: dict[str, Any] = Field(default_factory=dict)
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
-    source: Literal["human", "ai_review", "system"] = "human"
+    source: Literal["human", "agent"] = "human"
     model_id: str | None = None
     corrections: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -46,7 +37,7 @@ class FeedbackBatchItem(BaseModel):
 
     receipt_id: str
     action: Literal["approve", "reject", "correct", "flag"]
-    target: EdgeTarget
+    target: RelationshipInstance
     reason: str = ""
     reason_code: str | None = None
     scope_hints: dict[str, Any] = Field(default_factory=dict)
@@ -70,7 +61,7 @@ class OutcomeRecord(BaseModel):
     decision_context: dict[str, Any] = Field(default_factory=dict)
     lineage_snapshot: dict[str, Any] = Field(default_factory=dict)
     relationship_type: str | None = None
-    source: Literal["human", "ai_review", "system"] = "human"
+    source: Literal["human", "agent"] = "human"
     detail: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

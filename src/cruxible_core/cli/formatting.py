@@ -79,7 +79,7 @@ def feedback_table(records: list[FeedbackRecord]) -> Table:
 
     for r in records:
         t = r.target
-        target_str = f"{t.from_type}:{t.from_id}:{t.relationship}:{t.to_type}:{t.to_id}"
+        target_str = f"{t.from_type}:{t.from_id}:{t.relationship_type}:{t.to_type}:{t.to_id}"
         if t.edge_key is not None:
             target_str = f"{target_str}:{t.edge_key}"
         table.add_row(
@@ -123,8 +123,8 @@ def relationship_table(rel: RelationshipInstance) -> Table:
     table.add_column("Field", style="cyan")
     table.add_column("Value")
 
-    table.add_row("From", f"{rel.from_entity_type}:{rel.from_entity_id}")
-    table.add_row("To", f"{rel.to_entity_type}:{rel.to_entity_id}")
+    table.add_row("From", f"{rel.from_type}:{rel.from_id}")
+    table.add_row("To", f"{rel.to_type}:{rel.to_id}")
     table.add_row("Type", rel.relationship_type)
     if rel.edge_key is not None:
         table.add_row("Edge Key", str(rel.edge_key))

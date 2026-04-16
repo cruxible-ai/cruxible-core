@@ -1,8 +1,8 @@
 """Apply feedback to the entity graph.
 
 Actions:
-- approve: set review_status based on source (human_approved or ai_approved)
-- reject: set review_status based on source (human_rejected or ai_rejected)
+- approve: set review_status based on source (human_approved or agent_approved)
+- reject: set review_status based on source (human_rejected or agent_rejected)
 - correct: merge corrections into edge properties, set approved status
 - flag: set review_status to pending_review
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from cruxible_core.errors import DataValidationError, EdgeAmbiguityError
+from cruxible_core.errors import DataValidationError, RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackRecord
 
 if TYPE_CHECKING:
@@ -50,8 +50,7 @@ def _stamp_provenance(prov: dict[str, Any], action: str) -> dict[str, Any]:
 
 _SOURCE_PREFIX = {
     "human": "human",
-    "ai_review": "ai",
-    "system": "human",
+    "agent": "agent",
 }
 
 _ACTION_PAST = {"approve": "approved", "reject": "rejected"}
@@ -62,7 +61,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
 
     review_status is determined by (source, action):
     - human approve/reject → human_approved/human_rejected
-    - ai_review approve/reject → ai_approved/ai_rejected
+    - agent approve/reject → agent_approved/agent_rejected
     - flag → pending_review (any source)
     - correct → merges corrections, sets approved status per source
     """
@@ -75,21 +74,21 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
+            relationship_type=t.relationship_type,
         )
         if match_count > 1:
-            raise EdgeAmbiguityError(
+            raise RelationshipAmbiguityError(
                 from_type=t.from_type,
                 from_id=t.from_id,
                 to_type=t.to_type,
                 to_id=t.to_id,
-                relationship=t.relationship,
+                relationship_type=t.relationship_type,
             )
 
     prefix = _SOURCE_PREFIX[feedback.source]
 
     if feedback.action in _ACTION_PAST:
-        prov = _read_provenance(graph, t, t.relationship, edge_key)
+        prov = _read_provenance(graph, t, t.relationship_type, edge_key)
         updates: dict[str, Any] = {"review_status": f"{prefix}_{_ACTION_PAST[feedback.action]}"}
         if prov:
             updates["_provenance"] = _stamp_provenance(prov, feedback.action)
@@ -98,13 +97,13 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
+            relationship_type=t.relationship_type,
             updates=updates,
             edge_key=edge_key,
         )
 
     if feedback.action == "flag":
-        prov = _read_provenance(graph, t, t.relationship, edge_key)
+        prov = _read_provenance(graph, t, t.relationship_type, edge_key)
         updates = {"review_status": "pending_review"}
         if prov:
             updates["_provenance"] = _stamp_provenance(prov, feedback.action)
@@ -113,7 +112,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
+            relationship_type=t.relationship_type,
             updates=updates,
             edge_key=edge_key,
         )
@@ -131,7 +130,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
         # Strip _provenance from corrections (prevent spoofing)
         updates = {k: v for k, v in feedback.corrections.items() if k != "_provenance"}
         updates["review_status"] = f"{prefix}_approved"
-        prov = _read_provenance(graph, t, t.relationship, edge_key)
+        prov = _read_provenance(graph, t, t.relationship_type, edge_key)
         if prov:
             updates["_provenance"] = _stamp_provenance(prov, feedback.action)
         return graph.update_edge_properties(
@@ -139,7 +138,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
+            relationship_type=t.relationship_type,
             updates=updates,
             edge_key=edge_key,
         )
