@@ -227,6 +227,16 @@ See `data/seed/software_inventory.csv` for the key file — it contains software
 names and versions as the business knows them, which need to be matched to
 reference-layer products through `software_product_match` proposals.
 
+The seed bundle now includes a richer internal environment: multiple owners,
+services, internet-facing Apache hosts on different versions, patch windows,
+active controls, and one legacy exception record from a source-of-record
+system.
+
+Source material for governed agent actions lives under
+`data/seed/review_material/`. Those files are not loaded by
+`build_fork_state`; they are synthetic incident reports, waiver requests, and
+control reviews meant to drive `add-entity` and `group propose`.
+
 ## Incident History Layer
 
 Adds incident investigation knowledge that compounds across triage cycles. The
@@ -263,6 +273,6 @@ informed by organizational history.
 | Query | Traversal | What it answers |
 |---|---|---|
 | `incident_history_for_product` | Product ← vulnerability_affects_product ← incident_exploited_vulnerability | "Has this product been exploited before?" |
-| `open_findings_for_asset` | Asset ← incident_involved_asset ← finding_from_incident (status ≠ remediated) | "What unresolved root causes exist for this asset?" |
+| `open_findings_for_asset` | Asset ← incident_involved_asset ← finding_from_incident (status = open) | "What open findings still need action for this asset?" |
 | `prior_exploitation_context` | Vulnerability ← incident_exploited_vulnerability → finding_from_incident | "What did we learn last time this CVE was exploited?" |
 | `finding_status_for_incident` | Incident ← finding_from_incident | "Are all findings from this incident remediated?" |

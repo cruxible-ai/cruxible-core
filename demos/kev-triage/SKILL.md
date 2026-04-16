@@ -9,6 +9,11 @@ via `group propose`. The agent reads source material (incident reports,
 post-mortems, tickets, conversations) and proposes governed relationships one at
 a time. Humans approve or reject.
 
+In this demo, sample source material lives under `data/seed/review_material/`.
+The CSV files in `data/seed/` load deterministic state; the review material is
+what the agent should read to create incidents, findings, new exceptions, and
+proposal groups.
+
 ### Incidents and findings
 
 When a security incident is reported or a post-mortem is written:
@@ -55,7 +60,7 @@ Scheduled agent workflow that runs on a cadence:
 1. Refresh the reference layer — run `build_public_kev_reference` to pick up new CVEs
 2. Run the proposal chain — `propose_asset_products` through `propose_service_impact`
 3. For each new exposure, query `incident_history_for_product` and `open_findings_for_asset` to enrich with organizational history
-4. Summarize actionable items: new proposals awaiting review, exposures past their due date, open findings without remediation
+4. Summarize actionable items: new proposals awaiting review, exposures past their due date, and open findings
 5. Post summary to Slack/PagerDuty or present to the user
 
 The triage summary should distinguish between:
