@@ -205,6 +205,38 @@ def test_workflow_apply_uses_expected_route():
     assert captured["payload"]["expected_apply_digest"] == "sha256:abc"
 
 
+def test_group_routes_omit_none_query_params():
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/groups"):
+            captured["groups"] = str(request.url)
+        elif request.url.path.endswith("/resolutions"):
+            captured["resolutions"] = str(request.url)
+        return httpx.Response(
+            200,
+            json=(
+                {"groups": [], "total": 0}
+                if request.url.path.endswith("/groups")
+                else {"resolutions": [], "total": 0}
+            ),
+        )
+
+    client = _build_client(handler)
+    groups_result = client.list_groups("inst_123", status=None, relationship_type=None, limit=25)
+    resolutions_result = client.list_resolutions(
+        "inst_123",
+        action=None,
+        relationship_type=None,
+        limit=25,
+    )
+
+    assert groups_result.total == 0
+    assert resolutions_result.total == 0
+    assert captured["groups"].endswith("/api/v1/inst_123/groups?limit=25")
+    assert captured["resolutions"].endswith("/api/v1/inst_123/resolutions?limit=25")
+
+
 def test_evaluate_uses_expected_route():
     captured: dict[str, Any] = {}
 

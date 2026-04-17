@@ -829,13 +829,14 @@ class CruxibleClient:
         status: contracts.GroupStatus | None = None,
         limit: int = 50,
     ) -> contracts.ListGroupsToolResult:
+        params: dict[str, object] = {"limit": limit}
+        if relationship_type is not None:
+            params["relationship_type"] = relationship_type
+        if status is not None:
+            params["status"] = status
         response = self._client.get(
             f"/api/v1/{instance_id}/groups",
-            params={
-                "relationship_type": relationship_type,
-                "status": status,
-                "limit": limit,
-            },
+            params=params,
         )
         return self._parse_model(response, contracts.ListGroupsToolResult)
 
@@ -847,12 +848,13 @@ class CruxibleClient:
         action: contracts.GroupAction | None = None,
         limit: int = 50,
     ) -> contracts.ListResolutionsToolResult:
+        params: dict[str, object] = {"limit": limit}
+        if relationship_type is not None:
+            params["relationship_type"] = relationship_type
+        if action is not None:
+            params["action"] = action
         response = self._client.get(
             f"/api/v1/{instance_id}/resolutions",
-            params={
-                "relationship_type": relationship_type,
-                "action": action,
-                "limit": limit,
-            },
+            params=params,
         )
         return self._parse_model(response, contracts.ListResolutionsToolResult)
