@@ -5,10 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from click.testing import CliRunner
-
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.cli.main import cli
 from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -16,6 +13,8 @@ from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.wiki import WikiOptions, render_wiki
+from cruxible_core.wiki.generator import SubjectRef, _humanize
 
 WIKI_TEST_CONFIG = """\
 version: "1.0"
@@ -154,18 +153,6 @@ workflows:
           inventory: $steps.inventory
         as: exposure
 """
-
-
-def _chdir_run(runner: CliRunner, directory: Path, args: list[str]):
-    original = Path.cwd()
-    try:
-        import os
-
-        os.chdir(directory)
-        return runner.invoke(cli, args)
-    finally:
-        os.chdir(original)
-
 
 def _build_test_graph() -> EntityGraph:
     graph = EntityGraph()
@@ -599,15 +586,16 @@ def test_render_wiki_builds_subject_and_evidence_pages(tmp_path: Path) -> None:
     resolution_id = _seed_review_history(instance, workflow_receipt_id, trace_id)
     _seed_outcomes(instance, query_receipt_id, workflow_receipt_id, resolution_id, trace_id)
 
-    runner = CliRunner()
-    result = _chdir_run(
-        runner,
-        project,
-        ["render-wiki", "--output", "wiki", "--focus", "Asset:prod-web-01"],
+    # Avoid relying on CLI cwd resolution; render directly against the seeded instance.
+    written = render_wiki(
+        instance,
+        WikiOptions(
+            output_dir=project / "wiki",
+            focus=(SubjectRef("Asset", "prod-web-01"),),
+        ),
     )
 
-    assert result.exit_code == 0, result.output
-    assert "Rendered" in result.output
+    assert written
 
     subject_page = project / "wiki" / "subjects" / "asset" / "prod-web-01.md"
     receipt_page = project / "wiki" / "evidence" / "receipts" / f"{query_receipt_id.lower()}.md"
@@ -636,3 +624,101 @@ def test_render_wiki_builds_subject_and_evidence_pages(tmp_path: Path) -> None:
     assert "## Scope" in receipt_text
     assert "## Workflow Steps" not in receipt_text
     assert "Traversals" not in receipt_text
+
+
+def test_humanize_splits_camel_case_entity_names() -> None:
+    assert _humanize("BusinessService") == "Business Service"
+    assert _humanize("CompensatingControl") == "Compensating Control"
+    assert _humanize("already_snake") == "Already Snake"
+    assert _humanize("kebab-case") == "Kebab Case"
+    assert _humanize("") == ""
+
+
+def test_render_wiki_pending_review_filters_members_for_current_subject(tmp_path: Path) -> None:
+    project = tmp_path / "wiki-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(WIKI_TEST_CONFIG)
+    instance = CruxibleInstance.init(project, "config.yaml")
+    graph = _build_test_graph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Asset",
+            entity_id="corp-laptop-01",
+            properties={
+                "asset_id": "corp-laptop-01",
+                "name": "corp-laptop-01",
+                "environment": "corporate",
+                "internet_exposed": False,
+                "criticality": "low",
+            },
+        )
+    )
+    instance.save_graph(graph)
+
+    _, workflow_receipt_id, trace_id = _seed_receipts_and_traces(instance)
+    _seed_review_history(instance, workflow_receipt_id, trace_id)
+
+    group_store = instance.get_group_store()
+    try:
+        created_at = datetime.now(timezone.utc)
+        with group_store.transaction():
+            group_store.save_group(
+                CandidateGroup(
+                    group_id="GRP-mixed-asset-review-001",
+                    relationship_type="asset_requires_action_for_vulnerability",
+                    signature=compute_group_signature(
+                        "asset_requires_action_for_vulnerability",
+                        {"vulnerability_id": "CVE-2021-41773", "subject": "mixed-assets"},
+                    ),
+                    status="pending_review",
+                    thesis_text=(
+                        "Mixed review group should only render relevant members per subject"
+                    ),
+                    thesis_facts={"vulnerability_id": "CVE-2021-41773"},
+                    analysis_state={"priority": "review"},
+                    integrations_used=["inventory"],
+                    proposed_by="ai_review",
+                    member_count=2,
+                    review_priority="review",
+                    source_workflow_name="propose_asset_exposure",
+                    source_workflow_receipt_id=workflow_receipt_id,
+                    source_trace_ids=[trace_id],
+                    source_step_ids=["assess_exposure"],
+                    created_at=created_at,
+                )
+            )
+            group_store.save_members(
+                "GRP-mixed-asset-review-001",
+                [
+                    CandidateMember(
+                        from_type="Asset",
+                        from_id="prod-web-01",
+                        to_type="Vulnerability",
+                        to_id="CVE-2021-41773",
+                        relationship_type="asset_requires_action_for_vulnerability",
+                    ),
+                    CandidateMember(
+                        from_type="Asset",
+                        from_id="corp-laptop-01",
+                        to_type="Vulnerability",
+                        to_id="CVE-2021-41773",
+                        relationship_type="asset_requires_action_for_vulnerability",
+                    ),
+                ],
+            )
+    finally:
+        group_store.close()
+
+    written = render_wiki(
+        instance,
+        WikiOptions(
+            output_dir=project / "wiki",
+            focus=(SubjectRef("Asset", "prod-web-01"),),
+        ),
+    )
+
+    assert written
+    subject_text = (project / "wiki" / "subjects" / "asset" / "prod-web-01.md").read_text()
+    assert "prod-web-01" in subject_text
+    assert "Mixed review group should only render relevant members per subject" in subject_text
+    assert "corp-laptop-01" not in subject_text

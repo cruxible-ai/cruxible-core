@@ -705,28 +705,42 @@ class _WikiGenerator:
                 line = f"- {neighbor_link} →({relationship_type}) {subject_link}"
             if relationship_schema.description:
                 line += f" — {relationship_schema.description.strip()}"
-            group = [line]
-            group.extend(_render_property_bullets(dict(row.get("properties", {}))))
-            current_groups.append(group)
+            current_group = [line]
+            current_group.extend(_render_property_bullets(dict(row.get("properties", {}))))
+            current_groups.append(current_group)
 
         if current_groups:
             lines.append("### Current Accepted Records")
-            for group in sorted(current_groups, key=lambda g: g[0]):
-                lines.extend(group)
+            for current_group in sorted(current_groups, key=lambda g: g[0]):
+                lines.extend(current_group)
             lines.append("")
 
         seen_pending_ids: set[str] = set()
         pending_groups: list[CandidateGroup] = []
-        for group in groups:
-            if group.status == "pending_review" and group.group_id not in seen_pending_ids:
-                seen_pending_ids.add(group.group_id)
-                pending_groups.append(group)
+        for pending_group in groups:
+            if (
+                pending_group.status == "pending_review"
+                and pending_group.group_id not in seen_pending_ids
+            ):
+                seen_pending_ids.add(pending_group.group_id)
+                pending_groups.append(pending_group)
+        pending_lines: list[str] = []
         if pending_groups:
-            lines.append("### Pending Review")
-            for group in pending_groups:
-                members = self.members_by_group.get(group.group_id, [])
-                if members:
-                    for member in sorted(members, key=lambda m: (m.from_id, m.to_id)):
+            pending_lines.append("### Pending Review")
+            for pending_group in pending_groups:
+                members = self.members_by_group.get(pending_group.group_id, [])
+                relevant_members = [
+                    member
+                    for member in members
+                    if subject.key in (
+                        f"{member.from_type}:{member.from_id}",
+                        f"{member.to_type}:{member.to_id}",
+                    )
+                ]
+                if members and not relevant_members:
+                    continue
+                if relevant_members:
+                    for member in sorted(relevant_members, key=lambda m: (m.from_id, m.to_id)):
                         from_ref = SubjectRef(member.from_type, member.from_id)
                         to_ref = SubjectRef(member.to_type, member.to_id)
                         from_link = self._subject_markdown_link(
@@ -739,26 +753,30 @@ class _WikiGenerator:
                             current_path=self._subject_path(subject),
                             rendered_subjects=rendered_subjects,
                         )
-                        line = f"- {from_link} →({group.relationship_type}) {to_link}"
-                        if group.thesis_text:
-                            line += f" — {group.thesis_text.strip()}"
-                        lines.append(line)
+                        line = (
+                            f"- {from_link} →({pending_group.relationship_type}) {to_link}"
+                        )
+                        if pending_group.thesis_text:
+                            line += f" — {pending_group.thesis_text.strip()}"
+                        pending_lines.append(line)
                 else:
-                    line = f"- {group.relationship_type}"
-                    if group.thesis_text:
-                        line += f" — {group.thesis_text.strip()}"
-                    lines.append(line)
-                if group.source_workflow_name:
+                    line = f"- {pending_group.relationship_type}"
+                    if pending_group.thesis_text:
+                        line += f" — {pending_group.thesis_text.strip()}"
+                    pending_lines.append(line)
+                if pending_group.source_workflow_name:
                     wf_link = _relpath(
                         self._subject_path(subject),
-                        self._workflow_path(group.source_workflow_name),
+                        self._workflow_path(pending_group.source_workflow_name),
                     )
-                    lines.append(
-                        f"  Source: [{group.source_workflow_name}]({wf_link})"
+                    pending_lines.append(
+                        f"  Source: [{pending_group.source_workflow_name}]({wf_link})"
                     )
-            lines.append("")
+            if len(pending_lines) > 1:
+                pending_lines.append("")
+                lines.extend(pending_lines)
 
-        if not current_groups and not pending_groups:
+        if not current_groups and not pending_lines:
             lines.append("- No governed conclusions recorded yet.")
             lines.append("")
         return lines
@@ -1121,9 +1139,14 @@ class _WikiGenerator:
             rtype = returns_step.propose_relationship_group.relationship_type
             lines.append(f"- Governed proposal for **{rtype}** relationships")
         elif returns_step is not None and returns_step.apply_relationships is not None:
-            lines.append(f"- Applied relationships from step `{returns_step.apply_relationships.relationships_from}`")
+            lines.append(
+                "- Applied relationships from step "
+                f"`{returns_step.apply_relationships.relationships_from}`"
+            )
         elif returns_step is not None and returns_step.apply_entities is not None:
-            lines.append(f"- Applied entities from step `{returns_step.apply_entities.entities_from}`")
+            lines.append(
+                f"- Applied entities from step `{returns_step.apply_entities.entities_from}`"
+            )
         else:
             lines.append(f"- Result of step `{schema.returns}`")
         lines.append("")
@@ -1533,6 +1556,7 @@ def _render_scalar(value: Any) -> str:
 
 
 def _humanize(value: str) -> str:
+    value = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value)
     return value.replace("_", " ").replace("-", " ").strip().title()
 
 
