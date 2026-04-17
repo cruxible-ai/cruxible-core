@@ -80,13 +80,16 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
-    def cruxible_lock_workflow(instance_id: str) -> contracts.WorkflowLockResult:
+    def cruxible_lock_workflow(
+        instance_id: str,
+        force: bool = False,
+    ) -> contracts.WorkflowLockResult:
         """Generate the workflow lock file for the current instance config.
 
         Run this after changing providers, artifacts, or workflow config and
         before planning or executing workflows.
         """
-        return handlers.handle_workflow_lock(instance_id)
+        return handlers.handle_workflow_lock(instance_id, force=force)
 
     @_tool
     def cruxible_plan_workflow(

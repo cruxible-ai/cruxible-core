@@ -571,10 +571,12 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
 ):
     input_path = tmp_path / "input.yaml"
     input_path.write_text("sku: SKU-123\n")
+    captured: dict[str, bool] = {}
 
     class StubClient:
-        def workflow_lock(self, instance_id):
+        def workflow_lock(self, instance_id, *, force=False):
             assert instance_id == "inst_123"
+            captured["force"] = force
             return contracts.WorkflowLockResult(
                 lock_path="/srv/project/.cruxible/cruxible.lock.yaml",
                 config_digest="sha256:abc",
@@ -617,10 +619,11 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
 
     lock = runner.invoke(
-        cli, ["--server-url", "http://server", "--instance-id", "inst_123", "lock"]
+        cli, ["--server-url", "http://server", "--instance-id", "inst_123", "lock", "--force"]
     )
     assert lock.exit_code == 0
     assert "Workflow lock updated on server." in lock.output
+    assert captured["force"] is True
     assert "digest=sha256:abc" in lock.output
     assert "/srv/project/.cruxible/cruxible.lock.yaml" not in lock.output
 

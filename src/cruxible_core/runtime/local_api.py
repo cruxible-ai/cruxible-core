@@ -254,7 +254,10 @@ def _handle_validate_local(
     )
 
 
-def _handle_workflow_lock_local(instance_id: str) -> contracts.WorkflowLockResult:
+def _handle_workflow_lock_local(
+    instance_id: str,
+    force: bool = False,
+) -> contracts.WorkflowLockResult:
     """Generate a workflow lock through the governed service layer."""
     check_permission(
         "workflow_lock",
@@ -262,7 +265,7 @@ def _handle_workflow_lock_local(instance_id: str) -> contracts.WorkflowLockResul
         required_mode=PermissionMode.ADMIN,
     )
     instance = get_manager().get(instance_id)
-    result = service_lock(instance)
+    result = service_lock(instance, force=force)
     return contracts.WorkflowLockResult(
         lock_path=result.lock_path,
         config_digest=result.config_digest,

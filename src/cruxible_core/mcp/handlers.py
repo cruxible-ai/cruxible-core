@@ -158,11 +158,11 @@ def handle_world_fork(
     )
 
 
-def handle_workflow_lock(instance_id: str) -> contracts.WorkflowLockResult:
+def handle_workflow_lock(instance_id: str, force: bool = False) -> contracts.WorkflowLockResult:
     """Generate a workflow lock file for an instance."""
     return _dispatch_remote_or_local(
-        lambda client: client.workflow_lock(instance_id),
-        lambda: local_api._handle_workflow_lock_local(instance_id),
+        lambda client: client.workflow_lock(instance_id, force=force),
+        lambda: local_api._handle_workflow_lock_local(instance_id, force=force),
     )
 
 

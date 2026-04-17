@@ -205,6 +205,30 @@ def test_workflow_apply_uses_expected_route():
     assert captured["payload"]["expected_apply_digest"] == "sha256:abc"
 
 
+def test_workflow_lock_sends_force_flag():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "lock_path": "/tmp/cruxible.lock.yaml",
+                "config_digest": "sha256:cfg",
+                "providers_locked": 1,
+                "artifacts_locked": 1,
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.workflow_lock("inst_123", force=True)
+
+    assert result.lock_path == "/tmp/cruxible.lock.yaml"
+    assert captured["path"].endswith("/api/v1/inst_123/workflows/lock")
+    assert captured["payload"] == {"force": True}
+
+
 def test_group_routes_omit_none_query_params():
     captured: dict[str, str] = {}
 

@@ -62,10 +62,10 @@ def _build_workflow_execution_result(
     )
 
 
-def service_lock(instance: InstanceProtocol) -> LockServiceResult:
+def service_lock(instance: InstanceProtocol, *, force: bool = False) -> LockServiceResult:
     """Generate and persist a workflow lock file for the instance config."""
     config = instance.load_config()
-    lock = build_lock(config, instance.get_config_path().parent)
+    lock = build_lock(config, instance.get_config_path().parent, force=force)
     lock_path = get_lock_path(instance)
     write_lock(lock, lock_path)
     return LockServiceResult(

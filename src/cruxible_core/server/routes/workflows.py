@@ -9,6 +9,7 @@ from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     WorkflowApplyRequest,
     WorkflowInputRequest,
+    WorkflowLockRequest,
     WorkflowTestRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -17,9 +18,15 @@ router = APIRouter(prefix="/api/v1", tags=["workflows"])
 
 
 @router.post("/{instance_id}/workflows/lock", response_model=contracts.WorkflowLockResult)
-async def workflow_lock(instance_id: str) -> contracts.WorkflowLockResult:
+async def workflow_lock(
+    instance_id: str,
+    req: WorkflowLockRequest | None = None,
+) -> contracts.WorkflowLockResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_workflow_lock_local(resolved_instance_id)
+    return local_api._handle_workflow_lock_local(
+        resolved_instance_id,
+        force=req.force if req is not None else False,
+    )
 
 
 @router.post("/{instance_id}/workflows/plan", response_model=contracts.WorkflowPlanResult)

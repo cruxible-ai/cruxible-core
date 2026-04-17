@@ -111,8 +111,8 @@ class GovernedLocalClient:
     def validate(self, config_path: str | None = None, config_yaml: str | None = None):
         return local_api._handle_validate_local(config_path=config_path, config_yaml=config_yaml)
 
-    def workflow_lock(self, instance_id: str):
-        return local_api._handle_workflow_lock_local(instance_id)
+    def workflow_lock(self, instance_id: str, *, force: bool = False):
+        return local_api._handle_workflow_lock_local(instance_id, force=force)
 
     def workflow_plan(self, instance_id: str, *, workflow_name: str, input_payload=None):
         return local_api._handle_workflow_plan_local(instance_id, workflow_name, input_payload)

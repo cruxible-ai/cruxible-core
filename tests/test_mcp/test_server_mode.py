@@ -71,8 +71,9 @@ def test_workflow_propose_handler_delegates_to_client(monkeypatch: pytest.Monkey
 
 def test_workflow_lock_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
-        def workflow_lock(self, instance_id):
+        def workflow_lock(self, instance_id, *, force=False):
             assert instance_id == "inst_123"
+            assert force is True
             return contracts.WorkflowLockResult(
                 lock_path="/tmp/cruxible.lock.yaml",
                 config_digest="sha256:cfg",
@@ -81,7 +82,7 @@ def test_workflow_lock_handler_delegates_to_client(monkeypatch: pytest.MonkeyPat
             )
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
-    result = handlers.handle_workflow_lock("inst_123")
+    result = handlers.handle_workflow_lock("inst_123", force=True)
     assert result.lock_path == "/tmp/cruxible.lock.yaml"
 
 

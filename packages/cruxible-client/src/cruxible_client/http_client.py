@@ -531,8 +531,16 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.AddEntityResult)
 
-    def workflow_lock(self, instance_id: str) -> contracts.WorkflowLockResult:
-        response = self._client.post(f"/api/v1/{instance_id}/workflows/lock")
+    def workflow_lock(
+        self,
+        instance_id: str,
+        *,
+        force: bool = False,
+    ) -> contracts.WorkflowLockResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/workflows/lock",
+            json={"force": force},
+        )
         return self._parse_model(response, contracts.WorkflowLockResult)
 
     def workflow_plan(

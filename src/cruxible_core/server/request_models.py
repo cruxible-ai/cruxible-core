@@ -186,6 +186,10 @@ class WorkflowTestRequest(BaseModel):
     name: str | None = None
 
 
+class WorkflowLockRequest(BaseModel):
+    force: bool = False
+
+
 class ReloadConfigRequest(BaseModel):
     config_path: str | None = None
     config_yaml: str | None = None

@@ -179,13 +179,18 @@ def validate(config_path: str) -> None:
 
 
 @click.command("lock")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Accept live canonical artifact hashes when regenerating the lock.",
+)
 @handle_errors
-def lock_cmd() -> None:
+def lock_cmd(force: bool) -> None:
     """Generate a workflow lock file for the current instance config."""
     remote = _get_client() is not None
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.workflow_lock(instance_id),
-        service_lock,
+        lambda client, instance_id: client.workflow_lock(instance_id, force=force),
+        lambda instance: service_lock(instance, force=force),
     )
     if remote:
         click.echo("Workflow lock updated on server.")

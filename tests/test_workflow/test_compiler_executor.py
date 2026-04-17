@@ -278,11 +278,32 @@ class TestWorkflowCompiler:
         config.artifacts["canonical_bundle"].sha256 = "sha256:bad"
         canonical_workflow_instance.save_config(config)
 
-        with pytest.raises(ConfigError, match="sha256 does not match live contents"):
+        with pytest.raises(ConfigError) as exc_info:
             build_lock(
                 canonical_workflow_instance.load_config(),
                 canonical_workflow_instance.get_config_path().parent,
             )
+        message = str(exc_info.value)
+        assert "Artifact 'canonical_bundle' sha256 mismatch." in message
+        assert "expected (config): sha256:bad" in message
+        assert "actual (on disk):" in message
+        assert "cruxible lock --force" in message
+
+    def test_build_lock_force_accepts_live_canonical_artifact_hash(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        config.artifacts["canonical_bundle"].sha256 = "sha256:bad"
+        canonical_workflow_instance.save_config(config)
+
+        lock = build_lock(
+            canonical_workflow_instance.load_config(),
+            canonical_workflow_instance.get_config_path().parent,
+            force=True,
+        )
+
+        assert lock.artifacts["canonical_bundle"].sha256 != "sha256:bad"
+        assert lock.artifacts["canonical_bundle"].sha256.startswith("sha256:")
 
     def test_executor_uses_legacy_lock_path_as_fallback(
         self, workflow_instance: CruxibleInstance
