@@ -20,7 +20,7 @@ from cruxible_core.config.schema import (
     ProposeRelationshipGroupSpec,
 )
 from cruxible_core.group.types import CandidateMember
-from cruxible_core.provider.types import ExecutionTrace
+from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
 
 
@@ -39,7 +39,7 @@ class LockedProvider(BaseModel):
     version: str
     ref: str
     provider_entrypoint_sha256: str | None = None
-    runtime: str
+    runtime: ProviderRuntime
     deterministic: bool
     side_effects: bool
     artifact: str | None = None

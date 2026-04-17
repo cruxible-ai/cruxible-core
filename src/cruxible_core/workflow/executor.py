@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -17,7 +18,12 @@ from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import evaluate_comparison
 from cruxible_core.provider.registry import resolve_provider
-from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
+from cruxible_core.provider.types import (
+    ExecutionTrace,
+    ProviderContext,
+    ProviderRuntime,
+    ResolvedArtifact,
+)
 from cruxible_core.read_surface import (
     list_entities as read_list_entities,
 )
@@ -451,7 +457,7 @@ def _build_trace(
     provider_version: str,
     provider_ref: str,
     provider_entrypoint_sha256: str | None,
-    runtime: str,
+    runtime: ProviderRuntime,
     deterministic: bool,
     side_effects: bool,
     artifact_name: str | None,
@@ -460,6 +466,7 @@ def _build_trace(
     output_payload: dict[str, Any],
     status: str,
     error: str | None,
+    started_at: datetime,
     duration_ms: float,
 ) -> ExecutionTrace:
     return ExecutionTrace(
@@ -478,6 +485,8 @@ def _build_trace(
         output_payload=output_payload,
         status=status,
         error=error,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc),
         duration_ms=round(duration_ms, 3),
     )
 
@@ -1252,6 +1261,7 @@ def _execute_provider_step(
     )
     provider_fn = resolve_provider(compiled_step.provider_name, provider_schema)
     started = time.monotonic_ns()
+    started_at = datetime.now(timezone.utc)
     status = "success"
     error_message: str | None = None
     try:
@@ -1286,6 +1296,7 @@ def _execute_provider_step(
             output_payload={},
             status=status,
             error=error_message,
+            started_at=started_at,
             duration_ms=(time.monotonic_ns() - started) / 1_000_000,
         )
         if persist_traces:
@@ -1319,6 +1330,7 @@ def _execute_provider_step(
         output_payload=provider_output,
         status=status,
         error=error_message,
+        started_at=started_at,
         duration_ms=(time.monotonic_ns() - started) / 1_000_000,
     )
     if persist_traces:

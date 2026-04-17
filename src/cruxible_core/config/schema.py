@@ -600,7 +600,7 @@ class ProviderSchema(BaseModel):
     version: str
     deterministic: bool = True
     artifact: str | None = None
-    runtime: str = "python"
+    runtime: Literal["python", "http_json", "command"] = "python"
     side_effects: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
 

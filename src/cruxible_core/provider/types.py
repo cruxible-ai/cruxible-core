@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+ProviderRuntime = Literal["python", "http_json", "command"]
+"""How the provider callable is invoked.
+
+- ``python``: imported Python callable.
+- ``http_json``: HTTP endpoint with JSON request/response bodies.
+- ``command``: subprocess invocation.
+"""
 
 
 class ResolvedArtifact(BaseModel):
@@ -33,7 +41,12 @@ class ProviderContext(BaseModel):
 
 
 class ExecutionTrace(BaseModel):
-    """Persisted trace proving that a provider execution ran."""
+    """Persisted trace proving that a provider execution ran.
+
+    ``started_at`` and ``finished_at`` are required; callers must capture
+    the real wall-clock start and end of execution rather than relying on
+    construction-time defaults.
+    """
 
     trace_id: str = Field(default_factory=lambda: f"TRC-{uuid.uuid4().hex[:12]}")
     workflow_name: str
@@ -42,7 +55,7 @@ class ExecutionTrace(BaseModel):
     provider_version: str
     provider_ref: str
     provider_entrypoint_sha256: str | None = None
-    runtime: str
+    runtime: ProviderRuntime
     deterministic: bool
     side_effects: bool
     artifact_name: str | None = None
@@ -51,9 +64,9 @@ class ExecutionTrace(BaseModel):
     output_payload: dict[str, Any] = Field(default_factory=dict)
     status: Literal["success", "error"] = "success"
     error: str | None = None
-    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    finished_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    duration_ms: float = 0.0
+    started_at: datetime
+    finished_at: datetime
+    duration_ms: float
 
 
 class ProviderCallable(Protocol):
