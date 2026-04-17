@@ -204,16 +204,14 @@ def service_reload_config(
         )
 
     if config_path is not None:
-        resolved = Path(config_path)
-        if not resolved.is_absolute():
-            resolved = instance.get_root_path() / resolved
+        resolved = Path(config_path).expanduser().resolve()
         config = load_config(resolved)
         if config.extends is not None:
             config = compose_config_sequence(
                 resolve_config_layers(config, config_path=resolved.resolve()),
             )
         warnings = validate_config(config)
-        instance.set_config_path(config_path)
+        instance.set_config_path(str(resolved))
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),
             updated=True,

@@ -367,6 +367,24 @@ class TestSchema:
         assert populated_instance.get_config_path() == new_config
         assert populated_instance.load_config().name == "alt_name"
 
+    def test_reload_config_resolves_relative_path_from_cwd(
+        self,
+        populated_instance: CruxibleInstance,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_dir = tmp_path / "configs"
+        config_dir.mkdir()
+        new_config = config_dir / "alt-config.yaml"
+        new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
+
+        monkeypatch.chdir(config_dir)
+        result = service_reload_config(populated_instance, "alt-config.yaml")
+
+        assert result.updated is True
+        assert populated_instance.get_config_path() == new_config.resolve()
+        assert populated_instance.load_config().name == "alt_name"
+
 
 # ---------------------------------------------------------------------------
 # service_sample
