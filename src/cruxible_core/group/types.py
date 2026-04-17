@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from cruxible_core.graph.types import RelationshipInstance
+
 
 class CandidateSignal(BaseModel):
     """Tri-state signal from an integration. Replaces vibed confidence scores."""
@@ -16,16 +18,15 @@ class CandidateSignal(BaseModel):
     evidence: str = ""
 
 
-class CandidateMember(BaseModel):
-    """A candidate edge within a group proposal."""
+class CandidateMember(RelationshipInstance):
+    """A candidate edge within a group proposal.
 
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    relationship_type: str
+    Extends ``RelationshipInstance`` with integration signals. ``edge_key``
+    is inherited but stays ``None`` for candidates since the edge does not
+    yet exist in the graph.
+    """
+
     signals: list[CandidateSignal] = Field(default_factory=list)
-    properties: dict[str, Any] = Field(default_factory=dict)
 
 
 class CandidateGroup(BaseModel):
