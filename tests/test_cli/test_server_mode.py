@@ -723,7 +723,7 @@ def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
                     label="baseline",
                     config_digest="sha256:abc",
                     lock_digest=None,
-                    graph_sha256="sha256:def",
+                    graph_digest="sha256:def",
                     parent_snapshot_id=None,
                     origin_snapshot_id=None,
                 )
@@ -739,7 +739,7 @@ def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
                         label="baseline",
                         config_digest="sha256:abc",
                         lock_digest=None,
-                        graph_sha256="sha256:def",
+                        graph_digest="sha256:def",
                         parent_snapshot_id=None,
                         origin_snapshot_id=None,
                     )
@@ -757,7 +757,7 @@ def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
                     label="baseline",
                     config_digest="sha256:abc",
                     lock_digest=None,
-                    graph_sha256="sha256:def",
+                    graph_digest="sha256:def",
                     parent_snapshot_id=None,
                     origin_snapshot_id=None,
                 ),

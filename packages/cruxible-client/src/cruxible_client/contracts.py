@@ -352,7 +352,7 @@ class SnapshotMetadata(BaseModel):
     label: str | None = None
     config_digest: str
     lock_digest: str | None = None
-    graph_sha256: str
+    graph_digest: str
     parent_snapshot_id: str | None = None
     origin_snapshot_id: str | None = None
 

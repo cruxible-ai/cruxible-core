@@ -261,7 +261,7 @@ class CruxibleInstance(InstanceProtocol):
         config = self.load_config()
         config_path = self.get_config_path()
         graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True)
-        graph_sha256 = f"sha256:{hashlib.sha256(graph_json.encode()).hexdigest()}"
+        graph_digest = f"sha256:{hashlib.sha256(graph_json.encode()).hexdigest()}"
 
         (snapshot_dir / "graph.json").write_text(graph_json)
         (snapshot_dir / "config.yaml").write_text(config_path.read_text())
@@ -279,7 +279,7 @@ class CruxibleInstance(InstanceProtocol):
             label=label,
             config_digest=compute_lock_config_digest(config),
             lock_digest=lock_digest,
-            graph_sha256=graph_sha256,
+            graph_digest=graph_digest,
             parent_snapshot_id=self.metadata.get("head_snapshot_id"),
             origin_snapshot_id=self.metadata.get("origin_snapshot_id"),
         )

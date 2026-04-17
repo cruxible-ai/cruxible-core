@@ -301,7 +301,7 @@ def test_snapshot_create_uses_expected_route():
                     "label": "baseline",
                     "config_digest": "sha256:abc",
                     "lock_digest": None,
-                    "graph_sha256": "sha256:def",
+                    "graph_digest": "sha256:def",
                     "parent_snapshot_id": None,
                     "origin_snapshot_id": None,
                 }
