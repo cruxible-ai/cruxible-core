@@ -12,7 +12,12 @@ from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupReso
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.snapshot.types import PublishedWorldManifest, UpstreamMetadata, WorldSnapshot
+from cruxible_core.snapshot.types import (
+    PublishedWorldManifest,
+    UpstreamMetadata,
+    WorldCompatibility,
+    WorldSnapshot,
+)
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
 
 # ---------------------------------------------------------------------------
@@ -463,7 +468,7 @@ class WorldStatusResult:
 class WorldPullPreviewResult:
     current_release_id: str | None
     target_release_id: str
-    compatibility: str
+    compatibility: WorldCompatibility
     apply_digest: str
     warnings: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)

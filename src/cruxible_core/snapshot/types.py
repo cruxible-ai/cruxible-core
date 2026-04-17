@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 _RELEASE_ID_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
+
+WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
+"""Compatibility class between a published release and its predecessors.
+
+- ``data_only``: graph data changes only; no schema changes.
+- ``additive_schema``: schema additions that are backward-compatible.
+- ``breaking``: schema changes that require fork action.
+"""
 
 
 def _validate_path_safe_id(value: str, field_name: str) -> str:
@@ -36,7 +45,7 @@ class PublishedWorldManifest(BaseModel):
     world_id: str
     release_id: str
     snapshot_id: str
-    compatibility: str
+    compatibility: WorldCompatibility
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     parent_release_id: str | None = None

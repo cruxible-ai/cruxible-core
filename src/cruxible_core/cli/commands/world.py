@@ -41,7 +41,7 @@ def world_publish_cmd(
     transport_ref: str,
     world_id: str,
     release_id: str,
-    compatibility: str,
+    compatibility: contracts.WorldCompatibility,
 ) -> None:
     """Publish the current root world-model instance as an immutable release bundle."""
     result = _dispatch_cli_instance(
