@@ -648,6 +648,7 @@ class UpdateTrustStatusToolResult(BaseModel):
 class GetGroupToolResult(BaseModel):
     group: dict[str, Any]
     members: list[dict[str, Any]]
+    resolution: dict[str, Any] | None = None
 
 
 class ListGroupsToolResult(BaseModel):

@@ -23,6 +23,7 @@ from cruxible_core.feedback.types import (
     OutcomeRecord,
 )
 from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.group.types import GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service._helpers import MutationReceiptContext, _save_graph, mutation_receipt
@@ -560,27 +561,27 @@ def _build_receipt_lineage_snapshot(
 def _build_resolution_lineage_snapshot(
     *,
     profile: OutcomeProfileSchema | None,
-    resolution: dict[str, Any],
+    resolution: GroupResolution,
     group,
     trace_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Capture a bounded resolution-time lineage snapshot."""
     thesis_keys = _iter_thesis_scope_keys(profile)
     thesis_facts = {
-        key: resolution["thesis_facts"][key]
+        key: resolution.thesis_facts[key]
         for key in thesis_keys
-        if key in resolution["thesis_facts"]
+        if key in resolution.thesis_facts
     }
     return {
         "resolution": {
-            "resolution_id": resolution["resolution_id"],
-            "relationship_type": resolution["relationship_type"],
-            "action": resolution["action"],
-            "trust_status": resolution["trust_status"],
-            "resolved_by": resolution["resolved_by"],
+            "resolution_id": resolution.resolution_id,
+            "relationship_type": resolution.relationship_type,
+            "action": resolution.action,
+            "trust_status": resolution.trust_status,
+            "resolved_by": resolution.resolved_by,
         },
         "group": {
-            "group_signature": resolution["group_signature"],
+            "group_signature": resolution.group_signature,
         },
         "workflow": {
             "name": group.source_workflow_name,
@@ -615,7 +616,7 @@ def _resolve_resolution_outcome_context(
     instance: InstanceProtocol,
     *,
     resolution_id: str,
-) -> tuple[dict[str, Any], Any, Receipt, dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[GroupResolution, Any, Receipt, dict[str, Any], list[dict[str, Any]]]:
     """Load proposal-resolution lineage context for one outcome record."""
     group_store = instance.get_group_store()
     try:
@@ -628,7 +629,7 @@ def _resolve_resolution_outcome_context(
 
     if group is None:
         raise ConfigError(f"Resolution '{resolution_id}' is not attached to a candidate group")
-    if resolution["action"] != "approve" or not resolution["confirmed"]:
+    if resolution.action != "approve" or not resolution.confirmed:
         raise ConfigError(
             f"Resolution '{resolution_id}' must be a confirmed approved proposal resolution"
         )
@@ -646,7 +647,7 @@ def _resolve_resolution_outcome_context(
         receipt_store.close()
 
     decision_context = _build_decision_context(receipt)
-    decision_context["relationship_type"] = resolution["relationship_type"]
+    decision_context["relationship_type"] = resolution.relationship_type
     trace_summaries = _load_trace_summaries(
         instance,
         list(group.source_trace_ids),
@@ -924,7 +925,7 @@ def service_outcome(
         resolved_profile_key, profile = _resolve_outcome_profile(
             config=config,
             anchor_type="resolution",
-            relationship_type=resolution["relationship_type"],
+            relationship_type=resolution.relationship_type,
             workflow_name=group.source_workflow_name,
             surface_type=None,
             surface_name=None,
@@ -943,7 +944,7 @@ def service_outcome(
             group=group,
             trace_summaries=trace_summaries,
         )
-        relationship_type = resolution["relationship_type"]
+        relationship_type = resolution.relationship_type
         normalized_receipt_id = receipt.receipt_id
 
     outcome_remediation_hint: str | None = None

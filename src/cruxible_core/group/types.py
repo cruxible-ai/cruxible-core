@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -29,6 +29,24 @@ class CandidateMember(RelationshipInstance):
     signals: list[CandidateSignal] = Field(default_factory=list)
 
 
+class GroupResolution(BaseModel):
+    """Persisted resolution of a candidate group (approve or reject)."""
+
+    resolution_id: str  # RES-{uuid[:12]}
+    relationship_type: str
+    group_signature: str
+    action: Literal["approve", "reject"]
+    rationale: str = ""
+    thesis_text: str = ""
+    thesis_facts: dict[str, Any] = Field(default_factory=dict)
+    analysis_state: dict[str, Any] = Field(default_factory=dict)
+    trust_status: Literal["trusted", "watch", "invalidated"] = "watch"
+    trust_reason: str = ""
+    confirmed: bool = False
+    resolved_by: Literal["human", "agent"] = "human"
+    resolved_at: datetime
+
+
 class CandidateGroup(BaseModel):
     """A group of candidate edges proposed before they exist in the graph."""
 
@@ -49,5 +67,4 @@ class CandidateGroup(BaseModel):
     source_trace_ids: list[str] = Field(default_factory=list)
     source_step_ids: list[str] = Field(default_factory=list)
     resolution_id: str | None = None
-    resolution: dict[str, Any] | None = None  # transient — populated on load
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

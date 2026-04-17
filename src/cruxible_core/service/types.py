@@ -8,7 +8,7 @@ from typing import Any
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.evaluate import EvaluationReport
 from cruxible_core.graph.types import EntityInstance
-from cruxible_core.group.types import CandidateGroup, CandidateMember
+from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
@@ -421,7 +421,7 @@ class ProposeWorkflowResult:
     suppressed: bool = False
     query_receipt_ids: list[str] = field(default_factory=list)
     trace_ids: list[str] = field(default_factory=list)
-    prior_resolution: dict[str, Any] | None = None
+    prior_resolution: GroupResolution | None = None
     policy_summary: dict[str, int] = field(default_factory=dict)
     receipt: Receipt | None = None
     traces: list[ExecutionTrace] = field(default_factory=list)
@@ -491,7 +491,7 @@ class ProposeGroupResult:
     status: str
     review_priority: str
     member_count: int
-    prior_resolution: dict[str, Any] | None
+    prior_resolution: GroupResolution | None
     suppressed: bool = False
     policy_summary: dict[str, int] = field(default_factory=dict)
 
@@ -510,6 +510,7 @@ class ResolveGroupResult:
 class GetGroupResult:
     group: CandidateGroup
     members: list[CandidateMember]
+    resolution: GroupResolution | None = None
 
 
 @dataclass
@@ -520,5 +521,5 @@ class ListGroupsResult:
 
 @dataclass
 class ListResolutionsResult:
-    resolutions: list[dict[str, Any]]
+    resolutions: list[GroupResolution]
     total: int

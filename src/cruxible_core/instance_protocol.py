@@ -17,7 +17,7 @@ from typing import Any
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.group.types import CandidateGroup, CandidateMember
+from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
@@ -161,7 +161,7 @@ class GroupStoreProtocol(ABC):
     @abstractmethod
     def confirm_resolution(self, resolution_id: str, trust_status: str | None = None) -> None: ...
     @abstractmethod
-    def get_resolution(self, resolution_id: str) -> dict[str, Any] | None: ...
+    def get_resolution(self, resolution_id: str) -> GroupResolution | None: ...
     @abstractmethod
     def find_resolution(
         self,
@@ -169,7 +169,7 @@ class GroupStoreProtocol(ABC):
         signature: str,
         action: str | None = None,
         confirmed: bool | None = None,
-    ) -> dict[str, Any] | None: ...
+    ) -> GroupResolution | None: ...
     @abstractmethod
     def list_resolutions(
         self,
@@ -177,7 +177,7 @@ class GroupStoreProtocol(ABC):
         relationship_type: str | None = None,
         action: str | None = None,
         limit: int = 50,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[GroupResolution]: ...
     @abstractmethod
     def update_group_status(
         self, group_id: str, status: str, resolution_id: str | None = None

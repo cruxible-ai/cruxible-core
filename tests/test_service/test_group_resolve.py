@@ -201,9 +201,9 @@ class TestApproveBasic:
             assert group.resolution_id is not None
             res = store.get_resolution(group.resolution_id)
             assert res is not None
-            assert res["action"] == "approve"
-            assert res["rationale"] == "looks good"
-            assert res["confirmed"] is True
+            assert res.action == "approve"
+            assert res.rationale == "looks good"
+            assert res.confirmed is True
         finally:
             store.close()
 
@@ -285,7 +285,7 @@ class TestReject:
             assert group is not None
             res = store.get_resolution(group.resolution_id)
             assert res is not None
-            assert res["confirmed"] is True
+            assert res.confirmed is True
         finally:
             store.close()
 
@@ -297,7 +297,7 @@ class TestReject:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["trust_status"] == "watch"
+            assert res.trust_status == "watch"
         finally:
             store.close()
 
@@ -395,7 +395,7 @@ class TestConfirmedFlag:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["confirmed"] is True
+            assert res.confirmed is True
         finally:
             store.close()
 
@@ -469,7 +469,7 @@ class TestTrustInheritance:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["trust_status"] == "trusted"
+            assert res.trust_status == "trusted"
         finally:
             store.close()
 
@@ -501,7 +501,7 @@ class TestTrustInheritance:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["trust_status"] == "watch"
+            assert res.trust_status == "watch"
         finally:
             store.close()
 
@@ -533,7 +533,7 @@ class TestTrustInheritance:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["trust_status"] == "watch"
+            assert res.trust_status == "watch"
         finally:
             store.close()
 
@@ -545,7 +545,7 @@ class TestTrustInheritance:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["trust_status"] == "watch"
+            assert res.trust_status == "watch"
         finally:
             store.close()
 
@@ -577,7 +577,7 @@ class TestTrustInheritance:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["trust_status"] == "watch"  # not inherited from unconfirmed
+            assert res.trust_status == "watch"  # not inherited from unconfirmed
         finally:
             store.close()
 
@@ -632,7 +632,7 @@ class TestTrustRevalidation:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
             # Prior was invalidated, so new resolution should be watch
-            assert res["trust_status"] == "watch"
+            assert res.trust_status == "watch"
         finally:
             store.close()
 
@@ -664,7 +664,7 @@ class TestTrustRevalidation:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res["trust_status"] == "trusted"  # preserved
+            assert res.trust_status == "trusted"  # preserved
         finally:
             store.close()
 

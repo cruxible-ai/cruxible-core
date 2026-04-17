@@ -140,8 +140,8 @@ class TestUpdateTrustStatus:
         store = instance.get_group_store()
         try:
             res = store.get_resolution(res_id)
-            assert res["trust_status"] == "trusted"
-            assert res["trust_reason"] == "earned by review"
+            assert res.trust_status == "trusted"
+            assert res.trust_reason == "earned by review"
         finally:
             store.close()
 
@@ -152,8 +152,8 @@ class TestUpdateTrustStatus:
         store = instance.get_group_store()
         try:
             res = store.get_resolution(res_id)
-            assert res["trust_status"] == "invalidated"
-            assert res["trust_reason"] == "bad data found"
+            assert res.trust_status == "invalidated"
+            assert res.trust_reason == "bad data found"
         finally:
             store.close()
 
@@ -229,7 +229,7 @@ class TestUpdateTrustStatus:
         store = instance.get_group_store()
         try:
             res = store.get_resolution(res_id_1)
-            assert res["trust_status"] == "trusted"
+            assert res.trust_status == "trusted"
         finally:
             store.close()
 
@@ -270,7 +270,7 @@ class TestTrustEffects:
         try:
             group2 = store.get_group(pr2.group_id)
             res2 = store.get_resolution(group2.resolution_id)
-            assert res2["trust_status"] == "trusted"  # inherited
+            assert res2.trust_status == "trusted"  # inherited
         finally:
             store.close()
 
@@ -284,8 +284,8 @@ class TestTrustEffects:
         store = instance.get_group_store()
         try:
             res = store.get_resolution(res_id)
-            assert res["trust_status"] == "invalidated"
-            assert res["trust_reason"] == "data issue"
+            assert res.trust_status == "invalidated"
+            assert res.trust_reason == "data issue"
             # No trace of "trusted" or "initial review"
         finally:
             store.close()

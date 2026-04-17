@@ -9,7 +9,7 @@ from rich.table import Table
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateGroup, CandidateMember
+from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.query.candidates import CandidateMatch
 
 
@@ -224,7 +224,11 @@ def groups_table(groups: list[CandidateGroup]) -> Table:
     return table
 
 
-def group_detail_table(group: CandidateGroup, members: list[CandidateMember]) -> Table:
+def group_detail_table(
+    group: CandidateGroup,
+    members: list[CandidateMember],
+    resolution: GroupResolution | None = None,
+) -> Table:
     """Build a Rich table showing group details and members."""
     table = Table(title=f"Group {group.group_id}")
     table.add_column("Field", style="cyan")
@@ -238,10 +242,9 @@ def group_detail_table(group: CandidateGroup, members: list[CandidateMember]) ->
     table.add_row("Members", str(group.member_count))
     if group.thesis_text:
         table.add_row("Thesis", group.thesis_text)
-    if group.resolution:
-        res = group.resolution
-        table.add_row("Resolution", res.get("action", ""))
-        table.add_row("Trust Status", res.get("trust_status", ""))
+    if resolution is not None:
+        table.add_row("Resolution", resolution.action)
+        table.add_row("Trust Status", resolution.trust_status)
 
     for m in members:
         edge = f"{m.from_type}:{m.from_id} → {m.to_type}:{m.to_id}"
@@ -251,7 +254,7 @@ def group_detail_table(group: CandidateGroup, members: list[CandidateMember]) ->
     return table
 
 
-def resolutions_table(resolutions: list[dict[str, Any]]) -> Table:
+def resolutions_table(resolutions: list[GroupResolution]) -> Table:
     """Build a Rich table for group resolutions."""
     table = Table(title="Group Resolutions")
     table.add_column("Resolution ID", style="cyan", no_wrap=True)
@@ -263,12 +266,12 @@ def resolutions_table(resolutions: list[dict[str, Any]]) -> Table:
 
     for r in resolutions:
         table.add_row(
-            r.get("resolution_id", ""),
-            r.get("relationship_type", ""),
-            r.get("action", ""),
-            r.get("trust_status", ""),
-            r.get("resolved_by", ""),
-            r.get("resolved_at", ""),
+            r.resolution_id,
+            r.relationship_type,
+            r.action,
+            r.trust_status,
+            r.resolved_by,
+            r.resolved_at.isoformat() if r.resolved_at else "",
         )
 
     return table

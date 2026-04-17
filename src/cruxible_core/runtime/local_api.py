@@ -376,7 +376,11 @@ def _handle_propose_workflow_local(
         suppressed=result.suppressed,
         query_receipt_ids=result.query_receipt_ids,
         trace_ids=result.trace_ids,
-        prior_resolution=result.prior_resolution,
+        prior_resolution=(
+            result.prior_resolution.model_dump(mode="json")
+            if result.prior_resolution is not None
+            else None
+        ),
         policy_summary=result.policy_summary,
         receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
         traces=[trace.model_dump(mode="json") for trace in result.traces],
@@ -1511,7 +1515,11 @@ def _handle_propose_group_local(
         status=result.status,
         review_priority=result.review_priority,
         member_count=result.member_count,
-        prior_resolution=result.prior_resolution,
+        prior_resolution=(
+            result.prior_resolution.model_dump(mode="json")
+            if result.prior_resolution is not None
+            else None
+        ),
         suppressed=result.suppressed,
         policy_summary=result.policy_summary,
     )
@@ -1574,6 +1582,11 @@ def _handle_get_group_local(
     return contracts.GetGroupToolResult(
         group=result.group.model_dump(mode="json"),
         members=[member.model_dump(mode="json") for member in result.members],
+        resolution=(
+            result.resolution.model_dump(mode="json")
+            if result.resolution is not None
+            else None
+        ),
     )
 
 
@@ -1616,7 +1629,7 @@ def _handle_list_resolutions_local(
         limit=limit,
     )
     return contracts.ListResolutionsToolResult(
-        resolutions=result.resolutions,
+        resolutions=[r.model_dump(mode="json") for r in result.resolutions],
         total=result.total,
     )
 

@@ -19,6 +19,7 @@ from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
     CandidateSignal,
+    GroupResolution,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
 
@@ -379,7 +380,7 @@ class GroupStore(GroupStoreProtocol):
                 (resolution_id,),
             )
 
-    def get_resolution(self, resolution_id: str) -> dict[str, Any] | None:
+    def get_resolution(self, resolution_id: str) -> GroupResolution | None:
         """Load a resolution by ID."""
         row = self._conn.execute(
             "SELECT * FROM group_resolutions WHERE resolution_id = ?",
@@ -395,7 +396,7 @@ class GroupStore(GroupStoreProtocol):
         signature: str,
         action: str | None = None,
         confirmed: bool | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> GroupResolution | None:
         """Find the most recent resolution for a signature, with optional filters."""
         clauses = ["relationship_type = ?", "group_signature = ?"]
         params: list[Any] = [relationship_type, signature]
@@ -421,7 +422,7 @@ class GroupStore(GroupStoreProtocol):
         relationship_type: str | None = None,
         action: str | None = None,
         limit: int = 50,
-    ) -> list[dict[str, Any]]:
+    ) -> list[GroupResolution]:
         """List resolutions with optional filters."""
         clauses: list[str] = []
         params: list[Any] = []
@@ -454,22 +455,22 @@ class GroupStore(GroupStoreProtocol):
         return cursor.rowcount > 0
 
     @staticmethod
-    def _row_to_resolution(row: sqlite3.Row) -> dict[str, Any]:
-        return {
-            "resolution_id": row["resolution_id"],
-            "relationship_type": row["relationship_type"],
-            "group_signature": row["group_signature"],
-            "action": row["action"],
-            "rationale": row["rationale"],
-            "thesis_text": row["thesis_text"],
-            "thesis_facts": json.loads(row["thesis_facts"]),
-            "analysis_state": json.loads(row["analysis_state"]),
-            "trust_status": row["trust_status"],
-            "trust_reason": row["trust_reason"],
-            "confirmed": bool(row["confirmed"]),
-            "resolved_by": row["resolved_by"],
-            "resolved_at": row["resolved_at"],
-        }
+    def _row_to_resolution(row: sqlite3.Row) -> GroupResolution:
+        return GroupResolution(
+            resolution_id=row["resolution_id"],
+            relationship_type=row["relationship_type"],
+            group_signature=row["group_signature"],
+            action=row["action"],
+            rationale=row["rationale"],
+            thesis_text=row["thesis_text"],
+            thesis_facts=json.loads(row["thesis_facts"]),
+            analysis_state=json.loads(row["analysis_state"]),
+            trust_status=row["trust_status"],
+            trust_reason=row["trust_reason"],
+            confirmed=bool(row["confirmed"]),
+            resolved_by=row["resolved_by"],
+            resolved_at=row["resolved_at"],
+        )
 
     # -----------------------------------------------------------------
     # Lifecycle

@@ -160,11 +160,11 @@ class TestGetGroup:
         )
         service_resolve_group(instance, result.group_id, "approve")
         get_result = service_get_group(instance, result.group_id)
-        assert get_result.group.resolution is not None
-        assert "trust_status" in get_result.group.resolution
-        assert "trust_reason" in get_result.group.resolution
-        assert "confirmed" in get_result.group.resolution
-        assert "resolution_id" in get_result.group.resolution
+        assert get_result.resolution is not None
+        assert get_result.resolution.trust_status is not None
+        assert get_result.resolution.trust_reason is not None
+        assert get_result.resolution.confirmed is not None
+        assert get_result.resolution.resolution_id is not None
 
     def test_not_found(self, instance: CruxibleInstance) -> None:
         with pytest.raises(GroupNotFoundError):
@@ -264,10 +264,10 @@ class TestListResolutions:
         result = service_list_resolutions(instance)
         assert result.total == 1
         r = result.resolutions[0]
-        assert r["analysis_state"] == {"centroid": [0.1, 0.2]}
-        assert r["thesis_facts"] == {"k": "v"}
-        assert r["trust_status"] == "watch"
-        assert "trust_reason" in r
+        assert r.analysis_state == {"centroid": [0.1, 0.2]}
+        assert r.thesis_facts == {"k": "v"}
+        assert r.trust_status == "watch"
+        assert r.trust_reason is not None
 
     def test_filter_by_relationship_type(self, instance: CruxibleInstance) -> None:
         pr = service_propose_group(

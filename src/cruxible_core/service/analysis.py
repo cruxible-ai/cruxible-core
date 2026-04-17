@@ -1013,12 +1013,12 @@ def _build_trust_adjustment_suggestion(
     if latest is None:
         return None
 
-    current_trust = latest.get("trust_status", "watch")
+    current_trust = latest.trust_status
     if current_trust == "invalidated":
         return None
     suggested = "watch" if current_trust == "trusted" else "invalidated"
     return TrustAdjustmentSuggestion(
-        resolution_id=latest["resolution_id"],
+        resolution_id=latest.resolution_id,
         relationship_type=relationship_type,
         group_signature=group_signature,
         current_trust_status=current_trust,
