@@ -13,27 +13,54 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+OperationType = Literal[
+    "query",
+    "workflow",
+    "add_entity",
+    "add_relationship",
+    "ingest",
+    "feedback",
+    "feedback_batch",
+    "group_resolve",
+]
+"""Coarse-grained category of operation that produced a receipt."""
+
+NodeType = Literal[
+    "query",
+    "workflow",
+    "entity_lookup",
+    "edge_traversal",
+    "filter_applied",
+    "constraint_check",
+    "result",
+    "plan_step",
+    "mutation",
+    "validation",
+    "entity_write",
+    "relationship_write",
+    "feedback_applied",
+    "ingest_batch",
+]
+"""Fine-grained kind of node within the receipt DAG."""
+
+EdgeType = Literal[
+    "consulted",
+    "traversed",
+    "filtered",
+    "evaluated",
+    "produced",
+    "validated",
+    "mutated",
+    "applied",
+]
+"""Relation between two nodes in the receipt DAG."""
+
 
 class ReceiptNode(BaseModel):
     """A single node in the receipt DAG."""
 
     node_id: str
-    node_type: Literal[
-        "query",
-        "workflow",
-        "entity_lookup",
-        "edge_traversal",
-        "filter_applied",
-        "constraint_check",
-        "result",
-        "plan_step",
-        "mutation",
-        "validation",
-        "entity_write",
-        "relationship_write",
-        "feedback_applied",
-        "ingest_batch",
-    ]
+    node_type: NodeType
     entity_type: str | None = None
     entity_id: str | None = None
     relationship: str | None = None
@@ -46,16 +73,7 @@ class EvidenceEdge(BaseModel):
 
     from_node: str
     to_node: str
-    edge_type: Literal[
-        "consulted",
-        "traversed",
-        "filtered",
-        "evaluated",
-        "produced",
-        "validated",
-        "mutated",
-        "applied",
-    ]
+    edge_type: EdgeType
 
 
 class Receipt(BaseModel):
@@ -69,5 +87,5 @@ class Receipt(BaseModel):
     results: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     duration_ms: float = 0.0
-    operation_type: str = "query"
+    operation_type: OperationType = "query"
     committed: bool = True
