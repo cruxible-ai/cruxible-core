@@ -31,9 +31,10 @@ No config or provider wiring points at this directory yet.
 - `grc_exceptions.csv`
   Produces `Exception` entities plus deterministic `asset_has_exception`
   relationships from a source-of-record system.
-- `review_material/`
-  Human-readable source material for governed actions such as incidents, waiver
-  requests, and control reviews.
+
+Human-readable reviewer context for governed actions (incidents, waiver
+requests, control reviews) lives at `data/seed/review_material/` rather than
+being duplicated here.
 
 ## Notes
 
