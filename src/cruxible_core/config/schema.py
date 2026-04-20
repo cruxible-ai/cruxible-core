@@ -31,7 +31,7 @@ Hierarchy:
 from __future__ import annotations
 
 import json as _json
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -759,6 +759,23 @@ class ListRelationshipsSpec(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+StepKind = Literal[
+    "query",
+    "provider",
+    "assert",
+    "list_entities",
+    "list_relationships",
+    "make_candidates",
+    "map_signals",
+    "propose_relationship_group",
+    "make_entities",
+    "make_relationships",
+    "apply_entities",
+    "apply_relationships",
+]
+"""The 12 workflow step kinds, grouped into Read/Compute/Build/Write phases."""
+
+
 class WorkflowStepSchema(BaseModel):
     """Single step in a declarative workflow.
 
@@ -835,14 +852,10 @@ class WorkflowStepSchema(BaseModel):
             name for name, candidate in step_candidates.items() if candidate is not None
         ]
         if len(active_step_kinds) != 1:
-            msg = (
-                "Workflow step must define exactly one of 'query', 'provider', 'assert', "
-                "'list_entities', 'list_relationships', 'make_candidates', "
-                "'map_signals', 'propose_relationship_group', "
-                "'make_entities', 'make_relationships', 'apply_entities', "
-                "or 'apply_relationships'"
+            valid = ", ".join(f"'{k}'" for k in get_args(StepKind))
+            raise ValueError(
+                f"Workflow step must define exactly one of {valid}"
             )
-            raise ValueError(msg)
 
         step_kind = active_step_kinds[0]
         step_policies = {

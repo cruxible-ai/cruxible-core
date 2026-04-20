@@ -18,6 +18,7 @@ from cruxible_core.config.schema import (
     MakeRelationshipsSpec,
     MapSignalsSpec,
     ProposeRelationshipGroupSpec,
+    StepKind,
 )
 from cruxible_core.group.types import CandidateMember, SignalValue
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
@@ -73,20 +74,7 @@ class CompiledPlanStep(BaseModel):
     """Single compiled workflow step."""
 
     step_id: str
-    kind: Literal[
-        "query",
-        "provider",
-        "assert",
-        "list_entities",
-        "list_relationships",
-        "make_candidates",
-        "map_signals",
-        "propose_relationship_group",
-        "make_entities",
-        "make_relationships",
-        "apply_entities",
-        "apply_relationships",
-    ]
+    kind: StepKind
     canonical: bool = False
     as_name: str | None = None
     query_name: str | None = None
