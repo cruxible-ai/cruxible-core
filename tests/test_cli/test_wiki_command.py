@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
@@ -494,10 +495,10 @@ def _seed_review_history(
             FeedbackRecord(
                 receipt_id=workflow_receipt_id,
                 action="approve",
-                target=EdgeTarget(
+                target=RelationshipInstance(
                     from_type="Asset",
                     from_id="prod-web-01",
-                    relationship="asset_requires_action_for_vulnerability",
+                    relationship_type="asset_requires_action_for_vulnerability",
                     to_type="Vulnerability",
                     to_id="CVE-2021-41773",
                 ),
