@@ -11,7 +11,6 @@ from cruxible_core.errors import (
     ConstraintViolationError,
     CoreError,
     DataValidationError,
-    EdgeAmbiguityError,
     EntityNotFoundError,
     EntityTypeNotFoundError,
     GroupNotFoundError,
@@ -25,6 +24,7 @@ from cruxible_core.errors import (
     QueryExecutionError,
     QueryNotFoundError,
     ReceiptNotFoundError,
+    RelationshipAmbiguityError,
     RelationshipNotFoundError,
 )
 
@@ -58,7 +58,7 @@ def _status_for_error(exc: CoreError) -> int:
         ),
     ):
         return 404
-    if isinstance(exc, EdgeAmbiguityError):
+    if isinstance(exc, RelationshipAmbiguityError):
         return 409
     if isinstance(exc, ConstraintViolationError):
         return 422
@@ -91,12 +91,12 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     if isinstance(exc, EntityNotFoundError):
         context["entity_type"] = exc.entity_type
         context["entity_id"] = exc.entity_id
-    if isinstance(exc, EdgeAmbiguityError):
+    if isinstance(exc, RelationshipAmbiguityError):
         context["from_type"] = exc.from_type
         context["from_id"] = exc.from_id
         context["to_type"] = exc.to_type
         context["to_id"] = exc.to_id
-        context["relationship"] = exc.relationship
+        context["relationship"] = exc.relationship_type
     if isinstance(exc, ReceiptNotFoundError | OutcomeNotFoundError):
         context["receipt_id"] = exc.receipt_id
     if isinstance(exc, InstanceNotFoundError):

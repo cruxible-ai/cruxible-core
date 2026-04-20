@@ -2,20 +2,38 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+_RELEASE_ID_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
+
+WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
+"""Compatibility class between a published release and its predecessors.
+
+- ``data_only``: graph data changes only; no schema changes.
+- ``additive_schema``: schema additions that are backward-compatible.
+- ``breaking``: schema changes that require fork action.
+"""
+
+
+def _validate_path_safe_id(value: str, field_name: str) -> str:
+    if not _RELEASE_ID_PATTERN.fullmatch(value):
+        raise ValueError(f"{field_name} must match [a-zA-Z0-9._-]+")
+    return value
 
 
 class WorldSnapshot(BaseModel):
     """Immutable local snapshot of graph state and build lineage."""
 
     snapshot_id: str
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     label: str | None = None
     config_digest: str
     lock_digest: str | None = None
-    graph_sha256: str
+    graph_digest: str
     parent_snapshot_id: str | None = None
     origin_snapshot_id: str | None = None
 
@@ -27,33 +45,33 @@ class PublishedWorldManifest(BaseModel):
     world_id: str
     release_id: str
     snapshot_id: str
-    compatibility: str
+    compatibility: WorldCompatibility
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     parent_release_id: str | None = None
 
+    @field_validator("world_id")
+    @classmethod
+    def validate_world_id(cls, value: str) -> str:
+        return _validate_path_safe_id(value, "world_id")
+
     @field_validator("release_id")
     @classmethod
     def validate_release_id(cls, value: str) -> str:
-        import re
-
-        if not re.fullmatch(r"[a-zA-Z0-9._-]+", value):
-            raise ValueError("release_id must match [a-zA-Z0-9._-]+")
-        return value
+        return _validate_path_safe_id(value, "release_id")
 
 
-class UpstreamMetadata(BaseModel):
-    """Per-instance upstream release tracking metadata for pullable forks."""
+class UpstreamMetadata(PublishedWorldManifest):
+    """Per-instance upstream release tracking metadata for pullable forks.
+
+    Extends ``PublishedWorldManifest`` with transport and local-path
+    bookkeeping. The manifest fields record what was pulled; the rest
+    tracks how it was fetched and where it lives on disk.
+    """
 
     transport_ref: str
     requested_source_ref: str | None = None
     requested_transport_ref: str | None = None
-    world_id: str
-    release_id: str
-    snapshot_id: str
-    compatibility: str
-    owned_entity_types: list[str] = Field(default_factory=list)
-    owned_relationship_types: list[str] = Field(default_factory=list)
     overlay_config_path: str = "config.yaml"
     active_config_path: str = ".cruxible/composed/config.yaml"
     manifest_path: str = ".cruxible/upstream/current/manifest.json"

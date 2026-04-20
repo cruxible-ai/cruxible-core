@@ -14,8 +14,9 @@ from cruxible_core.errors import (
     GroupNotFoundError,
 )
 from cruxible_core.graph.operations import validate_relationship
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
-from cruxible_core.group.types import CandidateGroup, CandidateMember
+from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.service._helpers import MutationReceiptContext, mutation_receipt
@@ -25,7 +26,6 @@ from cruxible_core.service.types import (
     ListGroupsResult,
     ListResolutionsResult,
     ProposeGroupResult,
-    RelationshipUpsertInput,
     ResolveGroupResult,
 )
 
@@ -33,7 +33,7 @@ from cruxible_core.service.types import (
 def derive_review_priority(
     members: list[CandidateMember],
     matching: MatchingSchema | None,
-    prior_resolution: dict[str, Any] | None,
+    prior_resolution: GroupResolution | None,
 ) -> str:
     """Derive review_priority mechanically from universal states.
 
@@ -49,9 +49,9 @@ def derive_review_priority(
 
     # Check prior resolution trust
     if prior_resolution is not None:
-        if prior_resolution.get("trust_status") == "invalidated":
+        if prior_resolution.trust_status == "invalidated":
             has_critical = True
-        elif prior_resolution.get("trust_status") == "watch":
+        elif prior_resolution.trust_status == "watch":
             has_review = True
 
     # Check signals on members
@@ -90,7 +90,7 @@ def service_propose_group(
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
     integrations_used: list[str] | None = None,
-    proposed_by: Literal["human", "ai_review"] = "ai_review",
+    proposed_by: Literal["human", "agent"] = "agent",
     suggested_priority: str | None = None,
     source_workflow_name: str | None = None,
     source_workflow_receipt_id: str | None = None,
@@ -230,12 +230,12 @@ def service_propose_group(
         status = "pending_review"
         if prior is not None:
             # Trust status gate
-            if prior.get("trust_status") != "invalidated":
+            if prior.trust_status != "invalidated":
                 # Prior trust gate
                 trust_ok = False
                 if matching is not None:
                     policy = matching.auto_resolve_requires_prior_trust
-                    prior_trust = prior.get("trust_status", "watch")
+                    prior_trust = prior.trust_status
                     if policy == "trusted_only" and prior_trust == "trusted":
                         trust_ok = True
                     elif policy == "trusted_or_watch" and prior_trust in (
@@ -405,14 +405,14 @@ def service_resolve_group(
     group_id: str,
     action: Literal["approve", "reject"],
     rationale: str = "",
-    resolved_by: Literal["human", "ai_review"] = "human",
+    resolved_by: Literal["human", "agent"] = "human",
 ) -> ResolveGroupResult:
     """Resolve a candidate group — approve creates edges, reject records decision."""
     # 1. Validate inputs
     _VALID_ACTIONS = ("approve", "reject")
     if action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
-    _VALID_SOURCES = ("human", "ai_review")
+    _VALID_SOURCES = ("human", "agent")
     if resolved_by not in _VALID_SOURCES:
         raise ConfigError(f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_SOURCES)}")
 
@@ -481,7 +481,7 @@ def service_resolve_group(
             config = instance.load_config()
             graph = instance.load_graph()
 
-            valid_inputs: list[RelationshipUpsertInput] = []
+            valid_inputs: list[RelationshipInstance] = []
             edges_skipped = 0
 
             for m in members:
@@ -532,10 +532,10 @@ def service_resolve_group(
 
                 # 5c. Valid — add to batch
                 valid_inputs.append(
-                    RelationshipUpsertInput(
+                    RelationshipInstance(
                         from_type=m.from_type,
                         from_id=m.from_id,
-                        relationship=m.relationship_type,
+                        relationship_type=m.relationship_type,
                         to_type=m.to_type,
                         to_id=m.to_id,
                         properties=m.properties,
@@ -558,7 +558,7 @@ def service_resolve_group(
                 )
                 inherited_trust = "watch"
                 if prior is not None:
-                    prior_trust = prior.get("trust_status", "watch")
+                    prior_trust = prior.trust_status
                     if prior_trust in ("trusted", "watch"):
                         inherited_trust = prior_trust
 
@@ -589,7 +589,7 @@ def service_resolve_group(
                     from_id=inp.from_id,
                     to_type=inp.to_type,
                     to_id=inp.to_id,
-                    relationship=inp.relationship,
+                    relationship=inp.relationship_type,
                     is_update=False,
                 )
 
@@ -615,7 +615,7 @@ def service_resolve_group(
             )
             revalidated_trust: str | None = None
             if prior is not None:
-                prior_trust = prior.get("trust_status", "watch")
+                prior_trust = prior.trust_status
                 if prior_trust == "invalidated":
                     revalidated_trust = "watch"
 
@@ -649,10 +649,10 @@ def service_get_group(
         if group is None:
             raise GroupNotFoundError(group_id)
         members = group_store.get_members(group_id)
-        # Populate transient resolution dict
+        resolution: GroupResolution | None = None
         if group.resolution_id is not None:
-            group.resolution = group_store.get_resolution(group.resolution_id)
-        return GetGroupResult(group=group, members=members)
+            resolution = group_store.get_resolution(group.resolution_id)
+        return GetGroupResult(group=group, members=members, resolution=resolution)
     finally:
         group_store.close()
 
@@ -726,24 +726,24 @@ def service_update_trust_status(
             raise ConfigError(f"Resolution '{resolution_id}' not found")
 
         # 2. Approved-only guard
-        if res["action"] != "approve":
+        if res.action != "approve":
             raise ConfigError("Trust status can only be set on approved resolutions")
 
         # 3. Confirmed guard
-        if not res["confirmed"]:
+        if not res.confirmed:
             raise ConfigError(
                 "Trust status can only be set on confirmed resolutions (group must be resolved)"
             )
 
         # 4. Latest-approval guard
         latest = group_store.find_resolution(
-            res["relationship_type"],
-            res["group_signature"],
+            res.relationship_type,
+            res.group_signature,
             action="approve",
             confirmed=True,
         )
-        if latest is None or latest["resolution_id"] != resolution_id:
-            latest_id = latest["resolution_id"] if latest else "none"
+        if latest is None or latest.resolution_id != resolution_id:
+            latest_id = latest.resolution_id if latest else "none"
             raise ConfigError(
                 "Can only update trust on the latest confirmed approval "
                 f"for this signature. Latest: {latest_id}"

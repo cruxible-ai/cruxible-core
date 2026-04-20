@@ -117,17 +117,15 @@ class TestContractValidation:
 
 class TestProviderRegistry:
     def test_rejects_unsupported_runtime(self) -> None:
-        provider = ProviderSchema(
-            kind="function",
-            contract_in="Input",
-            contract_out="Output",
-            ref="tests.support.workflow_test_providers.lift_predictor",
-            version="1.0.0",
-            runtime="node",
-        )
-
-        with pytest.raises(ConfigError, match="unsupported runtime 'node'"):
-            resolve_provider("provider", provider)
+        with pytest.raises(ValueError, match="runtime"):
+            ProviderSchema(
+                kind="function",
+                contract_in="Input",
+                contract_out="Output",
+                ref="tests.support.workflow_test_providers.lift_predictor",
+                version="1.0.0",
+                runtime="node",
+            )
 
     def test_rejects_invalid_ref_without_module_separator(self) -> None:
         provider = ProviderSchema(

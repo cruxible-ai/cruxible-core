@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, EdgeAmbiguityError
-from cruxible_core.feedback.types import EdgeTarget
+from cruxible_core.errors import ConfigError, RelationshipAmbiguityError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.service import (
@@ -119,10 +118,10 @@ def instance(tmp_path: Path) -> CruxibleInstance:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1",
-            to_entity_type="Vehicle",
-            to_entity_id="V-1",
+            from_type="Part",
+            from_id="BP-1",
+            to_type="Vehicle",
+            to_id="V-1",
             properties={"verified": True},
         )
     )
@@ -143,10 +142,10 @@ def _get_receipt_id(instance: CruxibleInstance) -> str:
 class TestGroupOverride:
     def test_stamps_on_edge(self, instance: CruxibleInstance) -> None:
         receipt_id = _get_receipt_id(instance)
-        target = EdgeTarget(
+        target = RelationshipInstance(
             from_type="Part",
             from_id="BP-1",
-            relationship="fits",
+            relationship_type="fits",
             to_type="Vehicle",
             to_id="V-1",
         )
@@ -166,10 +165,10 @@ class TestGroupOverride:
     def test_edge_not_in_graph_fails(self, instance: CruxibleInstance) -> None:
         """group_override requires the edge to exist."""
         receipt_id = _get_receipt_id(instance)
-        target = EdgeTarget(
+        target = RelationshipInstance(
             from_type="Part",
             from_id="BP-2",  # no edge for BP-2→V-1
-            relationship="fits",
+            relationship_type="fits",
             to_type="Vehicle",
             to_id="V-1",
         )
@@ -184,31 +183,31 @@ class TestGroupOverride:
             )
 
     def test_ambiguous_edge_fails(self, instance: CruxibleInstance) -> None:
-        """group_override with no edge_key and multiple edges raises EdgeAmbiguityError."""
+        """group_override with no edge_key and multiple edges raises RelationshipAmbiguityError."""
         # Add a second same-type edge between BP-1→V-1
         graph = instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"verified": False, "source": "duplicate"},
             )
         )
         instance.save_graph(graph)
 
         receipt_id = _get_receipt_id(instance)
-        target = EdgeTarget(
+        target = RelationshipInstance(
             from_type="Part",
             from_id="BP-1",
-            relationship="fits",
+            relationship_type="fits",
             to_type="Vehicle",
             to_id="V-1",
             # no edge_key
         )
-        with pytest.raises(EdgeAmbiguityError):
+        with pytest.raises(RelationshipAmbiguityError):
             service_feedback(
                 instance,
                 receipt_id,
@@ -224,10 +223,10 @@ class TestGroupOverride:
         (zero-edge first-time guard). With a second valid member, the override
         member is skipped and the valid one proceeds."""
         receipt_id = _get_receipt_id(instance)
-        target = EdgeTarget(
+        target = RelationshipInstance(
             from_type="Part",
             from_id="BP-1",
-            relationship="fits",
+            relationship_type="fits",
             to_type="Vehicle",
             to_id="V-1",
         )
@@ -268,10 +267,10 @@ class TestGroupOverride:
     def test_without_override_no_stamp(self, instance: CruxibleInstance) -> None:
         """Without group_override flag, no group_override property stamped."""
         receipt_id = _get_receipt_id(instance)
-        target = EdgeTarget(
+        target = RelationshipInstance(
             from_type="Part",
             from_id="BP-1",
-            relationship="fits",
+            relationship_type="fits",
             to_type="Vehicle",
             to_id="V-1",
         )

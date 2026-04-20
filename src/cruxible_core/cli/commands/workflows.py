@@ -562,7 +562,7 @@ def snapshot_create_cmd(label: str | None) -> None:
     click.echo(f"Created snapshot {result.snapshot.snapshot_id}")
     if result.snapshot.label:
         click.echo(f"  label={result.snapshot.label}")
-    click.echo(f"  graph={result.snapshot.graph_sha256}")
+    click.echo(f"  graph={result.snapshot.graph_digest}")
 
 
 @snapshot_group.command("list")

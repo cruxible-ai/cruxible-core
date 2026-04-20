@@ -37,7 +37,7 @@ class TestInputSchema:
     def test_feedback_source_enum(self, server):
         schemas = _get_tool_schemas(server)
         source = schemas["cruxible_feedback"].inputSchema["properties"]["source"]
-        assert source["enum"] == ["human", "ai_review", "system"]
+        assert source["enum"] == ["human", "agent"]
 
     def test_outcome_outcome_enum(self, server):
         schemas = _get_tool_schemas(server)

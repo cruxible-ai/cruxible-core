@@ -157,7 +157,7 @@ class DataValidationError(GraphError):
         return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
 
 
-class EdgeAmbiguityError(GraphError):
+class RelationshipAmbiguityError(GraphError):
     """A relationship target is ambiguous and needs a stable edge key."""
 
     def __init__(
@@ -166,16 +166,16 @@ class EdgeAmbiguityError(GraphError):
         from_id: str,
         to_type: str,
         to_id: str,
-        relationship: str,
+        relationship_type: str,
     ):
         self.from_type = from_type
         self.from_id = from_id
         self.to_type = to_type
         self.to_id = to_id
-        self.relationship = relationship
+        self.relationship_type = relationship_type
         super().__init__(
-            "Ambiguous edge target for "
-            f"{from_type}:{from_id}:{relationship}:{to_type}:{to_id}; "
+            "Ambiguous relationship target for "
+            f"{from_type}:{from_id}:{relationship_type}:{to_type}:{to_id}; "
             "specify edge_key to target a single edge"
         )
 

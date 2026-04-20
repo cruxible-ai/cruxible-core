@@ -194,20 +194,20 @@ def graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1234",
-            to_entity_type="Vehicle",
-            to_entity_id="V-CIVIC",
+            from_type="Part",
+            from_id="BP-1234",
+            to_type="Vehicle",
+            to_id="V-CIVIC",
             properties={"verified": True, "confidence": 0.95},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1234",
-            to_entity_type="Vehicle",
-            to_entity_id="V-ACCORD",
+            from_type="Part",
+            from_id="BP-1234",
+            to_type="Vehicle",
+            to_id="V-ACCORD",
             properties={"verified": False, "confidence": 0.7},
         )
     )
@@ -216,10 +216,10 @@ def graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-5678",
-            to_entity_type="Vehicle",
-            to_entity_id="V-CIVIC",
+            from_type="Part",
+            from_id="BP-5678",
+            to_type="Vehicle",
+            to_id="V-CIVIC",
             properties={"verified": True, "confidence": 0.9},
         )
     )
@@ -228,10 +228,10 @@ def graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-9999",
-            to_entity_type="Vehicle",
-            to_entity_id="V-CAMRY",
+            from_type="Part",
+            from_id="BP-9999",
+            to_type="Vehicle",
+            to_id="V-CAMRY",
             properties={"verified": True, "confidence": 0.8},
         )
     )
@@ -240,20 +240,20 @@ def graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="replaces",
-            from_entity_type="Part",
-            from_entity_id="BP-5678",
-            to_entity_type="Part",
-            to_entity_id="BP-1234",
+            from_type="Part",
+            from_id="BP-5678",
+            to_type="Part",
+            to_id="BP-1234",
             properties={"direction": "upgrade", "confidence": 0.85},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="replaces",
-            from_entity_type="Part",
-            from_entity_id="BP-9999",
-            to_entity_type="Part",
-            to_entity_id="BP-1234",
+            from_type="Part",
+            from_id="BP-9999",
+            to_type="Part",
+            to_id="BP-1234",
             properties={"direction": "downgrade", "confidence": 0.6},
         )
     )
@@ -669,10 +669,10 @@ def _fan_out_graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="owns",
-            from_entity_type="Person",
-            from_entity_id="P-1",
-            to_entity_type="Org",
-            to_entity_id="ORG-1",
+            from_type="Person",
+            from_id="P-1",
+            to_type="Org",
+            to_id="ORG-1",
             properties={"stake": 0.5},
         )
     )
@@ -680,10 +680,10 @@ def _fan_out_graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="owns",
-            from_entity_type="Person",
-            from_entity_id="P-2",
-            to_entity_type="Org",
-            to_entity_id="ORG-1",
+            from_type="Person",
+            from_id="P-2",
+            to_type="Org",
+            to_id="ORG-1",
             properties={"stake": 0.3},
         )
     )
@@ -691,10 +691,10 @@ def _fan_out_graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="owns_org",
-            from_entity_type="ParentOrg",
-            from_entity_id="PARENT-1",
-            to_entity_type="Org",
-            to_entity_id="ORG-1",
+            from_type="ParentOrg",
+            from_id="PARENT-1",
+            to_type="Org",
+            to_id="ORG-1",
             properties={"stake": 0.5},
         )
     )
@@ -726,10 +726,10 @@ class TestMultiRelationshipStep:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="links",
-                from_entity_type="Node",
-                from_entity_id="A",
-                to_entity_type="Node",
-                to_entity_id="B",
+                from_type="Node",
+                from_id="A",
+                to_type="Node",
+                to_id="B",
                 properties={"weight": 1.0},
             )
         )
@@ -737,10 +737,10 @@ class TestMultiRelationshipStep:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="alt_links",
-                from_entity_type="Node",
-                from_entity_id="A",
-                to_entity_type="Node",
-                to_entity_id="B",
+                from_type="Node",
+                from_id="A",
+                to_type="Node",
+                to_id="B",
                 properties={"weight": 1.0},
             )
         )
@@ -871,10 +871,10 @@ def _chain_graph() -> EntityGraph:
         g.add_relationship(
             RelationshipInstance(
                 relationship_type="links",
-                from_entity_type="Node",
-                from_entity_id=src,
-                to_entity_type="Node",
-                to_entity_id=dst,
+                from_type="Node",
+                from_id=src,
+                to_type="Node",
+                to_id=dst,
                 properties={"weight": 1.0},
             )
         )
@@ -906,10 +906,10 @@ class TestMaxDepth:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="alt_links",
-                from_entity_type="Node",
-                from_entity_id="A",
-                to_entity_type="Node",
-                to_entity_id="C",
+                from_type="Node",
+                from_id="A",
+                to_type="Node",
+                to_id="C",
                 properties={"weight": 1.0},
             )
         )
@@ -926,10 +926,10 @@ class TestMaxDepth:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="links",
-                from_entity_type="Node",
-                from_entity_id="D",
-                to_entity_type="Node",
-                to_entity_id="A",
+                from_type="Node",
+                from_id="D",
+                to_type="Node",
+                to_id="A",
                 properties={"weight": 1.0},
             )
         )
@@ -946,10 +946,10 @@ class TestMaxDepth:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="links",
-                from_entity_type="Node",
-                from_entity_id="D",
-                to_entity_type="Node",
-                to_entity_id="A",
+                from_type="Node",
+                from_id="D",
+                to_type="Node",
+                to_id="A",
                 properties={"weight": 1.0},
             )
         )
@@ -981,7 +981,7 @@ class TestMaxDepth:
         traversal_nodes = [n for n in receipt.nodes if n.node_type == "edge_traversal"]
         assert len(traversal_nodes) == 2  # A->B and B->C
 
-        # Find the B->C traversal (to_entity_id=C)
+        # Find the B->C traversal (to_id=C)
         hop2 = next(n for n in traversal_nodes if n.entity_id == "C")
         # Its parent edge should point to the A->B traversal, not root
         parent_edges = [e for e in receipt.edges if e.to_node == hop2.node_id]
@@ -1003,30 +1003,30 @@ class TestMaxDepth:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="links",
-                from_entity_type="Node",
-                from_entity_id="A",
-                to_entity_type="Node",
-                to_entity_id="B",
+                from_type="Node",
+                from_id="A",
+                to_type="Node",
+                to_id="B",
                 properties={"weight": 1.0},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="links",
-                from_entity_type="Node",
-                from_entity_id="B",
-                to_entity_type="Node",
-                to_entity_id="C",
+                from_type="Node",
+                from_id="B",
+                to_type="Node",
+                to_id="C",
                 properties={"weight": 0.0},  # won't match filter={weight: 1.0}
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="links",
-                from_entity_type="Node",
-                from_entity_id="C",
-                to_entity_type="Node",
-                to_entity_id="D",
+                from_type="Node",
+                from_id="C",
+                to_type="Node",
+                to_id="D",
                 properties={"weight": 1.0},
             )
         )

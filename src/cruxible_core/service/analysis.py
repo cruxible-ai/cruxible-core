@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Literal
 
+from cruxible_core.config.schema import FeedbackRemediationHint, OutcomeRemediationHint
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.evaluate import EvaluationReport, evaluate_graph
@@ -322,9 +323,9 @@ def service_analyze_feedback(
             feedback_id=row.feedback_id,
             relationship_type=relationship_type,
             reason=row.reason,
+            target=row.target,
             decision_context=row.decision_context,
             scope_hints=row.scope_hints,
-            target=row.target.model_dump(mode="json"),
         )
         for row in uncoded_feedback[:5]
     ]
@@ -797,7 +798,7 @@ def _resolve_group_remediation_hint(
     rows: list[FeedbackRecord],
     warnings: list[str],
     warning_keys: set[str],
-) -> str:
+) -> FeedbackRemediationHint:
     """Resolve one group's remediation lane without reinterpreting old rows."""
     hints = {
         hint
@@ -841,7 +842,7 @@ def _resolve_outcome_group_remediation_hint(
     rows: list[OutcomeRecord],
     warnings: list[str],
     warning_keys: set[str],
-) -> str:
+) -> OutcomeRemediationHint:
     """Resolve one outcome group's remediation lane without reinterpreting old rows."""
     hints = {
         hint
@@ -884,7 +885,7 @@ def _resolve_outcome_row_remediation_hint(
     row: OutcomeRecord,
     warnings: list[str],
     warning_keys: set[str],
-) -> str | None:
+) -> OutcomeRemediationHint | None:
     """Resolve one outcome row's remediation hint from stored metadata first."""
     if row.outcome_remediation_hint is not None:
         if row.outcome_profile_key is not None:
@@ -1013,12 +1014,12 @@ def _build_trust_adjustment_suggestion(
     if latest is None:
         return None
 
-    current_trust = latest.get("trust_status", "watch")
+    current_trust = latest.trust_status
     if current_trust == "invalidated":
         return None
     suggested = "watch" if current_trust == "trusted" else "invalidated"
     return TrustAdjustmentSuggestion(
-        resolution_id=latest["resolution_id"],
+        resolution_id=latest.resolution_id,
         relationship_type=relationship_type,
         group_signature=group_signature,
         current_trust_status=current_trust,
@@ -1249,7 +1250,7 @@ def _resolve_row_remediation_hint(
     row: FeedbackRecord,
     warnings: list[str],
     warning_keys: set[str],
-) -> str | None:
+) -> FeedbackRemediationHint | None:
     """Resolve one row's remediation hint from stored metadata first."""
     if row.reason_remediation_hint is not None:
         if (

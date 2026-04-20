@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 def make_node_id(entity_type: str, entity_id: str) -> str:
@@ -42,26 +42,35 @@ class EntityInstance(BaseModel):
 
 
 class RelationshipInstance(BaseModel):
-    """A single relationship instance (edge) in the graph."""
+    """A single relationship instance in the graph.
 
-    relationship_type: str
-    from_entity_type: str
-    from_entity_id: str
-    to_entity_type: str
-    to_entity_id: str
+    Also used as the target reference in feedback records. The
+    ``relationship_type`` field accepts ``"relationship"`` during
+    validation so that legacy feedback JSON round-trips correctly.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    relationship_type: str = Field(
+        validation_alias=AliasChoices("relationship_type", "relationship"),
+    )
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
 
     def from_node_id(self) -> str:
         """Return the source node ID."""
-        return make_node_id(self.from_entity_type, self.from_entity_id)
+        return make_node_id(self.from_type, self.from_id)
 
     def to_node_id(self) -> str:
         """Return the target node ID."""
-        return make_node_id(self.to_entity_type, self.to_entity_id)
+        return make_node_id(self.to_type, self.to_id)
 
 
-REJECTED_STATUSES: frozenset[str] = frozenset({"human_rejected", "ai_rejected"})
+REJECTED_STATUSES: frozenset[str] = frozenset({"human_rejected", "agent_rejected"})
 """Edge review_status values that indicate rejection."""
 
 

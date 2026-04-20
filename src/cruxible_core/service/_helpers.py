@@ -15,7 +15,7 @@ from cruxible_core.errors import CoreError, MutationError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.receipt.types import Receipt
+from cruxible_core.receipt.types import OperationType, Receipt
 
 logger = structlog.get_logger()
 ResultT = TypeVar("ResultT", bound="SupportsReceiptId")
@@ -75,7 +75,7 @@ def _config_digest(config: CoreConfig) -> str:
 @contextmanager
 def mutation_receipt(
     instance: InstanceProtocol,
-    operation_type: str,
+    operation_type: OperationType,
     parameters: dict[str, Any],
     *,
     store: Closeable | None = None,

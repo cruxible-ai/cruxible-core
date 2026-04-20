@@ -64,7 +64,7 @@ def _write_bundle(tmp_path: Path) -> Path:
         label="v1.0.0",
         config_digest="sha256:cfg",
         lock_digest=None,
-        graph_sha256="sha256:graph",
+        graph_digest="sha256:graph",
         parent_snapshot_id=None,
         origin_snapshot_id=None,
     )

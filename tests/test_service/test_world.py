@@ -11,12 +11,10 @@ from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import WorkflowSchema, WorkflowStepSchema, WorkflowTestSchema
 from cruxible_core.errors import OwnershipError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import (
-    EntityUpsertInput,
-    RelationshipUpsertInput,
     service_add_entities,
     service_add_relationships,
     service_fork_world,
@@ -97,10 +95,10 @@ def test_publish_fork_and_pull_apply_preserves_fork_overlay(
     add_result = service_add_relationships(
         fork_instance,
         [
-            RelationshipUpsertInput(
+            RelationshipInstance(
                 from_type="Case",
                 from_id="CASE-A",
-                relationship="follow_up",
+                relationship_type="follow_up",
                 to_type="Case",
                 to_id="CASE-B",
                 properties={"reason": "watch"},
@@ -534,10 +532,10 @@ def test_pull_preview_surfaces_dangling_fork_relationships(
     service_add_relationships(
         fork_instance,
         [
-            RelationshipUpsertInput(
+            RelationshipInstance(
                 from_type="Case",
                 from_id="CASE-A",
-                relationship="follow_up",
+                relationship_type="follow_up",
                 to_type="Case",
                 to_id="CASE-B",
                 properties={"reason": "watch"},
@@ -599,7 +597,7 @@ def test_fork_runtime_config_excludes_upstream_canonical_workflows(
     service_add_entities(
         canonical_workflow_instance,
         [
-            EntityUpsertInput(
+            EntityInstance(
                 entity_type="Vendor",
                 entity_id="vendor-acme",
                 properties={"vendor_id": "vendor-acme", "name": "Acme"},
@@ -698,7 +696,13 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
             "step_entities",
             {
                 "entity_type": "Case",
-                "entities": [{"entity_id": "CASE-C", "properties": {"case_id": "CASE-C"}}],
+                "entities": [
+                    {
+                        "entity_type": "Case",
+                        "entity_id": "CASE-C",
+                        "properties": {"case_id": "CASE-C"},
+                    }
+                ],
             },
             receipt_builder,
             persist_writes=False,
@@ -714,6 +718,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
             "relationship_type": "follow_up",
             "relationships": [
                 {
+                    "relationship_type": "follow_up",
                     "from_type": "Case",
                     "from_id": "CASE-A",
                     "to_type": "Case",
@@ -730,8 +735,8 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     assert graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "follow_up")
 
 
-def _case(case_id: str, title: str) -> EntityUpsertInput:
-    return EntityUpsertInput(
+def _case(case_id: str, title: str) -> EntityInstance:
+    return EntityInstance(
         entity_type="Case",
         entity_id=case_id,
         properties={"case_id": case_id, "title": title},

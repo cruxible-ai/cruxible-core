@@ -41,7 +41,7 @@ def _group(
         thesis_facts=thesis_facts or {"style": "casual"},
         analysis_state=analysis_state or {"centroid": [0.1, 0.2]},
         integrations_used=["cosine_v1"],
-        proposed_by="ai_review",
+        proposed_by="agent",
         member_count=2,
         review_priority=review_priority,
         suggested_priority=suggested_priority,
@@ -228,10 +228,10 @@ class TestResolutions:
             )
         res = store.find_resolution("fits", "sig1")
         assert res is not None
-        assert res["resolution_id"] == res_id
-        assert res["action"] == "approve"
-        assert res["thesis_facts"] == {"k": "v"}
-        assert res["analysis_state"] == {"state": 1}
+        assert res.resolution_id == res_id
+        assert res.action == "approve"
+        assert res.thesis_facts == {"k": "v"}
+        assert res.analysis_state == {"state": 1}
 
     def test_find_with_action_filter(self, store: GroupStore) -> None:
         with store.transaction():
@@ -240,11 +240,11 @@ class TestResolutions:
         # Filter approve only
         res = store.find_resolution("fits", "sig1", action="approve")
         assert res is not None
-        assert res["action"] == "approve"
+        assert res.action == "approve"
         # Filter reject only
         res = store.find_resolution("fits", "sig1", action="reject")
         assert res is not None
-        assert res["action"] == "reject"
+        assert res.action == "reject"
 
     def test_find_with_confirmed_filter(self, store: GroupStore) -> None:
         with store.transaction():
@@ -276,7 +276,7 @@ class TestResolutions:
             res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
         res = store.get_resolution(res_id)
         assert res is not None
-        assert res["confirmed"] is False
+        assert res.confirmed is False
 
     def test_confirm_resolution_sets_confirmed(self, store: GroupStore) -> None:
         with store.transaction():
@@ -284,7 +284,7 @@ class TestResolutions:
             store.confirm_resolution(res_id)
         res = store.get_resolution(res_id)
         assert res is not None
-        assert res["confirmed"] is True
+        assert res.confirmed is True
 
     def test_confirm_with_trust_override(self, store: GroupStore) -> None:
         with store.transaction():
@@ -294,8 +294,8 @@ class TestResolutions:
             store.confirm_resolution(res_id, trust_status="watch")
         res = store.get_resolution(res_id)
         assert res is not None
-        assert res["confirmed"] is True
-        assert res["trust_status"] == "watch"
+        assert res.confirmed is True
+        assert res.trust_status == "watch"
 
     def test_get_resolution_by_id(self, store: GroupStore) -> None:
         with store.transaction():
@@ -304,8 +304,8 @@ class TestResolutions:
             )
         res = store.get_resolution(res_id)
         assert res is not None
-        assert res["resolution_id"] == res_id
-        assert res["confirmed"] is False
+        assert res.resolution_id == res_id
+        assert res.confirmed is False
 
     def test_multiple_resolutions_same_signature(self, store: GroupStore) -> None:
         with store.transaction():
@@ -328,17 +328,17 @@ class TestResolutions:
                 trust_status="trusted",
             )
             store.update_resolution_trust_status(
-                store.find_resolution("fits", "sig1")["resolution_id"],
+                store.find_resolution("fits", "sig1").resolution_id,
                 "trusted",
                 "earned by review",
             )
         resolutions = store.list_resolutions()
         assert len(resolutions) == 1
         r = resolutions[0]
-        assert r["analysis_state"] == {"state": "x"}
-        assert r["thesis_facts"] == {"k": 1}
-        assert r["trust_status"] == "trusted"
-        assert r["trust_reason"] == "earned by review"
+        assert r.analysis_state == {"state": "x"}
+        assert r.thesis_facts == {"k": 1}
+        assert r.trust_status == "trusted"
+        assert r.trust_reason == "earned by review"
 
     def test_update_trust_status(self, store: GroupStore) -> None:
         with store.transaction():
@@ -346,8 +346,8 @@ class TestResolutions:
             store.update_resolution_trust_status(res_id, "trusted", "promoted")
         res = store.get_resolution(res_id)
         assert res is not None
-        assert res["trust_status"] == "trusted"
-        assert res["trust_reason"] == "promoted"
+        assert res.trust_status == "trusted"
+        assert res.trust_reason == "promoted"
 
 
 class TestTransaction:

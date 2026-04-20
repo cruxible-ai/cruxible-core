@@ -157,20 +157,20 @@ class EntityGraph:
         if from_node not in self._graph:
             self._graph.add_node(
                 from_node,
-                entity_type=rel.from_entity_type,
-                entity_id=rel.from_entity_id,
+                entity_type=rel.from_type,
+                entity_id=rel.from_id,
                 properties={},
             )
-            self._entities_by_type[rel.from_entity_type].add(from_node)
+            self._entities_by_type[rel.from_type].add(from_node)
 
         if to_node not in self._graph:
             self._graph.add_node(
                 to_node,
-                entity_type=rel.to_entity_type,
-                entity_id=rel.to_entity_id,
+                entity_type=rel.to_type,
+                entity_id=rel.to_id,
                 properties={},
             )
-            self._entities_by_type[rel.to_entity_type].add(to_node)
+            self._entities_by_type[rel.to_type].add(to_node)
 
         edge_key = next(self._edge_counter)
         self._graph.add_edge(
@@ -204,10 +204,10 @@ class EntityGraph:
             if edge_data.get("relationship_type") == relationship_type:
                 return RelationshipInstance(
                     relationship_type=relationship_type,
-                    from_entity_type=from_type,
-                    from_entity_id=from_id,
-                    to_entity_type=to_type,
-                    to_entity_id=to_id,
+                    from_type=from_type,
+                    from_id=from_id,
+                    to_type=to_type,
+                    to_id=to_id,
                     edge_key=key if isinstance(key, int) else None,
                     properties=edge_data.get("properties", {}),
                 )
@@ -754,10 +754,10 @@ class EntityGraph:
             subgraph.add_relationship(
                 RelationshipInstance(
                     relationship_type=edge["relationship_type"],
-                    from_entity_type=edge["from_type"],
-                    from_entity_id=edge["from_id"],
-                    to_entity_type=edge["to_type"],
-                    to_entity_id=edge["to_id"],
+                    from_type=edge["from_type"],
+                    from_id=edge["from_id"],
+                    to_type=edge["to_type"],
+                    to_id=edge["to_id"],
                     edge_key=edge["edge_key"],
                     properties=dict(edge["properties"]),
                 )
@@ -787,10 +787,10 @@ class EntityGraph:
             merged.add_relationship(
                 RelationshipInstance(
                     relationship_type=edge["relationship_type"],
-                    from_entity_type=edge["from_type"],
-                    from_entity_id=edge["from_id"],
-                    to_entity_type=edge["to_type"],
-                    to_entity_id=edge["to_id"],
+                    from_type=edge["from_type"],
+                    from_id=edge["from_id"],
+                    to_type=edge["to_type"],
+                    to_id=edge["to_id"],
                     edge_key=edge["edge_key"],
                     properties=dict(edge["properties"]),
                 )

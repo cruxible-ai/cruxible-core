@@ -452,7 +452,7 @@ cruxible_feedback(
     instance_id,
     receipt_id=<resolve_receipt>,
     action="reject",
-    source="ai_review",
+    source="agent",
     from_type="CatalogPart",
     from_id="31112C",
     relationship="classified_as",

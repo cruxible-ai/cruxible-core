@@ -15,15 +15,15 @@ from pydantic import BaseModel, Field
 
 ConstraintSeverity = Literal["warning", "error"]
 FeedbackAction = Literal["approve", "reject", "correct", "flag"]
-FeedbackSource = Literal["human", "ai_review", "system"]
+FeedbackSource = Literal["human", "agent"]
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
 CandidateStrategy = Literal["property_match", "shared_neighbors"]
 GroupAction = Literal["approve", "reject"]
-GroupResolvedBy = Literal["human", "ai_review"]
+GroupResolvedBy = Literal["human", "agent"]
 GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved", "suppressed"]
-GroupProposedBy = Literal["human", "ai_review"]
+GroupProposedBy = Literal["human", "agent"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
@@ -382,7 +382,7 @@ class SnapshotMetadata(BaseModel):
     label: str | None = None
     config_digest: str
     lock_digest: str | None = None
-    graph_sha256: str
+    graph_digest: str
     parent_snapshot_id: str | None = None
     origin_snapshot_id: str | None = None
 
@@ -678,6 +678,7 @@ class UpdateTrustStatusToolResult(BaseModel):
 class GetGroupToolResult(BaseModel):
     group: dict[str, Any]
     members: list[dict[str, Any]]
+    resolution: dict[str, Any] | None = None
 
 
 class ListGroupsToolResult(BaseModel):

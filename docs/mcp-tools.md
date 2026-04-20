@@ -296,7 +296,7 @@ Record edge-level feedback tied to a receipt.
 | `instance_id` | string | **yes** | Instance ID |
 | `receipt_id` | string | **yes** | Receipt ID the feedback applies to |
 | `action` | string | **yes** | `"approve"`, `"reject"`, `"correct"`, or `"flag"` |
-| `source` | string | **yes** | `"human"`, `"ai_review"`, or `"system"` |
+| `source` | string | **yes** | `"human"` or `"agent"` |
 | `from_type` | string | **yes** | Source entity type |
 | `from_id` | string | **yes** | Source entity ID |
 | `relationship` | string | **yes** | Relationship type |

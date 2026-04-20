@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -13,11 +14,16 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateSignal
+from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import evaluate_comparison
 from cruxible_core.provider.registry import resolve_provider
-from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
+from cruxible_core.provider.types import (
+    ExecutionTrace,
+    ProviderContext,
+    ProviderRuntime,
+    ResolvedArtifact,
+)
 from cruxible_core.read_surface import (
     list_entities as read_list_entities,
 )
@@ -35,13 +41,9 @@ from cruxible_core.workflow.types import (
     ApplyEntitiesPreview,
     ApplyRelationshipsPreview,
     CandidateSet,
-    CandidateSetMember,
     EntitySet,
-    EntitySetMember,
     RelationshipGroupProposalArtifact,
-    RelationshipGroupProposalMember,
     RelationshipSet,
-    RelationshipSetMember,
     SignalBatch,
     SignalBatchSignal,
     WorkflowExecutionResult,
@@ -453,7 +455,7 @@ def _build_trace(
     provider_version: str,
     provider_ref: str,
     provider_entrypoint_sha256: str | None,
-    runtime: str,
+    runtime: ProviderRuntime,
     deterministic: bool,
     side_effects: bool,
     artifact_name: str | None,
@@ -462,6 +464,7 @@ def _build_trace(
     output_payload: dict[str, Any],
     status: str,
     error: str | None,
+    started_at: datetime,
     duration_ms: float,
 ) -> ExecutionTrace:
     return ExecutionTrace(
@@ -480,6 +483,8 @@ def _build_trace(
         output_payload=output_payload,
         status=status,
         error=error,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc),
         duration_ms=round(duration_ms, 3),
     )
 
@@ -601,11 +606,12 @@ def _make_candidate_set(
 
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen: set[tuple[str, str, str, str]] = set()
-    candidates: list[CandidateSetMember] = []
+    candidates: list[RelationshipInstance] = []
 
     for item in items:
-        member = CandidateSetMember.model_validate(
+        member = RelationshipInstance.model_validate(
             {
+                "relationship_type": relationship_type,
                 "from_type": resolve_value(
                     spec.from_type,
                     input_payload,
@@ -777,12 +783,13 @@ def _build_relationship_group_proposal(
             f"but received '{candidate_set.relationship_type}'"
         )
 
-    members_by_pair: dict[tuple[str, str], RelationshipGroupProposalMember] = {
-        (candidate.from_id, candidate.to_id): RelationshipGroupProposalMember(
+    members_by_pair: dict[tuple[str, str], CandidateMember] = {
+        (candidate.from_id, candidate.to_id): CandidateMember(
             from_type=candidate.from_type,
             from_id=candidate.from_id,
             to_type=candidate.to_type,
             to_id=candidate.to_id,
+            relationship_type=relationship_type,
             properties=candidate.properties,
         )
         for candidate in candidate_set.candidates
@@ -856,7 +863,7 @@ def _make_entity_set(
         )
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[str, dict[str, Any]] = {}
-    entities: list[EntitySetMember] = []
+    entities: list[EntityInstance] = []
     duplicate_input_count = 0
     conflicting_duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
@@ -894,7 +901,8 @@ def _make_entity_set(
             continue
         seen[entity_id] = properties
         entities.append(
-            EntitySetMember(
+            EntityInstance(
+                entity_type=spec.entity_type,
                 entity_id=entity_id,
                 properties=properties,
             )
@@ -922,13 +930,14 @@ def _make_relationship_set(
         )
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
-    relationships: list[RelationshipSetMember] = []
+    relationships: list[RelationshipInstance] = []
     duplicate_input_count = 0
     conflicting_duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
     for item in items:
-        member = RelationshipSetMember.model_validate(
+        member = RelationshipInstance.model_validate(
             {
+                "relationship_type": spec.relationship_type,
                 "from_type": resolve_value(
                     spec.from_type,
                     input_payload,
@@ -1030,13 +1039,7 @@ def _apply_entity_set(
         existing = graph.get_entity(entity_set.entity_type, entity.entity_id)
         if existing is None:
             create_count += 1
-            graph.add_entity(
-                EntityInstance(
-                    entity_type=entity_set.entity_type,
-                    entity_id=entity.entity_id,
-                    properties=dict(entity.properties),
-                )
-            )
+            graph.add_entity(entity)
             if persist_writes:
                 receipt_builder.record_entity_write(
                     entity_set.entity_type,
@@ -1108,16 +1111,7 @@ def _apply_relationship_set(
         )
         if existing is None:
             create_count += 1
-            graph.add_relationship(
-                RelationshipInstance(
-                    relationship_type=relationship_set.relationship_type,
-                    from_entity_type=rel.from_type,
-                    from_entity_id=rel.from_id,
-                    to_entity_type=rel.to_type,
-                    to_entity_id=rel.to_id,
-                    properties=new_properties,
-                )
-            )
+            graph.add_relationship(rel.model_copy(update={"properties": new_properties}))
             if persist_writes:
                 receipt_builder.record_relationship_write(
                     rel.from_type,
@@ -1253,6 +1247,7 @@ def _execute_provider_step(
     )
     provider_fn = resolve_provider(compiled_step.provider_name, provider_schema)
     started = time.monotonic_ns()
+    started_at = datetime.now(timezone.utc)
     status = "success"
     error_message: str | None = None
     try:
@@ -1287,6 +1282,7 @@ def _execute_provider_step(
             output_payload={},
             status=status,
             error=error_message,
+            started_at=started_at,
             duration_ms=(time.monotonic_ns() - started) / 1_000_000,
         )
         if persist_traces:
@@ -1320,6 +1316,7 @@ def _execute_provider_step(
         output_payload=provider_output,
         status=status,
         error=error_message,
+        started_at=started_at,
         duration_ms=(time.monotonic_ns() - started) / 1_000_000,
     )
     if persist_traces:

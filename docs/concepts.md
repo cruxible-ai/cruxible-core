@@ -135,9 +135,9 @@ Every edge carries a `properties` dict. Properties come from three sources:
 | Feedback action | Source | review_status |
 |-----------------|--------|---------------|
 | approve / correct | human | `human_approved` |
-| approve / correct | ai_review | `ai_approved` |
+| approve / correct | agent | `agent_approved` |
 | reject | human | `human_rejected` |
-| reject | ai_review | `ai_rejected` |
+| reject | agent | `agent_rejected` |
 | flag | any | `pending_review` |
 
 Absent until the first feedback action is applied to an edge. `correct` additionally merges a corrections dict into the edge properties before setting approved status.

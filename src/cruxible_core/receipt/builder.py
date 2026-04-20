@@ -7,20 +7,15 @@ as the engine traverses the graph, and produces a Receipt at the end.
 from __future__ import annotations
 
 import time
-from typing import Any, Literal
+from typing import Any
 
-from cruxible_core.receipt.types import EvidenceEdge, Receipt, ReceiptNode
-
-_EdgeType = Literal[
-    "consulted",
-    "traversed",
-    "filtered",
-    "evaluated",
-    "produced",
-    "validated",
-    "mutated",
-    "applied",
-]
+from cruxible_core.receipt.types import (
+    EdgeType,
+    EvidenceEdge,
+    OperationType,
+    Receipt,
+    ReceiptNode,
+)
 
 
 class ReceiptBuilder:
@@ -30,7 +25,7 @@ class ReceiptBuilder:
         self,
         query_name: str = "",
         parameters: dict[str, Any] | None = None,
-        operation_type: str = "query",
+        operation_type: OperationType = "query",
     ) -> None:
         self._query_name = query_name
         self._parameters = parameters or {}
@@ -68,7 +63,7 @@ class ReceiptBuilder:
         self._nodes.append(ReceiptNode(node_id=node_id, **kwargs))
         return node_id
 
-    def _add_edge(self, from_node: str, to_node: str, edge_type: _EdgeType) -> None:
+    def _add_edge(self, from_node: str, to_node: str, edge_type: EdgeType) -> None:
         self._edges.append(EvidenceEdge(from_node=from_node, to_node=to_node, edge_type=edge_type))
 
     @property

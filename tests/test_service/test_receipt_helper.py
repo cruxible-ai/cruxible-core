@@ -48,7 +48,7 @@ class TestMutationReceiptHelper:
     def test_success_attaches_receipt_id(self) -> None:
         instance = _DummyInstance()
 
-        with mutation_receipt(instance, "dummy", {"count": 1}) as ctx:
+        with mutation_receipt(instance, "add_entity", {"count": 1}) as ctx:
             assert ctx.builder is not None
             ctx.builder.record_validation(passed=True, detail={"ok": True})
             ctx.set_result(_DummyResult())
@@ -62,7 +62,7 @@ class TestMutationReceiptHelper:
         instance = _DummyInstance()
 
         with pytest.raises(ConfigError) as exc_info:
-            with mutation_receipt(instance, "dummy", {"count": 1}) as ctx:
+            with mutation_receipt(instance, "add_entity", {"count": 1}) as ctx:
                 assert ctx.builder is not None
                 ctx.builder.record_validation(passed=False, detail={"ok": False})
                 raise ConfigError("boom")
@@ -75,7 +75,7 @@ class TestMutationReceiptHelper:
         instance = _DummyInstance()
 
         with pytest.raises(MutationError) as exc_info:
-            with mutation_receipt(instance, "dummy", {"count": 1}) as ctx:
+            with mutation_receipt(instance, "add_entity", {"count": 1}) as ctx:
                 assert ctx.builder is not None
                 ctx.builder.record_validation(passed=False, detail={"ok": False})
                 raise RuntimeError("boom")
@@ -91,7 +91,7 @@ class TestMutationReceiptHelper:
 
         with mutation_receipt(
             instance,
-            "dummy",
+            "add_entity",
             {"count": 1},
             store=external_store,
             enabled=False,
@@ -111,7 +111,7 @@ class TestMutationReceiptHelper:
         with pytest.raises(ConfigError):
             with mutation_receipt(
                 instance,
-                "dummy",
+                "add_entity",
                 {"count": 1},
                 store=external_store,
             ) as ctx:

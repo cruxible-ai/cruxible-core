@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 
@@ -19,7 +19,12 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.formatting import group_detail_table, groups_table, resolutions_table
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
+from cruxible_core.group.types import (
+    CandidateGroup,
+    CandidateMember,
+    CandidateSignal,
+    GroupResolution,
+)
 from cruxible_core.service import (
     service_get_group,
     service_list_groups,
@@ -164,7 +169,7 @@ def group_propose(
 @click.option("--rationale", default="", help="Rationale for this resolution.")
 @click.option(
     "--source",
-    type=click.Choice(["human", "ai_review"]),
+    type=click.Choice(["human", "agent"]),
     default="human",
     help="Who resolved (default: human).",
 )
@@ -264,16 +269,25 @@ def group_get(group_id: str, output_json: bool) -> None:
     if isinstance(result, contracts.GetGroupToolResult):
         group = CandidateGroup.model_validate(result.group)
         members = _members_from_payload(result.members)
+        resolution = (
+            GroupResolution.model_validate(result.resolution)
+            if result.resolution is not None
+            else None
+        )
     else:
         group = result.group
         members = result.members
+        resolution = result.resolution
     if output_json:
-        _emit_json({
+        payload: dict[str, Any] = {
             "group": group.model_dump(mode="python"),
             "members": [m.model_dump(mode="python") for m in members],
-        })
+        }
+        if resolution is not None:
+            payload["resolution"] = resolution.model_dump(mode="python")
+        _emit_json(payload)
         return
-    console.print(group_detail_table(group, members))
+    console.print(group_detail_table(group, members, resolution))
 
 
 @group_group.command("list")
@@ -351,11 +365,17 @@ def group_resolutions(
             limit=limit,
         ),
     )
+    if isinstance(result, contracts.ListResolutionsToolResult):
+        resolutions = [GroupResolution.model_validate(r) for r in result.resolutions]
+        total = result.total
+    else:
+        resolutions = result.resolutions
+        total = result.total
     if output_json:
         _emit_json({
-            "resolutions": result.resolutions,
-            "total": result.total,
+            "resolutions": [r.model_dump(mode="python") for r in resolutions],
+            "total": total,
         })
         return
-    console.print(resolutions_table(result.resolutions))
-    click.echo(f"{len(result.resolutions)} of {result.total} resolution(s) shown.")
+    console.print(resolutions_table(resolutions))
+    click.echo(f"{len(resolutions)} of {total} resolution(s) shown.")

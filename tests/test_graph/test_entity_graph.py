@@ -51,20 +51,20 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1234",
-            to_entity_type="Vehicle",
-            to_entity_id="V-CIVIC",
+            from_type="Part",
+            from_id="BP-1234",
+            to_type="Vehicle",
+            to_id="V-CIVIC",
             properties={"verified": True, "confidence": 0.95},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1234",
-            to_entity_type="Vehicle",
-            to_entity_id="V-ACCORD",
+            from_type="Part",
+            from_id="BP-1234",
+            to_type="Vehicle",
+            to_id="V-ACCORD",
             properties={"verified": True, "confidence": 0.9},
         )
     )
@@ -72,10 +72,10 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-5678",
-            to_entity_type="Vehicle",
-            to_entity_id="V-CIVIC",
+            from_type="Part",
+            from_id="BP-5678",
+            to_type="Vehicle",
+            to_id="V-CIVIC",
             properties={"verified": False, "confidence": 0.7},
         )
     )
@@ -83,10 +83,10 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="replaces",
-            from_entity_type="Part",
-            from_entity_id="BP-5678",
-            to_entity_type="Part",
-            to_entity_id="BP-1234",
+            from_type="Part",
+            from_id="BP-5678",
+            to_type="Part",
+            to_id="BP-1234",
             properties={"direction": "upgrade"},
         )
     )
@@ -198,10 +198,10 @@ class TestRelationshipOperations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="NEW-PART",
-                to_entity_type="Vehicle",
-                to_entity_id="NEW-VEHICLE",
+                from_type="Part",
+                from_id="NEW-PART",
+                to_type="Vehicle",
+                to_id="NEW-VEHICLE",
             )
         )
         assert graph.has_entity("Part", "NEW-PART")
@@ -218,30 +218,30 @@ class TestRelationshipOperations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "A"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "B"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={},
             )
         )
@@ -267,20 +267,20 @@ class TestRelationshipOperations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "A"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "B"},
             )
         )
@@ -321,10 +321,10 @@ class TestReplaceEdgeProperties:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"confidence": 0.9, "_provenance": prov},
             )
         )
@@ -349,10 +349,10 @@ class TestReplaceEdgeProperties:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"confidence": 0.9, "_provenance": old_prov},
             )
         )
@@ -487,10 +487,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         desc = graph.get_descendants("N", "1", "next")
@@ -503,10 +503,10 @@ class TestGetDescendants:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="self_ref",
-                from_entity_type="N",
-                from_entity_id="1",
-                to_entity_type="N",
-                to_entity_id="1",
+                from_type="N",
+                from_id="1",
+                to_type="N",
+                to_id="1",
             )
         )
         desc = graph.get_descendants("N", "1", "self_ref")
@@ -528,10 +528,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="link",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         desc = graph.get_descendants("N", "A", "link")
@@ -553,10 +553,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=str(i),
-                    to_entity_type="N",
-                    to_entity_id=str(i + 1),
+                    from_type="N",
+                    from_id=str(i),
+                    to_type="N",
+                    to_id=str(i + 1),
                 )
             )
         desc = graph.get_descendants("N", "0", "next")
@@ -571,10 +571,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=str(i),
-                    to_entity_type="N",
-                    to_entity_id=str(i + 1),
+                    from_type="N",
+                    from_id=str(i),
+                    to_type="N",
+                    to_id=str(i + 1),
                 )
             )
         desc = graph.get_descendants("N", "0", "next", max_depth=2)
@@ -605,10 +605,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "C", "parent")
@@ -628,10 +628,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "D", "parent", max_depth=1)
@@ -646,10 +646,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "D", "parent", max_depth=2)
@@ -664,10 +664,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "A", "next")
@@ -680,10 +680,10 @@ class TestGetAncestors:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="self_ref",
-                from_entity_type="N",
-                from_entity_id="1",
-                to_entity_type="N",
-                to_entity_id="1",
+                from_type="N",
+                from_id="1",
+                to_type="N",
+                to_id="1",
             )
         )
         anc = graph.get_ancestors("N", "1", "self_ref")
@@ -705,10 +705,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id="C",
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id="C",
                 )
             )
         anc = graph.get_ancestors("N", "C", "parent")
@@ -724,10 +724,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "D", "parent")
@@ -965,10 +965,10 @@ class TestToDictFromDict:
         restored.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1234",
-                to_entity_type="Vehicle",
-                to_entity_id="V-CIVIC",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
                 properties={"source": "new"},
             )
         )

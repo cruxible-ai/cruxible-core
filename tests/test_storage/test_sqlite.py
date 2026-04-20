@@ -1,11 +1,18 @@
 """Tests for SQLite receipt storage."""
 
+from datetime import datetime, timezone
+
 import pytest
 
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.storage.sqlite import SQLiteStore
+
+
+def _trace_timing() -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    return {"started_at": now, "finished_at": now, "duration_ms": 0.0}
 
 
 @pytest.fixture
@@ -224,6 +231,7 @@ class TestSQLiteStore:
             artifact_sha256="abc123",
             input_payload={"sku": "SKU-123"},
             output_payload={"predicted_lift_pct": 0.12},
+            **_trace_timing(),
         )
 
         trace_id = store.save_trace(trace)
@@ -244,6 +252,7 @@ class TestSQLiteStore:
             runtime="python",
             deterministic=True,
             side_effects=False,
+            **_trace_timing(),
         )
         trace_b = ExecutionTrace(
             workflow_name="wf_b",
@@ -254,6 +263,7 @@ class TestSQLiteStore:
             runtime="python",
             deterministic=True,
             side_effects=False,
+            **_trace_timing(),
         )
         store.save_trace(trace_a)
         store.save_trace(trace_b)

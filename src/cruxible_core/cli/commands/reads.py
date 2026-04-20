@@ -873,10 +873,10 @@ def get_relationship_cmd(
             return
         rel = RelationshipInstance(
             relationship_type=result.relationship_type,
-            from_entity_type=result.from_type,
-            from_entity_id=result.from_id,
-            to_entity_type=result.to_type,
-            to_entity_id=result.to_id,
+            from_type=result.from_type,
+            from_id=result.from_id,
+            to_type=result.to_type,
+            to_id=result.to_id,
             edge_key=result.edge_key,
             properties=result.properties,
         )

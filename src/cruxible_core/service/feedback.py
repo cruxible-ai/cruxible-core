@@ -13,16 +13,17 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
-    EdgeAmbiguityError,
     ReceiptNotFoundError,
+    RelationshipAmbiguityError,
 )
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import (
-    EdgeTarget,
     FeedbackBatchItem,
     FeedbackRecord,
     OutcomeRecord,
 )
+from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.group.types import GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service._helpers import MutationReceiptContext, _save_graph, mutation_receipt
@@ -35,7 +36,7 @@ from cruxible_core.service.types import (
 
 _VALID_ACTIONS = ("approve", "reject", "correct", "flag")
 _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
-_VALID_SOURCES = ("human", "ai_review", "system")
+_VALID_SOURCES = ("human", "agent")
 
 
 def _validate_feedback_request_values(
@@ -62,8 +63,8 @@ def _normalize_feedback_record(
     receipt: Receipt,
     receipt_id: str,
     action: Literal["approve", "reject", "correct", "flag"],
-    source: Literal["human", "ai_review", "system"],
-    target: EdgeTarget,
+    source: Literal["human", "agent"],
+    target: RelationshipInstance,
     reason: str,
     reason_code: str | None,
     scope_hints: dict[str, Any] | None,
@@ -97,7 +98,7 @@ def _normalize_feedback_record(
             target.from_id,
             target.to_type,
             target.to_id,
-            target.relationship,
+            target.relationship_type,
             edge_key=target.edge_key,
         )
         if rel is None:
@@ -108,23 +109,23 @@ def _normalize_feedback_record(
                 target.from_id,
                 target.to_type,
                 target.to_id,
-                target.relationship,
+                target.relationship_type,
             )
             if count > 1:
-                raise EdgeAmbiguityError(
+                raise RelationshipAmbiguityError(
                     from_type=target.from_type,
                     from_id=target.from_id,
                     to_type=target.to_type,
                     to_id=target.to_id,
-                    relationship=target.relationship,
+                    relationship_type=target.relationship_type,
                 )
 
-    profile = config.get_feedback_profile(target.relationship)
+    profile = config.get_feedback_profile(target.relationship_type)
     reason_remediation_hint: str | None = None
     if profile is not None:
         _validate_feedback_inputs(
             profile=profile,
-            relationship_type=target.relationship,
+            relationship_type=target.relationship_type,
             source=source,
             reason_code=reason_code,
             scope_hints=normalized_scope_hints,
@@ -150,7 +151,7 @@ def _normalize_feedback_record(
         reason_code=reason_code,
         reason_remediation_hint=reason_remediation_hint,
         scope_hints=normalized_scope_hints,
-        feedback_profile_key=target.relationship if profile is not None else None,
+        feedback_profile_key=target.relationship_type if profile is not None else None,
         feedback_profile_version=profile.version if profile is not None else None,
         decision_context=decision_context,
         context_snapshot=context_snapshot,
@@ -177,12 +178,12 @@ def _validate_feedback_inputs(
     *,
     profile: FeedbackProfileSchema,
     relationship_type: str,
-    source: Literal["human", "ai_review", "system"],
+    source: Literal["human", "agent"],
     reason_code: str | None,
     scope_hints: dict[str, Any],
 ) -> None:
     """Validate feedback inputs against the configured feedback profile."""
-    if source in {"ai_review", "system"} and not reason_code:
+    if source == "agent" and not reason_code:
         raise ConfigError(
             f"Feedback for relationship '{relationship_type}' requires reason_code for "
             f"source '{source}'"
@@ -236,7 +237,7 @@ def _build_context_snapshot(
     *,
     graph,
     profile: FeedbackProfileSchema | None,
-    target: EdgeTarget,
+    target: RelationshipInstance,
     decision_context: dict[str, Any],
 ) -> dict[str, Any]:
     """Capture a bounded feedback-time snapshot for deterministic grouping."""
@@ -247,7 +248,7 @@ def _build_context_snapshot(
         target.from_id,
         target.to_type,
         target.to_id,
-        target.relationship,
+        target.relationship_type,
         edge_key=target.edge_key,
     )
 
@@ -280,7 +281,7 @@ def _build_context_snapshot(
             "properties": to_props,
         },
         "edge": {
-            "relationship": target.relationship,
+            "relationship": target.relationship_type,
             "edge_key": target.edge_key,
             "properties": edge_props,
         },
@@ -406,7 +407,7 @@ def _validate_outcome_inputs(
     *,
     profile: OutcomeProfileSchema | None,
     profile_key: str | None,
-    source: Literal["human", "ai_review", "system"],
+    source: Literal["human", "agent"],
     outcome_code: str | None,
     scope_hints: dict[str, Any],
 ) -> None:
@@ -418,7 +419,7 @@ def _validate_outcome_inputs(
             raise ConfigError("Outcome uses scope_hints but no matching outcome profile exists")
         return
 
-    if source in {"ai_review", "system"} and not outcome_code:
+    if source == "agent" and not outcome_code:
         raise ConfigError(
             f"Outcome for profile '{profile_key}' requires outcome_code for source '{source}'"
         )
@@ -560,27 +561,27 @@ def _build_receipt_lineage_snapshot(
 def _build_resolution_lineage_snapshot(
     *,
     profile: OutcomeProfileSchema | None,
-    resolution: dict[str, Any],
+    resolution: GroupResolution,
     group,
     trace_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Capture a bounded resolution-time lineage snapshot."""
     thesis_keys = _iter_thesis_scope_keys(profile)
     thesis_facts = {
-        key: resolution["thesis_facts"][key]
+        key: resolution.thesis_facts[key]
         for key in thesis_keys
-        if key in resolution["thesis_facts"]
+        if key in resolution.thesis_facts
     }
     return {
         "resolution": {
-            "resolution_id": resolution["resolution_id"],
-            "relationship_type": resolution["relationship_type"],
-            "action": resolution["action"],
-            "trust_status": resolution["trust_status"],
-            "resolved_by": resolution["resolved_by"],
+            "resolution_id": resolution.resolution_id,
+            "relationship_type": resolution.relationship_type,
+            "action": resolution.action,
+            "trust_status": resolution.trust_status,
+            "resolved_by": resolution.resolved_by,
         },
         "group": {
-            "group_signature": resolution["group_signature"],
+            "group_signature": resolution.group_signature,
         },
         "workflow": {
             "name": group.source_workflow_name,
@@ -615,7 +616,7 @@ def _resolve_resolution_outcome_context(
     instance: InstanceProtocol,
     *,
     resolution_id: str,
-) -> tuple[dict[str, Any], Any, Receipt, dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[GroupResolution, Any, Receipt, dict[str, Any], list[dict[str, Any]]]:
     """Load proposal-resolution lineage context for one outcome record."""
     group_store = instance.get_group_store()
     try:
@@ -628,7 +629,7 @@ def _resolve_resolution_outcome_context(
 
     if group is None:
         raise ConfigError(f"Resolution '{resolution_id}' is not attached to a candidate group")
-    if resolution["action"] != "approve" or not resolution["confirmed"]:
+    if resolution.action != "approve" or not resolution.confirmed:
         raise ConfigError(
             f"Resolution '{resolution_id}' must be a confirmed approved proposal resolution"
         )
@@ -646,7 +647,7 @@ def _resolve_resolution_outcome_context(
         receipt_store.close()
 
     decision_context = _build_decision_context(receipt)
-    decision_context["relationship_type"] = resolution["relationship_type"]
+    decision_context["relationship_type"] = resolution.relationship_type
     trace_summaries = _load_trace_summaries(
         instance,
         list(group.source_trace_ids),
@@ -681,8 +682,8 @@ def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str,
     action: Literal["approve", "reject", "correct", "flag"],
-    source: Literal["human", "ai_review", "system"],
-    target: EdgeTarget,
+    source: Literal["human", "agent"],
+    target: RelationshipInstance,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -700,7 +701,7 @@ def service_feedback(
         source=source,
         corrections=corrections,
     )
-    check_type_ownership(instance, relationship_types=[target.relationship])
+    check_type_ownership(instance, relationship_types=[target.relationship_type])
     config = instance.load_config()
     graph = instance.load_graph()
     receipts = _load_receipts(instance, [receipt_id])
@@ -720,7 +721,7 @@ def service_feedback(
     )
 
     target_str = (
-        f"{target.from_type}:{target.from_id}:{target.relationship}:{target.to_type}:{target.to_id}"
+        f"{target.from_type}:{target.from_id}:{target.relationship_type}:{target.to_type}:{target.to_id}"
     )
     feedback_store = instance.get_feedback_store()
     ctx: MutationReceiptContext[FeedbackServiceResult]
@@ -743,7 +744,7 @@ def service_feedback(
                 target.from_id,
                 target.to_type,
                 target.to_id,
-                target.relationship,
+                target.relationship_type,
                 {"group_override": True},
                 edge_key=target.edge_key,
             )
@@ -760,12 +761,14 @@ def service_feedback_batch(
     instance: InstanceProtocol,
     items: list[FeedbackBatchItem],
     *,
-    source: Literal["human", "ai_review", "system"],
+    source: Literal["human", "agent"],
 ) -> FeedbackBatchServiceResult:
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
         raise ConfigError("Batch feedback items must not be empty")
-    check_type_ownership(instance, relationship_types=[item.target.relationship for item in items])
+    check_type_ownership(
+        instance, relationship_types=[item.target.relationship_type for item in items]
+    )
 
     for item in items:
         _validate_feedback_request_values(
@@ -823,7 +826,7 @@ def service_feedback_batch(
                 target = record.target
                 target_str = (
                     f"{target.from_type}:{target.from_id}:"
-                    f"{target.relationship}:{target.to_type}:{target.to_id}"
+                    f"{target.relationship_type}:{target.to_type}:{target.to_id}"
                 )
                 applied = apply_feedback(graph, record)
                 if applied:
@@ -835,7 +838,7 @@ def service_feedback_batch(
                         target.from_id,
                         target.to_type,
                         target.to_id,
-                        target.relationship,
+                        target.relationship_type,
                         {"group_override": True},
                         edge_key=target.edge_key,
                     )
@@ -862,7 +865,7 @@ def service_outcome(
     *,
     anchor_type: Literal["resolution", "receipt"] = "receipt",
     anchor_id: str | None = None,
-    source: Literal["human", "ai_review", "system"] = "human",
+    source: Literal["human", "agent"] = "human",
     outcome_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
@@ -922,7 +925,7 @@ def service_outcome(
         resolved_profile_key, profile = _resolve_outcome_profile(
             config=config,
             anchor_type="resolution",
-            relationship_type=resolution["relationship_type"],
+            relationship_type=resolution.relationship_type,
             workflow_name=group.source_workflow_name,
             surface_type=None,
             surface_name=None,
@@ -941,7 +944,7 @@ def service_outcome(
             group=group,
             trace_summaries=trace_summaries,
         )
-        relationship_type = resolution["relationship_type"]
+        relationship_type = resolution.relationship_type
         normalized_receipt_id = receipt.receipt_id
 
     outcome_remediation_hint: str | None = None

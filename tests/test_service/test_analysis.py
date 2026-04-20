@@ -15,7 +15,6 @@ from cruxible_core.config.schema import (
     OutcomeProfileSchema,
 )
 from cruxible_core.errors import ConfigError
-from cruxible_core.feedback.types import EdgeTarget
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.query.candidates import MatchRule
@@ -301,7 +300,7 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -311,7 +310,7 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -384,7 +383,7 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -394,7 +393,7 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -467,7 +466,7 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -477,7 +476,7 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -538,7 +537,7 @@ class TestAnalyzeOutcomes:
             populated_instance,
             receipt_id=query.receipt_id,
             outcome="incorrect",
-            source="system",
+            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -546,7 +545,7 @@ class TestAnalyzeOutcomes:
             populated_instance,
             receipt_id=query.receipt_id,
             outcome="incorrect",
-            source="system",
+            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -596,7 +595,7 @@ class TestAnalyzeOutcomes:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 outcome="incorrect",
-                source="system",
+                source="agent",
                 outcome_code="bad_result",
                 scope_hints={"surface": "parts_for_vehicle"},
             )
@@ -655,7 +654,7 @@ class TestAnalyzeOutcomes:
                 outcome="incorrect",
                 anchor_type="resolution",
                 anchor_id=resolution_id,
-                source="system",
+                source="agent",
                 outcome_code="false_positive",
                 scope_hints={"vendor": "Honda"},
             )
@@ -698,7 +697,7 @@ class TestAnalyzeOutcomes:
                 outcome="incorrect",
                 anchor_type="resolution",
                 anchor_id=resolution_id,
-                source="system",
+                source="agent",
                 outcome_code="needs_review",
                 scope_hints={"vendor": "Honda"},
             )
@@ -722,10 +721,10 @@ class TestLint:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="BP-1001",
-                to_entity_type="Part",
-                to_entity_id="BP-1002",
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Part",
+                to_id="BP-1002",
                 properties={"direction": "downgrade", "confidence": 0.95},
             )
         )
@@ -809,7 +808,7 @@ class TestLint:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -819,7 +818,7 @@ class TestLint:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="system",
+            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -829,7 +828,7 @@ class TestLint:
             populated_instance,
             receipt_id=query_one.receipt_id,
             outcome="incorrect",
-            source="system",
+            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -837,7 +836,7 @@ class TestLint:
             populated_instance,
             receipt_id=query_one.receipt_id,
             outcome="incorrect",
-            source="system",
+            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -855,11 +854,11 @@ class TestLint:
         assert len(result.outcome_reports[0].provider_fix_candidates) == 1
 
 
-def _feedback_target(part_id: str) -> EdgeTarget:
-    return EdgeTarget(
+def _feedback_target(part_id: str) -> RelationshipInstance:
+    return RelationshipInstance(
         from_type="Part",
         from_id=part_id,
-        relationship="fits",
+        relationship_type="fits",
         to_type="Vehicle",
         to_id="V-2024-CIVIC-EX",
     )

@@ -28,6 +28,7 @@ from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.store import GroupStore
+from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
 from cruxible_core.storage.sqlite import SQLiteStore
 from cruxible_core.workflow.compiler import (
@@ -39,7 +40,7 @@ from cruxible_core.workflow.compiler import (
 logger = logging.getLogger(__name__)
 
 
-class CruxibleInstance:
+class CruxibleInstance(InstanceProtocol):
     """Manages a .cruxible/ project instance."""
 
     INSTANCE_DIR = ".cruxible"
@@ -260,7 +261,7 @@ class CruxibleInstance:
         config = self.load_config()
         config_path = self.get_config_path()
         graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True)
-        graph_sha256 = f"sha256:{hashlib.sha256(graph_json.encode()).hexdigest()}"
+        graph_digest = f"sha256:{hashlib.sha256(graph_json.encode()).hexdigest()}"
 
         (snapshot_dir / "graph.json").write_text(graph_json)
         (snapshot_dir / "config.yaml").write_text(config_path.read_text())
@@ -278,7 +279,7 @@ class CruxibleInstance:
             label=label,
             config_digest=compute_lock_config_digest(config),
             lock_digest=lock_digest,
-            graph_sha256=graph_sha256,
+            graph_digest=graph_digest,
             parent_snapshot_id=self.metadata.get("head_snapshot_id"),
             origin_snapshot_id=self.metadata.get("origin_snapshot_id"),
         )

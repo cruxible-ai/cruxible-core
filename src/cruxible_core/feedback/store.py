@@ -8,7 +8,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.instance_protocol import FeedbackStoreProtocol
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS feedback (
@@ -70,7 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_receipt ON outcomes(receipt_id);
 """
 
 
-class FeedbackStore:
+class FeedbackStore(FeedbackStoreProtocol):
     """Stores and retrieves feedback and outcome records."""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
@@ -126,7 +128,7 @@ class FeedbackStore:
                 record.receipt_id,
                 record.action,
                 record.target.model_dump_json(),
-                record.target.relationship,
+                record.target.relationship_type,
                 record.target.from_type,
                 record.target.from_id,
                 record.target.to_type,
@@ -162,6 +164,7 @@ class FeedbackStore:
 
     def list_feedback(
         self,
+        *,
         receipt_id: str | None = None,
         relationship_type: str | None = None,
         action: str | None = None,
@@ -218,7 +221,7 @@ class FeedbackStore:
         ).fetchall()
         return [self._row_to_feedback(r) for r in rows]
 
-    def count_feedback(self, receipt_id: str | None = None) -> int:
+    def count_feedback(self, *, receipt_id: str | None = None) -> int:
         """Count feedback records with optional receipt filter."""
         if receipt_id is None:
             row = self._conn.execute("SELECT COUNT(*) AS count FROM feedback").fetchone()
@@ -235,7 +238,7 @@ class FeedbackStore:
             feedback_id=row["feedback_id"],
             receipt_id=row["receipt_id"],
             action=row["action"],
-            target=EdgeTarget.model_validate_json(row["target_json"]),
+            target=RelationshipInstance.model_validate_json(row["target_json"]),
             reason=row["reason"],
             reason_code=row["reason_code"],
             reason_remediation_hint=row["reason_remediation_hint"],
@@ -391,6 +394,7 @@ class FeedbackStore:
 
     def list_outcomes(
         self,
+        *,
         receipt_id: str | None = None,
         anchor_type: str | None = None,
         anchor_id: str | None = None,
@@ -430,7 +434,7 @@ class FeedbackStore:
         rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [self._row_to_outcome(r) for r in rows]
 
-    def count_outcomes(self, receipt_id: str | None = None) -> int:
+    def count_outcomes(self, *, receipt_id: str | None = None) -> int:
         """Count outcome records with optional receipt filter."""
         if receipt_id is None:
             row = self._conn.execute("SELECT COUNT(*) AS count FROM outcomes").fetchone()

@@ -247,10 +247,10 @@ class TestApplyRelationship:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={
                     "confidence": 0.5,
                     "_provenance": make_provenance("ingest", "fitments"),

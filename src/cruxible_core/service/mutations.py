@@ -13,6 +13,7 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.ingest import ingest_file, ingest_from_mapping, load_data_from_string
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.service._helpers import (
@@ -25,15 +26,13 @@ from cruxible_core.service._ownership import check_type_ownership
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
-    EntityUpsertInput,
     IngestResult,
-    RelationshipUpsertInput,
 )
 
 
 def service_add_entities(
     instance: InstanceProtocol,
-    entities: Sequence[EntityUpsertInput],
+    entities: Sequence[EntityInstance],
     *,
     _create_receipt: bool = True,
 ) -> AddEntityResult:
@@ -122,7 +121,7 @@ def service_add_entities(
 
 def service_add_relationships(
     instance: InstanceProtocol,
-    relationships: Sequence[RelationshipUpsertInput],
+    relationships: Sequence[RelationshipInstance],
     source: str,
     source_ref: str,
     *,
@@ -136,7 +135,7 @@ def service_add_relationships(
     """
     check_type_ownership(
         instance,
-        relationship_types=[relationship.relationship for relationship in relationships],
+        relationship_types=[relationship.relationship_type for relationship in relationships],
     )
     config = instance.load_config()
     graph = instance.load_graph()
@@ -159,13 +158,13 @@ def service_add_relationships(
                 edge.from_id,
                 edge.to_type,
                 edge.to_id,
-                edge.relationship,
+                edge.relationship_type,
             )
             if key in batch_seen:
                 errors.append(
                     f"Edge {i}: duplicate in batch "
                     f"{edge.from_type}:{edge.from_id} "
-                    f"-[{edge.relationship}]-> "
+                    f"-[{edge.relationship_type}]-> "
                     f"{edge.to_type}:{edge.to_id}"
                 )
                 if builder:
@@ -180,7 +179,7 @@ def service_add_relationships(
                     graph,
                     edge.from_type,
                     edge.from_id,
-                    edge.relationship,
+                    edge.relationship_type,
                     edge.to_type,
                     edge.to_id,
                     edge.properties,
@@ -199,7 +198,7 @@ def service_add_relationships(
                     detail={
                         "from": f"{edge.from_type}:{edge.from_id}",
                         "to": f"{edge.to_type}:{edge.to_id}",
-                        "relationship": edge.relationship,
+                        "relationship": edge.relationship_type,
                     },
                 )
 
@@ -219,7 +218,7 @@ def service_add_relationships(
                     edge.from_id,
                     edge.to_type,
                     edge.to_id,
-                    edge.relationship,
+                    edge.relationship_type,
                     is_update=validated.is_update,
                 )
             if validated.is_update:

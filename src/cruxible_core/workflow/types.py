@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from cruxible_core.config.schema import (
     ApplyEntitiesSpec,
@@ -18,10 +18,24 @@ from cruxible_core.config.schema import (
     MakeRelationshipsSpec,
     MapSignalsSpec,
     ProposeRelationshipGroupSpec,
+    StepKind,
 )
-from cruxible_core.group.types import CandidateSignal
-from cruxible_core.provider.types import ExecutionTrace
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.types import CandidateMember, SignalValue
+from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
+
+
+class _DuplicateTrackedCollection(BaseModel):
+    """Mixin for workflow artifacts that report input-duplicate diagnostics.
+
+    Tracks how many inputs were deduped and how many were dropped due to
+    conflicting duplicates, plus a bounded sample for debugging.
+    """
+
+    duplicate_input_count: int = 0
+    conflicting_duplicate_count: int = 0
+    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class LockedArtifact(BaseModel):
@@ -39,7 +53,7 @@ class LockedProvider(BaseModel):
     version: str
     ref: str
     provider_entrypoint_sha256: str | None = None
-    runtime: str
+    runtime: ProviderRuntime
     deterministic: bool
     side_effects: bool
     artifact: str | None = None
@@ -61,20 +75,7 @@ class CompiledPlanStep(BaseModel):
     """Single compiled workflow step."""
 
     step_id: str
-    kind: Literal[
-        "query",
-        "provider",
-        "assert",
-        "list_entities",
-        "list_relationships",
-        "make_candidates",
-        "map_signals",
-        "propose_relationship_group",
-        "make_entities",
-        "make_relationships",
-        "apply_entities",
-        "apply_relationships",
-    ]
+    kind: StepKind
     canonical: bool = False
     as_name: str | None = None
     query_name: str | None = None
@@ -143,29 +144,33 @@ class WorkflowTestCaseResult(BaseModel):
     error: str | None = None
 
 
-class CandidateSetMember(BaseModel):
-    """Candidate relationship endpoints produced inside a workflow."""
-
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    properties: dict[str, Any] = Field(default_factory=dict)
-
-
 class CandidateSet(BaseModel):
     """Internal workflow artifact containing candidate relationship pairs."""
 
     relationship_type: str
-    candidates: list[CandidateSetMember] = Field(default_factory=list)
+    candidates: list[RelationshipInstance] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _enforce_member_type(self) -> CandidateSet:
+        for candidate in self.candidates:
+            if candidate.relationship_type != self.relationship_type:
+                raise ValueError(
+                    f"CandidateSet relationship_type '{self.relationship_type}' does not "
+                    f"match candidate {candidate.from_id}->{candidate.to_id} with "
+                    f"relationship_type '{candidate.relationship_type}'"
+                )
+        return self
 
 
 class SignalBatchSignal(BaseModel):
-    """Governed signal produced for a specific candidate pair."""
+    """Governed signal produced for a specific candidate pair.
+
+    Integration context is carried by the containing ``SignalBatch``.
+    """
 
     from_id: str
     to_id: str
-    signal: Literal["support", "unsure", "contradict"]
+    signal: SignalValue
     evidence: str = ""
 
 
@@ -176,86 +181,68 @@ class SignalBatch(BaseModel):
     signals: list[SignalBatchSignal] = Field(default_factory=list)
 
 
-class RelationshipGroupProposalMember(BaseModel):
-    """Candidate group member assembled by built-in workflow steps."""
-
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    signals: list[CandidateSignal] = Field(default_factory=list)
-    properties: dict[str, Any] = Field(default_factory=dict)
-
-
 class RelationshipGroupProposalArtifact(BaseModel):
     """Internal workflow artifact bridged into a governed relationship proposal."""
 
     relationship_type: str
-    members: list[RelationshipGroupProposalMember]
+    members: list[CandidateMember]
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
     suggested_priority: str | None = None
-    proposed_by: Literal["human", "ai_review"] = "ai_review"
+    proposed_by: Literal["human", "agent"] = "agent"
 
 
-class EntitySetMember(BaseModel):
-    """Entity payload assembled inside a workflow."""
-
-    entity_id: str
-    properties: dict[str, Any] = Field(default_factory=dict)
-
-
-class EntitySet(BaseModel):
+class EntitySet(_DuplicateTrackedCollection):
     """Internal workflow artifact containing entity upserts."""
 
     entity_type: str
-    entities: list[EntitySetMember] = Field(default_factory=list)
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
+    entities: list[EntityInstance] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _enforce_member_type(self) -> EntitySet:
+        for entity in self.entities:
+            if entity.entity_type != self.entity_type:
+                raise ValueError(
+                    f"EntitySet entity_type '{self.entity_type}' does not match "
+                    f"entity '{entity.entity_id}' with entity_type "
+                    f"'{entity.entity_type}'"
+                )
+        return self
 
 
-class RelationshipSetMember(BaseModel):
-    """Relationship payload assembled inside a workflow."""
-
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    properties: dict[str, Any] = Field(default_factory=dict)
-
-
-class RelationshipSet(BaseModel):
+class RelationshipSet(_DuplicateTrackedCollection):
     """Internal workflow artifact containing relationship upserts."""
 
     relationship_type: str
-    relationships: list[RelationshipSetMember] = Field(default_factory=list)
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
+    relationships: list[RelationshipInstance] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _enforce_member_type(self) -> RelationshipSet:
+        for rel in self.relationships:
+            if rel.relationship_type != self.relationship_type:
+                raise ValueError(
+                    f"RelationshipSet relationship_type '{self.relationship_type}' "
+                    f"does not match relationship {rel.from_id}->{rel.to_id} with "
+                    f"relationship_type '{rel.relationship_type}'"
+                )
+        return self
 
 
-class ApplyEntitiesPreview(BaseModel):
+class ApplyEntitiesPreview(_DuplicateTrackedCollection):
     """Preview summary for applying an entity set."""
 
     entity_type: str
     create_count: int = 0
     update_count: int = 0
     noop_count: int = 0
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ApplyRelationshipsPreview(BaseModel):
+class ApplyRelationshipsPreview(_DuplicateTrackedCollection):
     """Preview summary for applying a relationship set."""
 
     relationship_type: str
     create_count: int = 0
     update_count: int = 0
     noop_count: int = 0
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)

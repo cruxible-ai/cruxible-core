@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -17,12 +18,26 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.signature import compute_group_signature
-from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.group.types import CandidateMember, CandidateSignal, GroupResolution
 from cruxible_core.service import (
     ProposeGroupResult,
     derive_review_priority,
     service_propose_group,
 )
+
+
+def _fake_resolution(
+    trust_status: Literal["trusted", "watch", "invalidated"] = "watch",
+) -> GroupResolution:
+    """Build a minimal resolution for derive_review_priority tests."""
+    return GroupResolution(
+        resolution_id="RES-test",
+        relationship_type="fits",
+        group_signature="sig",
+        action="approve",
+        trust_status=trust_status,
+        resolved_at=datetime.now(timezone.utc),
+    )
 
 # ---------------------------------------------------------------------------
 # Config YAML with matching section for integration testing
@@ -621,7 +636,7 @@ class TestAutoResolve:
         result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
         assert result.status == "auto_resolved"
         assert result.prior_resolution is not None
-        assert result.prior_resolution["trust_status"] == "trusted"
+        assert result.prior_resolution.trust_status == "trusted"
 
     def test_workflow_policy_require_review_blocks_auto_resolve(
         self, matching_instance: CruxibleInstance
@@ -970,7 +985,7 @@ class TestDeriveReviewPriority:
             integrations={"check": IntegrationGuardrailSchema(role="required")}
         )
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
-        prior = {"trust_status": "invalidated"}
+        prior = _fake_resolution("invalidated")
         assert derive_review_priority(members, matching, prior) == "critical"
 
     def test_always_review_on_unsure_review(self) -> None:
@@ -983,7 +998,7 @@ class TestDeriveReviewPriority:
             }
         )
         members = [_member(signals=[CandidateSignal(integration="check", signal="unsure")])]
-        prior = {"trust_status": "trusted"}
+        prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_blocking_review(self) -> None:
@@ -991,13 +1006,13 @@ class TestDeriveReviewPriority:
             integrations={"blocker": IntegrationGuardrailSchema(role="blocking")}
         )
         members = [_member(signals=[CandidateSignal(integration="blocker", signal="unsure")])]
-        prior = {"trust_status": "trusted"}
+        prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_required_review(self) -> None:
         matching = MatchingSchema(integrations={"req": IntegrationGuardrailSchema(role="required")})
         members = [_member(signals=[CandidateSignal(integration="req", signal="unsure")])]
-        prior = {"trust_status": "trusted"}
+        prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_no_prior_review(self) -> None:
@@ -1012,7 +1027,7 @@ class TestDeriveReviewPriority:
             integrations={"check": IntegrationGuardrailSchema(role="required")}
         )
         members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
-        prior = {"trust_status": "watch"}
+        prior = _fake_resolution("watch")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_all_support_trusted_normal(self) -> None:
@@ -1030,7 +1045,7 @@ class TestDeriveReviewPriority:
                 ]
             )
         ]
-        prior = {"trust_status": "trusted"}
+        prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "normal"
 
     def test_advisory_ignored_for_priority(self) -> None:
@@ -1049,7 +1064,7 @@ class TestDeriveReviewPriority:
                 ]
             )
         ]
-        prior = {"trust_status": "trusted"}
+        prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "normal"
 
     def test_no_matching_no_prior(self) -> None:
@@ -1058,7 +1073,7 @@ class TestDeriveReviewPriority:
 
     def test_no_matching_with_prior(self) -> None:
         members = [_member()]
-        assert derive_review_priority(members, None, {"trust_status": "trusted"}) == "normal"
+        assert derive_review_priority(members, None, _fake_resolution("trusted")) == "normal"
 
     def test_critical_beats_review(self) -> None:
         """When both critical and review conditions exist, critical wins."""

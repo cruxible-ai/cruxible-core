@@ -2,30 +2,67 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from cruxible_core.graph.types import RelationshipInstance
+
+SignalValue = Literal["support", "contradict", "unsure"]
+"""Tri-state signal value produced by an integration about a candidate."""
+
+ResolutionAction = Literal["approve", "reject"]
+"""Action taken on a candidate group: approve (apply) or reject (discard)."""
+
+TrustStatus = Literal["trusted", "watch", "invalidated"]
+"""Trust posture for a persisted resolution, tuned by outcome analysis."""
+
+GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
+"""Lifecycle status of a candidate group."""
+
+ReviewPriority = Literal["critical", "review", "normal"]
+"""Review priority bucket for a candidate group."""
+
 
 class CandidateSignal(BaseModel):
-    """Tri-state signal from an integration. Replaces vibed confidence scores."""
+    """Tri-state signal from an integration, attached to a candidate member.
+
+    Pair identity is implicit in the containing member.
+    """
 
     integration: str
-    signal: Literal["support", "contradict", "unsure"]
+    signal: SignalValue
     evidence: str = ""
 
 
-class CandidateMember(BaseModel):
-    """A candidate edge within a group proposal."""
+class CandidateMember(RelationshipInstance):
+    """A candidate edge within a group proposal.
 
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    relationship_type: str
+    Extends ``RelationshipInstance`` with integration signals. ``edge_key``
+    is inherited but stays ``None`` for candidates since the edge does not
+    yet exist in the graph.
+    """
+
     signals: list[CandidateSignal] = Field(default_factory=list)
-    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class GroupResolution(BaseModel):
+    """Persisted resolution of a candidate group (approve or reject)."""
+
+    resolution_id: str  # RES-{uuid[:12]}
+    relationship_type: str
+    group_signature: str
+    action: ResolutionAction
+    rationale: str = ""
+    thesis_text: str = ""
+    thesis_facts: dict[str, Any] = Field(default_factory=dict)
+    analysis_state: dict[str, Any] = Field(default_factory=dict)
+    trust_status: TrustStatus = "watch"
+    trust_reason: str = ""
+    confirmed: bool = False
+    resolved_by: Literal["human", "agent"] = "human"
+    resolved_at: datetime
 
 
 class CandidateGroup(BaseModel):
@@ -34,19 +71,18 @@ class CandidateGroup(BaseModel):
     group_id: str  # GRP-{uuid[:12]}
     relationship_type: str
     signature: str
-    status: Literal["pending_review", "auto_resolved", "applying", "resolved"] = "pending_review"
+    status: GroupStatus = "pending_review"
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
-    proposed_by: Literal["human", "ai_review"] = "ai_review"
+    proposed_by: Literal["human", "agent"] = "agent"
     member_count: int = 0
-    review_priority: Literal["critical", "review", "normal"] = "normal"
+    review_priority: ReviewPriority = "normal"
     suggested_priority: str | None = None
     source_workflow_name: str | None = None
     source_workflow_receipt_id: str | None = None
     source_trace_ids: list[str] = Field(default_factory=list)
     source_step_ids: list[str] = Field(default_factory=list)
     resolution_id: str | None = None
-    resolution: dict[str, Any] | None = None  # transient — populated on load
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

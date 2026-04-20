@@ -194,7 +194,7 @@ def service_get_relationship(
 ) -> RelationshipInstance | None:
     """Look up a specific relationship by its endpoints and type.
 
-    Raises EdgeAmbiguityError if multiple edges match and no edge_key given.
+    Raises RelationshipAmbiguityError if multiple edges match and no edge_key given.
     """
     graph = instance.load_graph()
     return read_get_relationship(

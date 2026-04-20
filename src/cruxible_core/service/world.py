@@ -25,7 +25,11 @@ from cruxible_core.service.types import (
     WorldPullPreviewResult,
     WorldStatusResult,
 )
-from cruxible_core.snapshot.types import PublishedWorldManifest, UpstreamMetadata
+from cruxible_core.snapshot.types import (
+    PublishedWorldManifest,
+    UpstreamMetadata,
+    WorldCompatibility,
+)
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import PulledReleaseBundle
 from cruxible_core.world_kits import materialize_world_kit
@@ -38,7 +42,7 @@ def service_publish_world(
     transport_ref: str,
     world_id: str,
     release_id: str,
-    compatibility: str,
+    compatibility: WorldCompatibility,
 ) -> WorldPublishResult:
     """Publish a root world-model instance as an immutable release bundle."""
     if instance.get_upstream_metadata() is not None:
@@ -262,7 +266,7 @@ def build_release_bundle(
     snapshot_id: str,
     world_id: str,
     release_id: str,
-    compatibility: str,
+    compatibility: WorldCompatibility,
     parent_release_id: str | None,
 ) -> Path:
     snapshot = instance.get_snapshot(snapshot_id)

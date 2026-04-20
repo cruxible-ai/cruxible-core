@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from cruxible_core.instance_protocol import ReceiptStoreProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 
@@ -53,7 +54,7 @@ ON execution_traces(provider_name);
 """
 
 
-class SQLiteStore:
+class SQLiteStore(ReceiptStoreProtocol):
     """Stores and retrieves receipts and execution traces from SQLite."""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
@@ -160,6 +161,7 @@ class SQLiteStore:
 
     def list_receipts(
         self,
+        *,
         query_name: str | None = None,
         operation_type: str | None = None,
         limit: int = 100,
@@ -199,6 +201,7 @@ class SQLiteStore:
 
     def list_traces(
         self,
+        *,
         workflow_name: str | None = None,
         provider_name: str | None = None,
         limit: int = 100,
@@ -237,6 +240,7 @@ class SQLiteStore:
 
     def count_receipts(
         self,
+        *,
         query_name: str | None = None,
         operation_type: str | None = None,
     ) -> int:

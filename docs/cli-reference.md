@@ -136,7 +136,7 @@ cruxible feedback --receipt <id> --action <action> \
   --relationship <rel> \
   --to-type <type> --to-id <id> \
   [--edge-key <int>] [--reason <text>] [--corrections <json>] \
-  [--source <human|ai_review|system>]
+  [--source <human|agent>]
 ```
 
 | Option | Required | Description |
@@ -151,7 +151,7 @@ cruxible feedback --receipt <id> --action <action> \
 | `--edge-key` | no | Edge key for multi-edge disambiguation |
 | `--reason` | no | Reason for feedback |
 | `--corrections` | no | JSON object of edge property corrections (for `correct`) |
-| `--source` | no | `human` (default), `ai_review`, or `system` |
+| `--source` | no | `human` (default) or `agent` |
 
 **Example:**
 
@@ -410,7 +410,7 @@ cruxible export edges -o <path> [--relationship <type>] [--exclude-rejected]
 |--------|----------|-------------|
 | `--output` / `-o` | **yes** | Output file path |
 | `--relationship` | no | Filter by relationship type |
-| `--exclude-rejected` | no | Omit edges with `human_rejected` or `ai_rejected` review status |
+| `--exclude-rejected` | no | Omit edges with `human_rejected` or `agent_rejected` review status |
 
 **Columns:** `from_type`, `from_id`, `to_type`, `to_id`, `relationship_type`, `edge_key`, `properties_json`
 

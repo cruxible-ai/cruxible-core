@@ -31,7 +31,7 @@ Hierarchy:
 from __future__ import annotations
 
 import json as _json
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -234,17 +234,21 @@ FeedbackPathRef = Annotated[str, Field(pattern=_FEEDBACK_PATH_PATTERN)]
 OutcomePathRef = Annotated[str, Field(pattern=_OUTCOME_PATH_PATTERN)]
 
 
+FeedbackRemediationHint = Literal[
+    "constraint",
+    "decision_policy",
+    "quality_check",
+    "provider_fix",
+    "unknown",
+]
+"""Bounded remediation lane assigned to a feedback reason code."""
+
+
 class FeedbackReasonCodeSchema(BaseModel):
     """Structured feedback code used by agents and analysis."""
 
     description: str
-    remediation_hint: Literal[
-        "constraint",
-        "decision_policy",
-        "quality_check",
-        "provider_fix",
-        "unknown",
-    ] = "unknown"
+    remediation_hint: FeedbackRemediationHint = "unknown"
     required_scope_keys: list[str] = Field(default_factory=list)
 
 
@@ -275,30 +279,46 @@ class FeedbackProfileSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+SurfaceType = Literal["query", "workflow", "operation"]
+"""Surface a decision is scoped to: a named query, a workflow, or a graph operation."""
+
+
+OutcomeAnchorType = Literal["resolution", "receipt"]
+"""What an outcome is anchored to: a group resolution or a receipt."""
+
+
+OutcomeLabel = Literal["correct", "incorrect", "partial", "unknown"]
+"""Coarse outcome label captured on every OutcomeRecord."""
+
+
+OutcomeRemediationHint = Literal[
+    "trust_adjustment",
+    "require_review",
+    "decision_policy",
+    "provider_fix",
+    "workflow_fix",
+    "graph_fix",
+    "unknown",
+]
+"""Bounded remediation lane assigned to an outcome code."""
+
+
 class OutcomeCodeSchema(BaseModel):
     """Structured outcome code used by agents and outcome analysis."""
 
     description: str
-    remediation_hint: Literal[
-        "trust_adjustment",
-        "require_review",
-        "decision_policy",
-        "provider_fix",
-        "workflow_fix",
-        "graph_fix",
-        "unknown",
-    ] = "unknown"
+    remediation_hint: OutcomeRemediationHint = "unknown"
     required_scope_keys: list[str] = Field(default_factory=list)
 
 
 class OutcomeProfileSchema(BaseModel):
     """Anchor-scoped outcome vocabulary and grouping metadata."""
 
-    anchor_type: Literal["resolution", "receipt"]
+    anchor_type: OutcomeAnchorType
     version: int = 1
     relationship_type: str | None = None
     workflow_name: str | None = None
-    surface_type: Literal["query", "workflow", "operation"] | None = None
+    surface_type: SurfaceType | None = None
     surface_name: str | None = None
     outcome_codes: dict[str, OutcomeCodeSchema] = Field(default_factory=dict)
     scope_keys: dict[str, OutcomePathRef] = Field(default_factory=dict)
@@ -601,7 +621,7 @@ class ProviderSchema(BaseModel):
     version: str
     deterministic: bool = True
     artifact: str | None = None
-    runtime: str = "python"
+    runtime: Literal["python", "http_json", "command"] = "python"
     side_effects: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -694,7 +714,7 @@ class ProposeRelationshipGroupSpec(BaseModel):
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     suggested_priority: Any | None = None
-    proposed_by: Literal["human", "ai_review"] = "ai_review"
+    proposed_by: Literal["human", "agent"] = "agent"
 
     model_config = {"extra": "forbid"}
 
@@ -758,6 +778,23 @@ class ListRelationshipsSpec(BaseModel):
     limit: Any | None = None
 
     model_config = {"extra": "forbid"}
+
+
+StepKind = Literal[
+    "query",
+    "provider",
+    "assert",
+    "list_entities",
+    "list_relationships",
+    "make_candidates",
+    "map_signals",
+    "propose_relationship_group",
+    "make_entities",
+    "make_relationships",
+    "apply_entities",
+    "apply_relationships",
+]
+"""The 12 workflow step kinds, grouped into Read/Compute/Build/Write phases."""
 
 
 class WorkflowStepSchema(BaseModel):
@@ -836,14 +873,10 @@ class WorkflowStepSchema(BaseModel):
             name for name, candidate in step_candidates.items() if candidate is not None
         ]
         if len(active_step_kinds) != 1:
-            msg = (
-                "Workflow step must define exactly one of 'query', 'provider', 'assert', "
-                "'list_entities', 'list_relationships', 'make_candidates', "
-                "'map_signals', 'propose_relationship_group', "
-                "'make_entities', 'make_relationships', 'apply_entities', "
-                "or 'apply_relationships'"
+            valid = ", ".join(f"'{k}'" for k in get_args(StepKind))
+            raise ValueError(
+                f"Workflow step must define exactly one of {valid}"
             )
-            raise ValueError(msg)
 
         step_kind = active_step_kinds[0]
         step_policies = {

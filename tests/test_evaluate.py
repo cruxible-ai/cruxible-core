@@ -102,10 +102,10 @@ class TestOrphanEntities:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={},
             )
         )
@@ -124,10 +124,10 @@ class TestCoverageGaps:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -145,10 +145,10 @@ class TestCoverageGaps:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={},
             )
         )
@@ -174,10 +174,10 @@ class TestCoverageGaps:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -207,10 +207,10 @@ class TestConstraintViolations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -239,10 +239,10 @@ class TestConstraintViolations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -281,10 +281,10 @@ class TestConstraintViolations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -324,10 +324,10 @@ class TestConstraintViolations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -348,20 +348,20 @@ class TestCandidateOpportunities:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P2",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P2",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={},
             )
         )
@@ -379,20 +379,20 @@ class TestCandidateOpportunities:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P2",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P2",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={},
             )
         )
@@ -400,10 +400,10 @@ class TestCandidateOpportunities:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -419,10 +419,10 @@ class TestLowConfidenceEdges:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={"confidence": 0.3},
             )
         )
@@ -437,10 +437,10 @@ class TestLowConfidenceEdges:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={"review_status": "pending_review"},
             )
         )
@@ -455,10 +455,10 @@ class TestLowConfidenceEdges:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={"confidence": 0.9},
             )
         )
@@ -473,10 +473,10 @@ class TestLowConfidenceEdges:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={"confidence": "high"},
             )
         )
@@ -507,10 +507,10 @@ class TestReportStructure:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P2",
-                to_entity_type="Part",
-                to_entity_id="P3",
+                from_type="Part",
+                from_id="P2",
+                to_type="Part",
+                to_id="P3",
                 properties={"confidence": 0.1},
             )
         )
@@ -570,10 +570,10 @@ class TestUnreviewedCoMembers:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
@@ -581,10 +581,10 @@ class TestUnreviewedCoMembers:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -592,10 +592,10 @@ class TestUnreviewedCoMembers:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O2",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O2",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -623,40 +623,40 @@ class TestUnreviewedCoMembers:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S2",
-                to_entity_type="Officer",
-                to_entity_id="O2",
+                from_type="SDN",
+                from_id="S2",
+                to_type="Officer",
+                to_id="O2",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O2",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O2",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -725,10 +725,10 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="affects",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={"affected_versions": [{}]},
             )
         )
@@ -827,10 +827,10 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Part",
-                to_entity_id="P2",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
                 properties={},
             )
         )
@@ -851,10 +851,10 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
@@ -863,20 +863,20 @@ class TestQualityChecks:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="works_at",
-                    from_entity_type="Officer",
-                    from_entity_id="O1",
-                    to_entity_type="Company",
-                    to_entity_id=c_id,
+                    from_type="Officer",
+                    from_id="O1",
+                    to_type="Company",
+                    to_id=c_id,
                     properties={},
                 )
             )
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="works_at",
-                    from_entity_type="Officer",
-                    from_entity_id="O2",
-                    to_entity_type="Company",
-                    to_entity_id=c_id,
+                    from_type="Officer",
+                    from_id="O2",
+                    to_type="Company",
+                    to_id=c_id,
                     properties={},
                 )
             )
@@ -897,20 +897,20 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -921,10 +921,10 @@ class TestQualityChecks:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="works_at",
-                    from_entity_type="Officer",
-                    from_entity_id=oid,
-                    to_entity_type="Company",
-                    to_entity_id="C1",
+                    from_type="Officer",
+                    from_id=oid,
+                    to_type="Company",
+                    to_id="C1",
                     properties={},
                 )
             )
@@ -945,30 +945,30 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O2",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O2",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -990,30 +990,30 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={"review_status": "human_rejected"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O2",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O2",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -1034,30 +1034,30 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={"review_status": "human_rejected"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O2",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O2",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -1078,30 +1078,30 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O2",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O2",
+                to_type="Company",
+                to_id="C1",
                 properties={"review_status": "human_rejected"},
             )
         )
@@ -1123,20 +1123,20 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -1148,10 +1148,10 @@ class TestQualityChecks:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="works_at",
-                    from_entity_type="Officer",
-                    from_entity_id=oid,
-                    to_entity_type="Company",
-                    to_entity_id="C1",
+                    from_type="Officer",
+                    from_id=oid,
+                    to_type="Company",
+                    to_id="C1",
                     properties={},
                 )
             )
@@ -1173,10 +1173,10 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="xref",
-                from_entity_type="SDN",
-                from_entity_id="S1",
-                to_entity_type="Officer",
-                to_entity_id="O1",
+                from_type="SDN",
+                from_id="S1",
+                to_type="Officer",
+                to_id="O1",
                 properties={},
             )
         )
@@ -1184,10 +1184,10 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Officer",
-                from_entity_id="O1",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Officer",
+                from_id="O1",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )
@@ -1195,10 +1195,10 @@ class TestQualityChecks:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="works_at",
-                from_entity_type="Company",
-                from_entity_id="C2",
-                to_entity_type="Company",
-                to_entity_id="C1",
+                from_type="Company",
+                from_id="C2",
+                to_type="Company",
+                to_id="C1",
                 properties={},
             )
         )

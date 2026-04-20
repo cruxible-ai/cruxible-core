@@ -466,7 +466,7 @@ class TestFeedback:
             "feedback",
         )
 
-    def test_feedback_ai_review_source(
+    def test_feedback_agent_source(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
@@ -491,7 +491,7 @@ class TestFeedback:
                 "--action",
                 "approve",
                 "--source",
-                "ai_review",
+                "agent",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -801,10 +801,10 @@ class TestGetRelationship:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1001",
-                to_entity_type="Vehicle",
-                to_entity_id="V-2024-CIVIC-EX",
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC-EX",
                 properties={"verified": False, "source": "duplicate"},
             )
         )
@@ -1272,10 +1272,10 @@ class TestExportEdges:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1002",
-                to_entity_type="Vehicle",
-                to_entity_id="V-2024-ACCORD-SPORT",
+                from_type="Part",
+                from_id="BP-1002",
+                to_type="Vehicle",
+                to_id="V-2024-ACCORD-SPORT",
                 properties={"verified": True, "_provenance": prov},
             )
         )
@@ -1351,7 +1351,7 @@ class TestExportEdges:
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        """--exclude-rejected also omits ai_rejected edges."""
+        """--exclude-rejected also omits agent_rejected edges."""
         graph = populated_instance.load_graph()
         graph.update_edge_properties(
             "Part",
@@ -1359,7 +1359,7 @@ class TestExportEdges:
             "Vehicle",
             "V-2024-CIVIC-EX",
             "fits",
-            {"review_status": "ai_rejected"},
+            {"review_status": "agent_rejected"},
         )
         populated_instance.save_graph(graph)
         populated_instance.invalidate_graph_cache()
