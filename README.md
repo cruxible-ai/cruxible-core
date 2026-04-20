@@ -213,6 +213,27 @@ For agent setups, prefer:
 - `CRUXIBLE_REQUIRE_SERVER=1` in the agent environment
 - daemon state outside the agent workspace
 
+### Prevent Direct State Edits
+
+The biggest local risk is not just bugs in workflows. It is giving an agent
+direct filesystem access to the daemon state and letting it bypass the control
+plane entirely.
+
+For hardened local usage:
+
+- keep `CRUXIBLE_SERVER_STATE_DIR` outside the repo and outside the agent's
+  writable workspace
+- prefer `cruxible-client` in the agent environment so the agent talks to the
+  daemon over MCP/API instead of importing local runtime code
+- in Codex, use `workspace-write` or stricter sandboxing and do **not** grant
+  the daemon state path via `--add-dir`
+- in Claude Code / Cursor, deny direct access to the daemon state path in your
+  local tool settings and expose only the MCP/client surface
+
+This is a practical local hardening layer, not the same thing as full runtime
+isolation. For stronger separation, run the daemon in a separate environment
+and let the agent talk to it only through `cruxible-client` or MCP.
+
 For a concrete hardened setup, see [Isolated Deployment](docs/isolated-deployment.md).
 
 ### MCP Setup
