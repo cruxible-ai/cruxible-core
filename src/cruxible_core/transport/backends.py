@@ -8,7 +8,7 @@ from pathlib import Path
 
 from cruxible_core.errors import ConfigError, TransportError
 from cruxible_core.snapshot.types import PublishedWorldManifest, WorldSnapshot
-from cruxible_core.transport.types import PulledReleaseBundle
+from cruxible_core.transport.types import PulledReleaseBundle, ReleaseTransport
 
 
 def _load_bundle(root_dir: Path) -> PulledReleaseBundle:
@@ -80,7 +80,7 @@ class OciReleaseTransport:
         return _load_bundle(dest_dir)
 
 
-def resolve_transport(ref: str) -> tuple[FileReleaseTransport | OciReleaseTransport, str]:
+def resolve_transport(ref: str) -> tuple[ReleaseTransport, str]:
     """Resolve a transport implementation from a scheme-qualified ref."""
     from cruxible_core.transport.types import parse_transport_ref
 
