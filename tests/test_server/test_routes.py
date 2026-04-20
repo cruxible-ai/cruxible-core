@@ -125,6 +125,24 @@ def test_health_endpoint_returns_ok(app_client: TestClient):
     assert response.json() == {"status": "ok"}
 
 
+def test_server_info_endpoint_returns_live_metadata(
+    app_client: TestClient,
+    server_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "1")
+    _init_instance(app_client, server_project)
+
+    response = app_client.get("/api/v1/server/info")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_mode"] is True
+    assert payload["version"]
+    assert payload["state_dir"] == str(get_server_state_dir())
+    assert payload["instance_count"] == 1
+
+
 def test_daemon_auth_defaults_to_disabled_for_local_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -245,6 +263,52 @@ def test_stats_and_inspect_routes_return_expected_shapes(
     assert inspect_payload["found"] is True
     assert inspect_payload["total_neighbors"] == 2
     assert inspect_payload["neighbors"][0]["relationship_type"] == "fits"
+
+
+def test_query_discovery_routes_return_expected_shapes(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    listed = app_client.get(f"/api/v1/{instance_id}/queries")
+    assert listed.status_code == 200
+    listed_payload = listed.json()
+    assert listed_payload["queries"]
+    assert listed_payload["queries"][0]["name"]
+
+    described = app_client.get(f"/api/v1/{instance_id}/queries/parts_for_vehicle")
+    assert described.status_code == 200
+    described_payload = described.json()
+    assert described_payload["name"] == "parts_for_vehicle"
+    assert described_payload["entry_point"] == "Vehicle"
+    assert described_payload["required_params"] == ["vehicle_id"]
+
+
+def test_workflow_run_route_rejects_proposal_workflows(
+    app_client: TestClient,
+    workflow_server_project: Path,
+) -> None:
+    instance_id = _init_instance(
+        app_client,
+        workflow_server_project,
+        config_yaml=(workflow_server_project / "config.yaml").read_text(),
+    )
+    lock_response = app_client.post(f"/api/v1/{instance_id}/workflows/lock", json={})
+    assert lock_response.status_code == 200
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/workflows/run",
+        json={
+            "workflow_name": "propose_campaign_recommendations",
+            "input": {"campaign_id": "CMP-1"},
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert "produces a governed proposal" in payload["message"]
+    assert "cruxible propose --workflow propose_campaign_recommendations" in payload["message"]
 
 
 def test_reload_config_route_updates_instance_path(
@@ -890,9 +954,19 @@ def test_workflow_routes_lock_plan_run_and_test(
             "input": {"campaign_id": "CMP-1"},
         },
     )
-    assert run.status_code == 200
-    assert run.json()["receipt_id"].startswith("RCP-")
-    assert run.json()["output"]["members"]
+    assert run.status_code == 400
+    assert "produces a governed proposal" in run.json()["message"]
+
+    propose = app_client.post(
+        f"/api/v1/{instance_id}/workflows/propose",
+        json={
+            "workflow_name": "propose_campaign_recommendations",
+            "input": {"campaign_id": "CMP-1"},
+        },
+    )
+    assert propose.status_code == 200
+    assert propose.json()["receipt_id"].startswith("RCP-")
+    assert propose.json()["output"]["members"]
 
     test = app_client.post(f"/api/v1/{instance_id}/workflows/test", json={"name": None})
     assert test.status_code == 200

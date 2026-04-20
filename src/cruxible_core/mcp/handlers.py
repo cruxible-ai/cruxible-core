@@ -136,6 +136,14 @@ def handle_validate(
     )
 
 
+def handle_server_info() -> contracts.ServerInfoResult:
+    """Return live daemon metadata such as agent mode and state dir."""
+    return _dispatch_remote_or_local(
+        lambda client: client.server_info(),
+        local_api._handle_server_info_local,
+    )
+
+
 def handle_world_fork(
     root_dir: str,
     transport_ref: str | None = None,
@@ -303,6 +311,25 @@ def handle_query(
     return _dispatch_remote_or_local(
         lambda client: client.query(instance_id, query_name, params, limit=limit),
         lambda: local_api._handle_query_local(instance_id, query_name, params, limit=limit),
+    )
+
+
+def handle_list_queries(instance_id: str) -> contracts.QueryListResult:
+    """List named-query definitions for an instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.list_queries(instance_id),
+        lambda: local_api._handle_list_queries_local(instance_id),
+    )
+
+
+def handle_describe_query(
+    instance_id: str,
+    query_name: str,
+) -> contracts.NamedQueryInfoResult:
+    """Describe one named-query surface for an instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.describe_query(instance_id, query_name),
+        lambda: local_api._handle_describe_query_local(instance_id, query_name),
     )
 
 

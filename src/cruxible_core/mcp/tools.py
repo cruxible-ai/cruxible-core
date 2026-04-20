@@ -35,6 +35,11 @@ def register_tools(server: FastMCP) -> list[str]:
         return {"version": __version__}
 
     @_tool
+    def cruxible_server_info() -> contracts.ServerInfoResult:
+        """Return live daemon metadata such as agent mode, state dir, and instance count."""
+        return handlers.handle_server_info()
+
+    @_tool
     def cruxible_init(
         root_dir: str,
         config_path: str | None = None,
@@ -202,6 +207,21 @@ def register_tools(server: FastMCP) -> list[str]:
         the inline receipt (fetch it later via `cruxible_receipt`).
         """
         return handlers.handle_query(instance_id, query_name, params, limit=limit)
+
+    @_tool
+    def cruxible_list_queries(
+        instance_id: str,
+    ) -> contracts.QueryListResult:
+        """List named queries with their entry points, required params, and example IDs."""
+        return handlers.handle_list_queries(instance_id)
+
+    @_tool
+    def cruxible_describe_query(
+        instance_id: str,
+        query_name: str,
+    ) -> contracts.NamedQueryInfoResult:
+        """Describe one named query with the details needed to invoke it correctly."""
+        return handlers.handle_describe_query(instance_id, query_name)
 
     @_tool
     def cruxible_receipt(

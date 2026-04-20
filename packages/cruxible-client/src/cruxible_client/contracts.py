@@ -248,6 +248,26 @@ class StatsResult(BaseModel):
     head_snapshot_id: str | None = None
 
 
+class ServerInfoResult(BaseModel):
+    agent_mode: bool
+    state_dir: str
+    version: str
+    instance_count: int
+
+
+class NamedQueryInfoResult(BaseModel):
+    name: str
+    entry_point: str
+    required_params: list[str] = Field(default_factory=list)
+    returns: str
+    description: str | None = None
+    example_ids: list[str] = Field(default_factory=list)
+
+
+class QueryListResult(BaseModel):
+    queries: list[NamedQueryInfoResult] = Field(default_factory=list)
+
+
 class WikiPageResult(BaseModel):
     path: str
     content: str

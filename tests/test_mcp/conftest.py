@@ -111,6 +111,9 @@ class GovernedLocalClient:
     def validate(self, config_path: str | None = None, config_yaml: str | None = None):
         return local_api._handle_validate_local(config_path=config_path, config_yaml=config_yaml)
 
+    def server_info(self):
+        return local_api._handle_server_info_local()
+
     def workflow_lock(self, instance_id: str, *, force: bool = False):
         return local_api._handle_workflow_lock_local(instance_id, force=force)
 
@@ -163,6 +166,12 @@ class GovernedLocalClient:
 
     def query(self, instance_id: str, query_name: str, params: dict, limit: int | None = None):
         return local_api._handle_query_local(instance_id, query_name, params, limit=limit)
+
+    def list_queries(self, instance_id: str):
+        return local_api._handle_list_queries_local(instance_id)
+
+    def describe_query(self, instance_id: str, query_name: str):
+        return local_api._handle_describe_query_local(instance_id, query_name)
 
     def receipt(self, instance_id: str, receipt_id: str):
         return local_api._handle_receipt_local(instance_id, receipt_id)

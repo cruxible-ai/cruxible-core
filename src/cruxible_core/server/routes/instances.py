@@ -29,3 +29,9 @@ async def validate_instance(req: ValidateRequest) -> contracts.ValidateResult:
         config_path=req.config_path,
         config_yaml=req.config_yaml,
     )
+
+
+@router.get("/server/info", response_model=contracts.ServerInfoResult)
+async def server_info() -> contracts.ServerInfoResult:
+    """Return live daemon metadata for clients and agent skills."""
+    return local_api._handle_server_info_local()

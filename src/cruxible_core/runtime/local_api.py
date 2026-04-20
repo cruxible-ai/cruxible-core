@@ -36,6 +36,7 @@ from cruxible_core.service import (
     service_apply_workflow,
     service_config_compatibility_warnings,
     service_create_snapshot,
+    service_describe_query,
     service_evaluate,
     service_feedback,
     service_feedback_batch,
@@ -53,6 +54,7 @@ from cruxible_core.service import (
     service_lint,
     service_list,
     service_list_groups,
+    service_list_queries,
     service_list_resolutions,
     service_list_snapshots,
     service_lock,
@@ -69,6 +71,7 @@ from cruxible_core.service import (
     service_run,
     service_sample,
     service_schema,
+    service_server_info,
     service_stats,
     service_test,
     service_update_trust_status,
@@ -251,6 +254,18 @@ def _handle_validate_local(
         relationships=[relationship.name for relationship in config.relationships],
         named_queries=list(config.named_queries.keys()),
         warnings=result.warnings,
+    )
+
+
+def _handle_server_info_local() -> contracts.ServerInfoResult:
+    """Return live daemon metadata without requiring an instance."""
+    check_permission("cruxible_server_info")
+    result = service_server_info()
+    return contracts.ServerInfoResult(
+        agent_mode=result.agent_mode,
+        state_dir=result.state_dir,
+        version=result.version,
+        instance_count=result.instance_count,
     )
 
 
@@ -863,6 +878,44 @@ def _handle_schema_local(instance_id: str) -> dict[str, Any]:
     instance = get_manager().get(instance_id)
     config = service_schema(instance)
     return config.model_dump(mode="json")
+
+
+def _handle_list_queries_local(instance_id: str) -> contracts.QueryListResult:
+    """List named-query definitions for an instance."""
+    check_permission("cruxible_list_queries", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    queries = service_list_queries(instance)
+    return contracts.QueryListResult(
+        queries=[
+            contracts.NamedQueryInfoResult(
+                name=query.name,
+                entry_point=query.entry_point,
+                required_params=query.required_params,
+                returns=query.returns,
+                description=query.description,
+                example_ids=query.example_ids,
+            )
+            for query in queries
+        ]
+    )
+
+
+def _handle_describe_query_local(
+    instance_id: str,
+    query_name: str,
+) -> contracts.NamedQueryInfoResult:
+    """Describe one named-query surface for an instance."""
+    check_permission("cruxible_describe_query", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    query = service_describe_query(instance, query_name)
+    return contracts.NamedQueryInfoResult(
+        name=query.name,
+        entry_point=query.entry_point,
+        required_params=query.required_params,
+        returns=query.returns,
+        description=query.description,
+        example_ids=query.example_ids,
+    )
 
 
 def _handle_get_feedback_profile_local(

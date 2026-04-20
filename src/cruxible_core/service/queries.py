@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError, ReceiptNotFoundError
+from cruxible_core.errors import ConfigError, QueryNotFoundError, ReceiptNotFoundError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.read_surface import (
@@ -37,6 +37,7 @@ from cruxible_core.service.types import (
     InspectEntityResult,
     InspectNeighborResult,
     ListResult,
+    QueryDefinitionServiceResult,
     QueryParamHints,
     QueryServiceResult,
     StatsServiceResult,
@@ -87,6 +88,28 @@ def service_query(
 def service_schema(instance: InstanceProtocol) -> CoreConfig:
     """Get the config for an instance."""
     return instance.load_config()
+
+
+def service_list_queries(instance: InstanceProtocol) -> list[QueryDefinitionServiceResult]:
+    """Return named-query definitions with the invocation details agents need."""
+    config = instance.load_config()
+    graph = instance.load_graph()
+    definitions: list[QueryDefinitionServiceResult] = []
+    for name in sorted(config.named_queries.keys()):
+        definitions.append(_query_definition(config, graph, name))
+    return definitions
+
+
+def service_describe_query(
+    instance: InstanceProtocol,
+    query_name: str,
+) -> QueryDefinitionServiceResult:
+    """Return one named-query definition with invocation details."""
+    config = instance.load_config()
+    graph = instance.load_graph()
+    if query_name not in config.named_queries:
+        raise QueryNotFoundError(query_name)
+    return _query_definition(config, graph, query_name)
 
 
 def service_sample(
@@ -282,7 +305,7 @@ def service_list(
 
 def _query_param_hints(
     config: CoreConfig,
-    graph,
+    graph: Any,
     query_name: str,
 ) -> QueryParamHints | None:
     query_schema = config.named_queries.get(query_name)
@@ -301,4 +324,21 @@ def _query_param_hints(
         required_params=required_params,
         primary_key=primary_key,
         example_ids=example_ids,
+    )
+
+
+def _query_definition(
+    config: CoreConfig,
+    graph: Any,
+    query_name: str,
+) -> QueryDefinitionServiceResult:
+    query_schema = config.named_queries[query_name]
+    hints = _query_param_hints(config, graph, query_name)
+    return QueryDefinitionServiceResult(
+        name=query_name,
+        entry_point=query_schema.entry_point,
+        required_params=list(hints.required_params) if hints is not None else [],
+        returns=query_schema.returns,
+        description=query_schema.description,
+        example_ids=list(hints.example_ids) if hints is not None else [],
     )

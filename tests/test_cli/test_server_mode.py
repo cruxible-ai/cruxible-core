@@ -152,6 +152,33 @@ def test_context_commands_persist_and_show_governed_context(
     assert "Cleared remembered CLI context." in cleared.output
 
 
+def test_server_info_uses_live_server_surface(
+    monkeypatch,
+    runner: CliRunner,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def server_info(self):
+            captured["called"] = True
+            return contracts.ServerInfoResult(
+                agent_mode=True,
+                state_dir="/srv/cruxible-state",
+                version="0.2.0",
+                instance_count=3,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lambda: StubClient())
+    result = runner.invoke(cli, ["--server-url", "http://server", "server", "info", "--json"])
+
+    assert result.exit_code == 0
+    assert captured["called"] is True
+    payload = json.loads(result.output)
+    assert payload["agent_mode"] is True
+    assert payload["state_dir"] == "/srv/cruxible-state"
+    assert payload["instance_count"] == 3
+
+
 def test_cli_uses_persisted_context_for_server_calls(
     monkeypatch,
     runner: CliRunner,
@@ -194,6 +221,67 @@ def test_cli_uses_persisted_context_for_server_calls(
     assert captured["instance_id"] == "inst_123"
     payload = json.loads(result.output)
     assert payload["entity_count"] == 1
+
+
+def test_query_discovery_commands_delegate_to_client_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+):
+    class StubClient:
+        def list_queries(self, instance_id):
+            assert instance_id == "inst_123"
+            return contracts.QueryListResult(
+                queries=[
+                    contracts.NamedQueryInfoResult(
+                        name="parts_for_vehicle",
+                        entry_point="Vehicle",
+                        required_params=["vehicle_id"],
+                        returns="Part",
+                        description="Find compatible parts.",
+                        example_ids=["V-2024-CIVIC-EX"],
+                    )
+                ]
+            )
+
+        def describe_query(self, instance_id, query_name):
+            assert instance_id == "inst_123"
+            assert query_name == "parts_for_vehicle"
+            return contracts.NamedQueryInfoResult(
+                name="parts_for_vehicle",
+                entry_point="Vehicle",
+                required_params=["vehicle_id"],
+                returns="Part",
+                description="Find compatible parts.",
+                example_ids=["V-2024-CIVIC-EX"],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+        ],
+    )
+
+    listed = runner.invoke(cli, ["query", "list", "--json"])
+    assert listed.exit_code == 0
+    list_payload = json.loads(listed.output)
+    assert list_payload["queries"][0]["name"] == "parts_for_vehicle"
+    assert list_payload["queries"][0]["required_params"] == ["vehicle_id"]
+
+    described = runner.invoke(
+        cli,
+        ["query", "describe", "--query", "parts_for_vehicle", "--json"],
+    )
+    assert described.exit_code == 0
+    describe_payload = json.loads(described.output)
+    assert describe_payload["entry_point"] == "Vehicle"
+    assert describe_payload["returns"] == "Part"
 
 
 def test_explicit_transport_overrides_remembered_opposite_transport(

@@ -1,0 +1,18 @@
+"""Server-level service helpers that do not depend on a specific instance."""
+
+from __future__ import annotations
+
+from cruxible_core import __version__
+from cruxible_core.server.config import get_server_state_dir, is_agent_mode
+from cruxible_core.server.registry import get_registry
+from cruxible_core.service.types import ServerInfoServiceResult
+
+
+def service_server_info() -> ServerInfoServiceResult:
+    """Return live daemon metadata for local hardening and diagnostics."""
+    return ServerInfoServiceResult(
+        agent_mode=is_agent_mode(),
+        state_dir=str(get_server_state_dir()),
+        version=__version__,
+        instance_count=get_registry().count_instances(),
+    )

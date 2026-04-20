@@ -201,6 +201,27 @@ def stats_table(
     return table
 
 
+def query_definitions_table(queries: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for named-query discovery surfaces."""
+    table = Table(title="Named Queries")
+    table.add_column("Name", style="cyan")
+    table.add_column("Entry")
+    table.add_column("Params")
+    table.add_column("Returns")
+    table.add_column("Description")
+
+    for query in queries:
+        params = ", ".join(query.get("required_params", []))
+        table.add_row(
+            str(query.get("name", "")),
+            str(query.get("entry_point", "")),
+            params,
+            str(query.get("returns", "")),
+            str(query.get("description") or ""),
+        )
+    return table
+
+
 def groups_table(groups: list[CandidateGroup]) -> Table:
     """Build a Rich table for a list of candidate groups."""
     table = Table(title="Candidate Groups")

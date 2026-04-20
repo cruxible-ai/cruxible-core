@@ -138,6 +138,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     run_cmd,
     sample,
     schema,
+    server_group,
     snapshot_group,
     stats_cmd,
     test_cmd,
@@ -161,6 +162,7 @@ cli.add_command(ingest)  # type: ignore[has-type]
 cli.add_command(query)  # type: ignore[has-type]
 cli.add_command(render_wiki_cmd, "render-wiki")  # type: ignore[has-type]
 cli.add_command(reload_config_cmd, "reload-config")  # type: ignore[has-type]
+cli.add_command(server_group, "server")  # type: ignore[has-type]
 cli.add_command(explain)  # type: ignore[has-type]
 cli.add_command(feedback_cmd, "feedback")  # type: ignore[has-type]
 cli.add_command(feedback_batch_cmd, "feedback-batch")  # type: ignore[has-type]

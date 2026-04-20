@@ -30,6 +30,7 @@ from cruxible_core.cli.formatting import (
     candidates_table,
     entities_table,
     inspect_neighbors_table,
+    query_definitions_table,
     relationship_table,
     schema_table,
     stats_table,
@@ -45,6 +46,7 @@ from cruxible_core.service import (
     InspectEntityResult,
     service_analyze_feedback,
     service_analyze_outcomes,
+    service_describe_query,
     service_evaluate,
     service_find_candidates,
     service_get_entity,
@@ -52,6 +54,7 @@ from cruxible_core.service import (
     service_get_relationship,
     service_inspect_entity,
     service_lint,
+    service_list_queries,
     service_query,
     service_sample,
     service_schema,
@@ -59,21 +62,25 @@ from cruxible_core.service import (
 )
 
 
-@click.command()
-@click.option("--query", "query_name", required=True, help="Named query from config.")
-@click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
-@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
-@click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
-@json_option
-@handle_errors
-def query(
+def _query_definition_payload(query: Any) -> dict[str, Any]:
+    return {
+        "name": query.name,
+        "entry_point": query.entry_point,
+        "required_params": list(query.required_params),
+        "returns": query.returns,
+        "description": query.description,
+        "example_ids": list(query.example_ids),
+    }
+
+
+def _run_query_command(
+    *,
     query_name: str,
     param: tuple[str, ...],
     limit: int | None,
     count_only: bool,
     output_json: bool,
 ) -> None:
-    """Execute a named query and save the receipt."""
     params = _parse_params(param)
     client = _common._get_client()
     if client is not None:
@@ -83,7 +90,9 @@ def query(
             result = client.query(instance_id, query_name, params, limit=effective_limit)
         except CoreError:
             hints = _lookup_query_param_hints_server(
-                client, instance_id, query_name,
+                client,
+                instance_id,
+                query_name,
             )
             _print_query_param_hints(hints)
             raise
@@ -185,6 +194,82 @@ def query(
         )
     if result.receipt_id:
         click.echo(f"Receipt: {result.receipt_id}")
+
+
+@click.group(invoke_without_command=True)
+@click.option("--query", "query_name", required=False, help="Named query from config.")
+@click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
+@click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
+@json_option
+@click.pass_context
+@handle_errors
+def query(
+    ctx: click.Context,
+    query_name: str | None,
+    param: tuple[str, ...],
+    limit: int | None,
+    count_only: bool,
+    output_json: bool,
+) -> None:
+    """Execute a named query, or discover the query surfaces on this instance."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if not query_name:
+        raise click.UsageError("--query is required unless using a subcommand")
+    _run_query_command(
+        query_name=query_name,
+        param=param,
+        limit=limit,
+        count_only=count_only,
+        output_json=output_json,
+    )
+
+
+@query.command("list")
+@json_option
+@handle_errors
+def query_list_cmd(output_json: bool) -> None:
+    """List named queries with entry points and required params."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.list_queries(instance_id),
+        service_list_queries,
+    )
+    queries = (
+        result.queries
+        if isinstance(result, contracts.QueryListResult)
+        else cast(list[Any], result)
+    )
+    payload = [_query_definition_payload(query) for query in queries]
+    if output_json:
+        _emit_json({"queries": payload})
+        return
+    console.print(query_definitions_table(payload))
+
+
+@query.command("describe")
+@click.option("--query", "query_name", required=True, help="Named query from config.")
+@json_option
+@handle_errors
+def query_describe_cmd(query_name: str, output_json: bool) -> None:
+    """Describe one named query with required params and example IDs."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.describe_query(instance_id, query_name),
+        lambda instance: service_describe_query(instance, query_name),
+    )
+    payload = _query_definition_payload(cast(Any, result))
+    if output_json:
+        _emit_json(payload)
+        return
+    click.echo(f"Query: {payload['name']}")
+    click.echo(f"Entry point: {payload['entry_point']}")
+    click.echo(f"Returns: {payload['returns']}")
+    if payload["required_params"]:
+        click.echo(f"Required params: {', '.join(payload['required_params'])}")
+    if payload["example_ids"]:
+        click.echo(f"Example IDs: {', '.join(payload['example_ids'])}")
+    if payload["description"]:
+        click.echo(f"Description: {payload['description']}")
 
 
 @click.command()

@@ -103,6 +103,10 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ValidateResult)
 
+    def server_info(self) -> contracts.ServerInfoResult:
+        response = self._client.get("/api/v1/server/info")
+        return self._parse_model(response, contracts.ServerInfoResult)
+
     def world_fork(
         self,
         *,
@@ -464,6 +468,18 @@ class CruxibleClient:
     def schema(self, instance_id: str) -> dict[str, Any]:
         response = self._client.get(f"/api/v1/{instance_id}/schema")
         return self._parse_json(response)
+
+    def list_queries(self, instance_id: str) -> contracts.QueryListResult:
+        response = self._client.get(f"/api/v1/{instance_id}/queries")
+        return self._parse_model(response, contracts.QueryListResult)
+
+    def describe_query(
+        self,
+        instance_id: str,
+        query_name: str,
+    ) -> contracts.NamedQueryInfoResult:
+        response = self._client.get(f"/api/v1/{instance_id}/queries/{query_name}")
+        return self._parse_model(response, contracts.NamedQueryInfoResult)
 
     def stats(self, instance_id: str) -> contracts.StatsResult:
         response = self._client.get(f"/api/v1/{instance_id}/stats")
@@ -837,7 +853,7 @@ class CruxibleClient:
         status: contracts.GroupStatus | None = None,
         limit: int = 50,
     ) -> contracts.ListGroupsToolResult:
-        params: dict[str, object] = {"limit": limit}
+        params: dict[str, str | int | float | bool | None] = {"limit": limit}
         if relationship_type is not None:
             params["relationship_type"] = relationship_type
         if status is not None:
@@ -856,7 +872,7 @@ class CruxibleClient:
         action: contracts.GroupAction | None = None,
         limit: int = 50,
     ) -> contracts.ListResolutionsToolResult:
-        params: dict[str, object] = {"limit": limit}
+        params: dict[str, str | int | float | bool | None] = {"limit": limit}
         if relationship_type is not None:
             params["relationship_type"] = relationship_type
         if action is not None:

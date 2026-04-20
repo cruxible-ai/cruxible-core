@@ -98,6 +98,25 @@ async def schema(instance_id: str) -> dict[str, Any]:
     return local_api._handle_schema_local(resolve_server_instance_id(instance_id))
 
 
+@router.get("/{instance_id}/queries", response_model=contracts.QueryListResult)
+async def list_queries(instance_id: str) -> contracts.QueryListResult:
+    return local_api._handle_list_queries_local(resolve_server_instance_id(instance_id))
+
+
+@router.get(
+    "/{instance_id}/queries/{query_name}",
+    response_model=contracts.NamedQueryInfoResult,
+)
+async def describe_query(
+    instance_id: str,
+    query_name: str,
+) -> contracts.NamedQueryInfoResult:
+    return local_api._handle_describe_query_local(
+        resolve_server_instance_id(instance_id),
+        query_name,
+    )
+
+
 @router.get("/{instance_id}/stats", response_model=contracts.StatsResult)
 async def stats(instance_id: str) -> contracts.StatsResult:
     return local_api._handle_stats_local(resolve_server_instance_id(instance_id))

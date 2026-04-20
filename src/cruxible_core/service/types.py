@@ -105,6 +105,24 @@ class StatsServiceResult:
 
 
 @dataclass
+class ServerInfoServiceResult:
+    agent_mode: bool
+    state_dir: str
+    version: str
+    instance_count: int
+
+
+@dataclass
+class QueryDefinitionServiceResult:
+    name: str
+    entry_point: str
+    required_params: list[str] = field(default_factory=list)
+    returns: str = ""
+    description: str | None = None
+    example_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class InspectNeighborResult:
     direction: str
     relationship_type: str
@@ -362,7 +380,14 @@ class LintServiceResult:
     config_name: str = ""
     config_warnings: list[str] = field(default_factory=list)
     compatibility_warnings: list[str] = field(default_factory=list)
-    evaluation: EvaluationReport = field(default_factory=lambda: EvaluationReport(entity_count=0, edge_count=0, findings=[], summary={}))
+    evaluation: EvaluationReport = field(
+        default_factory=lambda: EvaluationReport(
+            entity_count=0,
+            edge_count=0,
+            findings=[],
+            summary={},
+        )
+    )
     feedback_reports: list[AnalyzeFeedbackResult] = field(default_factory=list)
     outcome_reports: list[AnalyzeOutcomesResult] = field(default_factory=list)
     summary: LintSummary = field(default_factory=LintSummary)

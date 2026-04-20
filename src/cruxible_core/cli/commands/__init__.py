@@ -39,6 +39,8 @@ from cruxible_core.cli.commands.reads import (
     schema,
     stats_cmd,
 )
+from cruxible_core.cli.commands.server import server_group
+from cruxible_core.cli.commands.wiki import render_wiki_cmd
 from cruxible_core.cli.commands.workflows import (
     apply_cmd,
     fork_cmd,
@@ -52,7 +54,6 @@ from cruxible_core.cli.commands.workflows import (
     test_cmd,
     validate,
 )
-from cruxible_core.cli.commands.wiki import render_wiki_cmd
 from cruxible_core.cli.commands.world import world_group
 
 __all__ = [
@@ -92,6 +93,7 @@ __all__ = [
     "run_cmd",
     "sample",
     "schema",
+    "server_group",
     "snapshot_group",
     "stats_cmd",
     "test_cmd",

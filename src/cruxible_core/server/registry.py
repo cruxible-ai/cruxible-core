@@ -82,6 +82,12 @@ class InstanceRegistry:
             return None
         return self._row_to_record(row)
 
+    def count_instances(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS count FROM instances").fetchone()
+        assert row is not None
+        return int(row["count"])
+
     def get_or_create_local_instance(self, location: str | Path) -> RegisteredInstance:
         resolved_location = str(Path(location).expanduser().resolve())
         existing = self._get_by_backend_location(LOCAL_FILESYSTEM_BACKEND, resolved_location)

@@ -48,6 +48,58 @@ def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     assert result.receipt_id == "RCPT-1"
 
 
+def test_server_info_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
+    class StubClient:
+        def server_info(self):
+            return contracts.ServerInfoResult(
+                agent_mode=True,
+                state_dir="/srv/cruxible-state",
+                version="0.2.0",
+                instance_count=2,
+            )
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+    result = handlers.handle_server_info()
+    assert result.agent_mode is True
+    assert result.instance_count == 2
+
+
+def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
+    class StubClient:
+        def list_queries(self, instance_id):
+            assert instance_id == "inst_123"
+            return contracts.QueryListResult(
+                queries=[
+                    contracts.NamedQueryInfoResult(
+                        name="parts_for_vehicle",
+                        entry_point="Vehicle",
+                        required_params=["vehicle_id"],
+                        returns="Part",
+                        description="Find compatible parts.",
+                        example_ids=["V-1"],
+                    )
+                ]
+            )
+
+        def describe_query(self, instance_id, query_name):
+            assert instance_id == "inst_123"
+            assert query_name == "parts_for_vehicle"
+            return contracts.NamedQueryInfoResult(
+                name="parts_for_vehicle",
+                entry_point="Vehicle",
+                required_params=["vehicle_id"],
+                returns="Part",
+                description="Find compatible parts.",
+                example_ids=["V-1"],
+            )
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+    listed = handlers.handle_list_queries("inst_123")
+    assert listed.queries[0].name == "parts_for_vehicle"
+    described = handlers.handle_describe_query("inst_123", "parts_for_vehicle")
+    assert described.returns == "Part"
+
+
 def test_workflow_propose_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
         def propose_workflow(self, instance_id, *, workflow_name, input_payload=None):
