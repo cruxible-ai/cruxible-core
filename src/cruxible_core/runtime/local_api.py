@@ -956,7 +956,7 @@ def _analyze_feedback_contract(result: AnalyzeFeedbackResult) -> contracts.Analy
                 reason=example.reason,
                 decision_context=example.decision_context,
                 scope_hints=example.scope_hints,
-                target=example.target,
+                target=example.target.model_dump(mode="json"),
             )
             for example in result.uncoded_examples
         ],

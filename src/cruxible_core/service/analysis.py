@@ -322,9 +322,9 @@ def service_analyze_feedback(
             feedback_id=row.feedback_id,
             relationship_type=relationship_type,
             reason=row.reason,
+            target=row.target,
             decision_context=row.decision_context,
             scope_hints=row.scope_hints,
-            target=row.target.model_dump(mode="json"),
         )
         for row in uncoded_feedback[:5]
     ]

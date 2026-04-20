@@ -12,6 +12,18 @@ from cruxible_core.graph.types import RelationshipInstance
 SignalValue = Literal["support", "contradict", "unsure"]
 """Tri-state signal value produced by an integration about a candidate."""
 
+ResolutionAction = Literal["approve", "reject"]
+"""Action taken on a candidate group: approve (apply) or reject (discard)."""
+
+TrustStatus = Literal["trusted", "watch", "invalidated"]
+"""Trust posture for a persisted resolution, tuned by outcome analysis."""
+
+GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
+"""Lifecycle status of a candidate group."""
+
+ReviewPriority = Literal["critical", "review", "normal"]
+"""Review priority bucket for a candidate group."""
+
 
 class CandidateSignal(BaseModel):
     """Tri-state signal from an integration, attached to a candidate member.
@@ -41,12 +53,12 @@ class GroupResolution(BaseModel):
     resolution_id: str  # RES-{uuid[:12]}
     relationship_type: str
     group_signature: str
-    action: Literal["approve", "reject"]
+    action: ResolutionAction
     rationale: str = ""
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
-    trust_status: Literal["trusted", "watch", "invalidated"] = "watch"
+    trust_status: TrustStatus = "watch"
     trust_reason: str = ""
     confirmed: bool = False
     resolved_by: Literal["human", "agent"] = "human"
@@ -59,14 +71,14 @@ class CandidateGroup(BaseModel):
     group_id: str  # GRP-{uuid[:12]}
     relationship_type: str
     signature: str
-    status: Literal["pending_review", "auto_resolved", "applying", "resolved"] = "pending_review"
+    status: GroupStatus = "pending_review"
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
     proposed_by: Literal["human", "agent"] = "agent"
     member_count: int = 0
-    review_priority: Literal["critical", "review", "normal"] = "normal"
+    review_priority: ReviewPriority = "normal"
     suggested_priority: str | None = None
     source_workflow_name: str | None = None
     source_workflow_receipt_id: str | None = None

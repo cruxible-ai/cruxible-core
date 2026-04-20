@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.evaluate import EvaluationReport
-from cruxible_core.graph.types import EntityInstance
-from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.types import (
+    CandidateGroup,
+    CandidateMember,
+    GroupResolution,
+    GroupStatus,
+    ResolutionAction,
+    ReviewPriority,
+    TrustStatus,
+)
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
@@ -19,6 +27,9 @@ from cruxible_core.snapshot.types import (
     WorldSnapshot,
 )
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
+
+WorkflowMode = Literal["run", "preview", "apply"]
+NeighborDirection = Literal["incoming", "outgoing"]
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -85,7 +96,7 @@ class StatsServiceResult:
 
 @dataclass
 class InspectNeighborResult:
-    direction: str
+    direction: NeighborDirection
     relationship_type: str
     edge_key: int | None
     properties: dict[str, Any] = field(default_factory=dict)
@@ -157,9 +168,9 @@ class UncodedFeedbackExample:
     feedback_id: str
     relationship_type: str
     reason: str
+    target: RelationshipInstance
     decision_context: dict[str, Any] = field(default_factory=dict)
     scope_hints: dict[str, Any] = field(default_factory=dict)
-    target: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -168,7 +179,7 @@ class ConstraintSuggestion:
     description: str
     relationship_type: str
     rule: str
-    severity: str
+    severity: Literal["warning", "error"]
     support_count: int
     feedback_ids: list[str] = field(default_factory=list)
     sample_value_pairs: list[dict[str, Any]] = field(default_factory=list)
@@ -179,8 +190,8 @@ class DecisionPolicySuggestion:
     name: str
     description: str
     relationship_type: str
-    applies_to: str
-    effect: str
+    applies_to: Literal["query", "workflow"]
+    effect: Literal["suppress", "require_review"]
     rationale: str
     match: dict[str, Any] = field(default_factory=dict)
     query_name: str | None = None
@@ -194,8 +205,8 @@ class OutcomeDecisionPolicySuggestion:
     name: str
     description: str
     relationship_type: str
-    applies_to: str
-    effect: str
+    applies_to: Literal["query", "workflow"]
+    effect: Literal["suppress", "require_review"]
     rationale: str
     match: dict[str, Any] = field(default_factory=dict)
     query_name: str | None = None
@@ -267,8 +278,8 @@ class TrustAdjustmentSuggestion:
     resolution_id: str
     relationship_type: str
     group_signature: str
-    current_trust_status: str
-    suggested_trust_status: str
+    current_trust_status: TrustStatus
+    suggested_trust_status: TrustStatus
     support_count: int
     rationale: str
     outcome_ids: list[str] = field(default_factory=list)
@@ -341,7 +352,11 @@ class LintServiceResult:
     config_name: str = ""
     config_warnings: list[str] = field(default_factory=list)
     compatibility_warnings: list[str] = field(default_factory=list)
-    evaluation: EvaluationReport = field(default_factory=lambda: EvaluationReport(entity_count=0, edge_count=0, findings=[], summary={}))
+    evaluation: EvaluationReport = field(
+        default_factory=lambda: EvaluationReport(
+            entity_count=0, edge_count=0, findings=[], summary={}
+        )
+    )
     feedback_reports: list[AnalyzeFeedbackResult] = field(default_factory=list)
     outcome_reports: list[AnalyzeOutcomesResult] = field(default_factory=list)
     summary: LintSummary = field(default_factory=LintSummary)
@@ -383,7 +398,7 @@ class WorkflowExecutionServiceResult:
     workflow: str
     output: Any
     receipt_id: str
-    mode: str
+    mode: WorkflowMode
     canonical: bool
     apply_digest: str | None = None
     head_snapshot_id: str | None = None
@@ -397,13 +412,13 @@ class WorkflowExecutionServiceResult:
 
 @dataclass
 class RunServiceResult(WorkflowExecutionServiceResult):
-    mode: str = "run"
+    mode: WorkflowMode = "run"
     canonical: bool = False
 
 
 @dataclass
 class ApplyWorkflowResult(WorkflowExecutionServiceResult):
-    mode: str = "apply"
+    mode: WorkflowMode = "apply"
     canonical: bool = True
 
 
@@ -421,8 +436,8 @@ class ProposeWorkflowResult:
     output: Any
     receipt_id: str
     group_id: str | None
-    group_status: str
-    review_priority: str
+    group_status: GroupStatus
+    review_priority: ReviewPriority
     suppressed: bool = False
     query_receipt_ids: list[str] = field(default_factory=list)
     trace_ids: list[str] = field(default_factory=list)
@@ -493,8 +508,8 @@ class WorldPullApplyResult:
 class ProposeGroupResult:
     group_id: str | None
     signature: str
-    status: str
-    review_priority: str
+    status: GroupStatus
+    review_priority: ReviewPriority
     member_count: int
     prior_resolution: GroupResolution | None
     suppressed: bool = False
@@ -504,7 +519,7 @@ class ProposeGroupResult:
 @dataclass
 class ResolveGroupResult:
     group_id: str
-    action: str
+    action: ResolutionAction
     edges_created: int
     edges_skipped: int
     resolution_id: str | None = None
