@@ -696,7 +696,13 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
             "step_entities",
             {
                 "entity_type": "Case",
-                "entities": [{"entity_id": "CASE-C", "properties": {"case_id": "CASE-C"}}],
+                "entities": [
+                    {
+                        "entity_type": "Case",
+                        "entity_id": "CASE-C",
+                        "properties": {"case_id": "CASE-C"},
+                    }
+                ],
             },
             receipt_builder,
             persist_writes=False,
@@ -712,6 +718,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
             "relationship_type": "follow_up",
             "relationships": [
                 {
+                    "relationship_type": "follow_up",
                     "from_type": "Case",
                     "from_id": "CASE-A",
                     "to_type": "Case",

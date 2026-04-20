@@ -41,9 +41,7 @@ from cruxible_core.workflow.types import (
     ApplyEntitiesPreview,
     ApplyRelationshipsPreview,
     CandidateSet,
-    CandidateSetMember,
     EntitySet,
-    EntitySetMember,
     RelationshipGroupProposalArtifact,
     RelationshipSet,
     SignalBatch,
@@ -608,11 +606,12 @@ def _make_candidate_set(
 
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen: set[tuple[str, str, str, str]] = set()
-    candidates: list[CandidateSetMember] = []
+    candidates: list[RelationshipInstance] = []
 
     for item in items:
-        member = CandidateSetMember.model_validate(
+        member = RelationshipInstance.model_validate(
             {
+                "relationship_type": relationship_type,
                 "from_type": resolve_value(
                     spec.from_type,
                     input_payload,
@@ -864,7 +863,7 @@ def _make_entity_set(
         )
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[str, dict[str, Any]] = {}
-    entities: list[EntitySetMember] = []
+    entities: list[EntityInstance] = []
     duplicate_input_count = 0
     conflicting_duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
@@ -902,7 +901,8 @@ def _make_entity_set(
             continue
         seen[entity_id] = properties
         entities.append(
-            EntitySetMember(
+            EntityInstance(
+                entity_type=spec.entity_type,
                 entity_id=entity_id,
                 properties=properties,
             )
@@ -930,13 +930,14 @@ def _make_relationship_set(
         )
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
-    relationships: list[CandidateSetMember] = []
+    relationships: list[RelationshipInstance] = []
     duplicate_input_count = 0
     conflicting_duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
     for item in items:
-        member = CandidateSetMember.model_validate(
+        member = RelationshipInstance.model_validate(
             {
+                "relationship_type": spec.relationship_type,
                 "from_type": resolve_value(
                     spec.from_type,
                     input_payload,
@@ -1038,13 +1039,7 @@ def _apply_entity_set(
         existing = graph.get_entity(entity_set.entity_type, entity.entity_id)
         if existing is None:
             create_count += 1
-            graph.add_entity(
-                EntityInstance(
-                    entity_type=entity_set.entity_type,
-                    entity_id=entity.entity_id,
-                    properties=dict(entity.properties),
-                )
-            )
+            graph.add_entity(entity)
             if persist_writes:
                 receipt_builder.record_entity_write(
                     entity_set.entity_type,
@@ -1116,16 +1111,7 @@ def _apply_relationship_set(
         )
         if existing is None:
             create_count += 1
-            graph.add_relationship(
-                RelationshipInstance(
-                    relationship_type=relationship_set.relationship_type,
-                    from_type=rel.from_type,
-                    from_id=rel.from_id,
-                    to_type=rel.to_type,
-                    to_id=rel.to_id,
-                    properties=new_properties,
-                )
-            )
+            graph.add_relationship(rel.model_copy(update={"properties": new_properties}))
             if persist_writes:
                 receipt_builder.record_relationship_write(
                     rel.from_type,

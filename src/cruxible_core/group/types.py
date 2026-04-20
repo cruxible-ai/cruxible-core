@@ -14,7 +14,10 @@ SignalValue = Literal["support", "contradict", "unsure"]
 
 
 class CandidateSignal(BaseModel):
-    """Tri-state signal from an integration. Replaces vibed confidence scores."""
+    """Tri-state signal from an integration, attached to a candidate member.
+
+    Pair identity is implicit in the containing member.
+    """
 
     integration: str
     signal: SignalValue
