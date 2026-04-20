@@ -38,23 +38,33 @@ Produce a working KEV fork in one pass:
 ## Preconditions
 
 - Run from `demos/kev-triage/` (or a fork of it)
-- Cruxible daemon reachable (`cruxible context show` succeeds)
+- Cruxible daemon reachable (`cruxible server info --json` succeeds)
 - The local seed or source files have been replaced with the user's own data
 - `CRUXIBLE_AGENT_MODE` may be set; that's fine — this skill does not use
   blocked commands
 
-If the daemon isn't reachable, stop and tell the user to start one
-(`cruxible server start` or equivalent). Do not try to initialize without a
-daemon.
+If the daemon isn't reachable, stop and tell the user to start the project's
+configured Cruxible daemon before continuing. Do not try to initialize
+without a daemon.
 
 ## Flow
 
 ### 1. Check current state
 
 ```
+cruxible server info --json
 cruxible context show --json
+```
+
+If `context show --json` includes an `instance_id`, then run:
+
+```
 cruxible stats --json
 ```
+
+Confirm `agent_mode` from `cruxible server info --json` before acting. If the
+daemon was started without it, call that out explicitly because this skill's
+guarded local-mode assumptions will not be exercised.
 
 Use this step to decide which milestone already exists:
 
@@ -153,25 +163,17 @@ Narrate briefly: "Initialized instance with `config.yaml` extending
 Skip this step if `cruxible stats` from Step 1 shows reference entities
 (`Vendor`, `Product`, `Vulnerability`) already loaded.
 
-Canonical workflow — `run` previews and returns `apply_digest` and
-`head_snapshot_id`; `apply` commits against that exact preview.
+Canonical workflow — save the preview once, then apply from the saved preview
+file so you don't have to thread `apply_digest` and `head_snapshot_id`
+manually.
 
 ```
-cruxible run --workflow build_public_kev_reference --json
+cruxible run --workflow build_public_kev_reference --save-preview preview-reference.json
+cruxible apply --preview-file preview-reference.json
 ```
 
-Capture both `apply_digest` and `head_snapshot_id` from the JSON output,
-then pass both on apply:
-
-```
-cruxible apply --workflow build_public_kev_reference \
-  --apply-digest <digest> \
-  --head-snapshot <head_snapshot_id>
-```
-
-Both flags are required. Without `--head-snapshot`, apply fails with
-`Workflow head snapshot changed; rerun workflow preview before apply` as
-soon as any other commit has moved the head between preview and apply.
+If apply fails because the head moved, rerun the preview to refresh
+`preview-reference.json` and apply again from that file.
 
 Narrate with real counts pulled from `cruxible stats --json`:
 "Reference layer built — N vulnerabilities, M products, V vendors from the
@@ -182,13 +184,11 @@ public KEV feed."
 Skip this step if `cruxible stats` from Step 1 shows fork entities
 (`Asset`, `Owner`, `BusinessService`) already loaded.
 
-Run then apply, capturing both `apply_digest` and `head_snapshot_id`:
+Run then apply from a saved preview file:
 
 ```
-cruxible run --workflow build_fork_state --json
-cruxible apply --workflow build_fork_state \
-  --apply-digest <digest> \
-  --head-snapshot <head_snapshot_id>
+cruxible run --workflow build_fork_state --save-preview preview-fork.json
+cruxible apply --preview-file preview-fork.json
 ```
 
 Narrate: "Fork state loaded — X assets, Y owners, Z services, plus whichever
@@ -249,13 +249,17 @@ Named queries all require parameters. Before running them, list the final
 query surface and its entry points:
 
 ```
-cruxible schema --json
+cruxible query list --json
 ```
 
-For each named query, pull a real entry-point ID from the loaded data using
-`cruxible sample --type <EntryType> --limit 1 --json`. Then run each query
-using `--count --json` (returns only the total so the output stays
-inspectable):
+For each named query, inspect its required params and example IDs with:
+
+```
+cruxible query describe --query <query_name> --json
+```
+
+Then run each query using `--count --json` (returns only the total so the
+output stays inspectable):
 
 ```
 cruxible query --query <query_name> --param <key>=<value> --count --json

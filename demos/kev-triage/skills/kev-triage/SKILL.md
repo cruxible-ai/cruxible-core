@@ -32,14 +32,18 @@ another agent operating in review mode; the recorded attribution comes from the
 Every session, before making proposals:
 
 1. `cruxible context show` — confirm which instance you're connected to.
-2. `cruxible schema --json` — confirm the schema includes the fork types and
+2. `cruxible query list --json` — confirm the named queries used in the daily
+   pass are present. Use `cruxible query describe --query <name> --json` to
+   inspect required params and example IDs for the specific read surfaces you
+   plan to call.
+3. `cruxible schema --json` — confirm the schema includes the fork types and
    surfaces this skill expects: `Incident`, `Finding`, the governed
-   relationships listed below, the `incident_attribution` / `policy_review` /
-   `control_effectiveness` integrations, and the named queries used in the
-   daily pass. If they don't match, stop and ask.
-3. `cruxible stats` — note the current entity and edge counts so you can
+   relationships listed below, and the `incident_attribution` /
+   `policy_review` / `control_effectiveness` integrations. If they don't
+   match, stop and ask.
+4. `cruxible stats` — note the current entity and edge counts so you can
    detect accidental drift later.
-4. `cruxible group list --status pending_review --json` — check what's already
+5. `cruxible group list --status pending_review --json` — check what's already
    awaiting review. Don't re-propose something already in the queue.
 
 If the reviewer is about to act on proposals you make, also run:
