@@ -9,12 +9,15 @@ from pydantic import BaseModel, Field
 
 from cruxible_core.graph.types import RelationshipInstance
 
+SignalValue = Literal["support", "contradict", "unsure"]
+"""Tri-state signal value produced by an integration about a candidate."""
+
 
 class CandidateSignal(BaseModel):
     """Tri-state signal from an integration. Replaces vibed confidence scores."""
 
     integration: str
-    signal: Literal["support", "contradict", "unsure"]
+    signal: SignalValue
     evidence: str = ""
 
 

@@ -19,9 +19,21 @@ from cruxible_core.config.schema import (
     MapSignalsSpec,
     ProposeRelationshipGroupSpec,
 )
-from cruxible_core.group.types import CandidateMember
+from cruxible_core.group.types import CandidateMember, SignalValue
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
+
+
+class _DuplicateTrackedCollection(BaseModel):
+    """Mixin for workflow artifacts that report input-duplicate diagnostics.
+
+    Tracks how many inputs were deduped and how many were dropped due to
+    conflicting duplicates, plus a bounded sample for debugging.
+    """
+
+    duplicate_input_count: int = 0
+    conflicting_duplicate_count: int = 0
+    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class LockedArtifact(BaseModel):
@@ -165,7 +177,7 @@ class SignalBatchSignal(BaseModel):
 
     from_id: str
     to_id: str
-    signal: Literal["support", "unsure", "contradict"]
+    signal: SignalValue
     evidence: str = ""
 
 
@@ -196,45 +208,33 @@ class EntitySetMember(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
-class EntitySet(BaseModel):
+class EntitySet(_DuplicateTrackedCollection):
     """Internal workflow artifact containing entity upserts."""
 
     entity_type: str
     entities: list[EntitySetMember] = Field(default_factory=list)
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class RelationshipSet(BaseModel):
+class RelationshipSet(_DuplicateTrackedCollection):
     """Internal workflow artifact containing relationship upserts."""
 
     relationship_type: str
     relationships: list[CandidateSetMember] = Field(default_factory=list)
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ApplyEntitiesPreview(BaseModel):
+class ApplyEntitiesPreview(_DuplicateTrackedCollection):
     """Preview summary for applying an entity set."""
 
     entity_type: str
     create_count: int = 0
     update_count: int = 0
     noop_count: int = 0
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ApplyRelationshipsPreview(BaseModel):
+class ApplyRelationshipsPreview(_DuplicateTrackedCollection):
     """Preview summary for applying a relationship set."""
 
     relationship_type: str
     create_count: int = 0
     update_count: int = 0
     noop_count: int = 0
-    duplicate_input_count: int = 0
-    conflicting_duplicate_count: int = 0
-    duplicate_examples: list[dict[str, Any]] = Field(default_factory=list)
