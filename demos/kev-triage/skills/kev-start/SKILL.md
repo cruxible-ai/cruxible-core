@@ -123,12 +123,20 @@ empty.
 
 ### 4. Initialize and lock
 
+Server mode is the primary path for 0.2. The daemon owns the instance
+directory (under `CRUXIBLE_SERVER_STATE_DIR`, default `~/.cruxible/server/
+instances/inst_<id>/`). Do **not** pass `--root-dir` or create a local
+`.cruxible/` directory; the daemon manages its own state.
+
 If no instance exists:
 
 ```
-cruxible init . --config config.yaml
+cruxible init --config config.yaml
 cruxible lock
 ```
+
+Capture the returned `instance_id` and persist it with `cruxible context use
+<instance_id>` so subsequent commands target it.
 
 If `cruxible lock` fails with an artifact hash mismatch, pass `--force`:
 
@@ -137,24 +145,33 @@ cruxible lock --force
 ```
 
 Narrate briefly: "Initialized instance with `config.yaml` extending
-`kev-reference.yaml`."
+`kev-reference.yaml`. Daemon owns state at
+`~/.cruxible/server/instances/<instance_id>/`."
 
 ### 5. Build the reference layer
 
 Skip this step if `cruxible stats` from Step 1 shows reference entities
 (`Vendor`, `Product`, `Vulnerability`) already loaded.
 
-Canonical workflow — `run` returns an apply digest, then `apply` commits.
+Canonical workflow — `run` previews and returns `apply_digest` and
+`head_snapshot_id`; `apply` commits against that exact preview.
 
 ```
 cruxible run --workflow build_public_kev_reference --json
 ```
 
-Capture `apply_digest` from the JSON output, then:
+Capture both `apply_digest` and `head_snapshot_id` from the JSON output,
+then pass both on apply:
 
 ```
-cruxible apply --workflow build_public_kev_reference --expected-apply-digest <digest>
+cruxible apply --workflow build_public_kev_reference \
+  --apply-digest <digest> \
+  --head-snapshot <head_snapshot_id>
 ```
+
+Both flags are required. Without `--head-snapshot`, apply fails with
+`Workflow head snapshot changed; rerun workflow preview before apply` as
+soon as any other commit has moved the head between preview and apply.
 
 Narrate with real counts pulled from `cruxible stats --json`:
 "Reference layer built — N vulnerabilities, M products, V vendors from the
@@ -165,53 +182,87 @@ public KEV feed."
 Skip this step if `cruxible stats` from Step 1 shows fork entities
 (`Asset`, `Owner`, `BusinessService`) already loaded.
 
+Run then apply, capturing both `apply_digest` and `head_snapshot_id`:
+
 ```
 cruxible run --workflow build_fork_state --json
-```
-
-Capture digest, then:
-
-```
-cruxible apply --workflow build_fork_state --expected-apply-digest <digest>
+cruxible apply --workflow build_fork_state \
+  --apply-digest <digest> \
+  --head-snapshot <head_snapshot_id>
 ```
 
 Narrate: "Fork state loaded — X assets, Y owners, Z services, plus whichever
 optional surfaces (controls, exceptions, patch windows, incidents, findings)
 were included to support the kept query set."
 
-### 7. Run the proposal chain
+### 7. Walk the proposal chain with review gates
 
-Four non-canonical workflows. Each produces governed groups, not accepted
-edges. `run` is sufficient — no `apply` step.
+The four proposal workflows form a dependency chain: each one reads approved
+edges from the previous one. They cannot run back-to-back without review in
+between.
+
+Use `cruxible propose` (not `cruxible run`) — `propose` bridges the workflow
+output into a candidate group; `run` only executes and returns the payload.
+
+Walk the chain one stage at a time. After each `propose`, pause for the user
+to approve the group before issuing the next `propose`.
+
+**Stage 1 — asset_runs_product:**
 
 ```
-cruxible run --workflow propose_asset_products
-cruxible run --workflow propose_asset_affected
-cruxible run --workflow propose_asset_exposure
-cruxible run --workflow propose_service_impact
+cruxible propose --workflow propose_asset_products --json
 ```
 
-Narrate one line per workflow: what it proposed and how many candidates. Pull
-counts from the run output.
+Capture the returned `group_id`, then inspect it:
+
+```
+cruxible group get --group <group_id>
+```
+
+Ask the user to approve. If they agree:
+
+```
+cruxible group resolve --group <group_id> --action approve \
+  --source ai_review --rationale "<reason>"
+```
+
+Do not proceed to Stage 2 until this group is resolved. If the user rejects,
+explain that Stages 2–4 depend on approved `asset_runs_product` edges and
+will fail with `Members list must not be empty` if run now.
+
+**Stages 2–4** follow the same pattern:
+
+- Stage 2: `cruxible propose --workflow propose_asset_affected`
+  (depends on approved Stage 1 edges)
+- Stage 3: `cruxible propose --workflow propose_asset_exposure`
+  (depends on approved Stage 2 edges)
+- Stage 4: `cruxible propose --workflow propose_service_impact`
+  (depends on approved Stage 3 edges)
+
+After each stage, pause, show the group, request approval, resolve, then
+proceed. This is the observable governance loop; it is the point of the
+skill, not a workaround.
 
 ### 8. Verify the governed outputs
 
-```
-cruxible group list --status pending_review --json --limit 20
-```
-
-Narrate the aggregate: "N proposals are in the review queue across K
-relationship types. This is where governance enters — every relationship the
-engine isn't certain about waits for a reviewer."
-
-Then run every named query in the final config and confirm each executes
-successfully. For the queries tied to loaded data, use a param value drawn
-from the user's loaded data and confirm at least one representative non-empty
-result:
+Named queries all require parameters. Before running them, list the final
+query surface and its entry points:
 
 ```
-cruxible query --query <query_name> --param <key>=<value>
+cruxible schema --json
 ```
+
+For each named query, pull a real entry-point ID from the loaded data using
+`cruxible sample --type <EntryType> --limit 1 --json`. Then run each query
+using `--count --json` (returns only the total so the output stays
+inspectable):
+
+```
+cruxible query --query <query_name> --param <key>=<value> --count --json
+```
+
+Confirm each kept query executes successfully. For queries tied to loaded
+data, confirm at least one representative non-empty result.
 
 If a kept query that should have data returns empty, stop and diagnose before
 moving on:
@@ -229,47 +280,20 @@ in the hand-off instead of treating it as a failure.
 Render the wiki and inspect at least one subject page (a user asset or
 service) to confirm the linked context renders correctly.
 
-### 9. Spot-check one proposal in detail
-
-Pick one pending group and inspect it closely. Prefer an
-`asset_exposed_to_vulnerability` proposal if one exists. Otherwise
-`asset_runs_product` or `service_impacted_by_vulnerability`.
-
-```
-cruxible group get --group <group_id> --json
-```
-
-Narrate what the output shows:
-- The proposed edge (from → to)
-- The thesis text — the reasoning the proposal is making
-- The signals from each integration — the evidence
-- The provenance trail back to the workflow step that produced it
-
-Explain why these fields matter together:
-
-- thesis = the claim being proposed
-- signals = the structured evidence for and against it
-- provenance = where the judgment came from
-- pending-review state = the governance boundary before graph mutation
-
-This is the evidence pack a reviewer sees. The same audit trail shape is used
-for deterministic and judgment-based steps; there is no separate ad hoc AI
-output path.
-
-### 10. Hand off
+### 9. Hand off
 
 Tell the user concisely:
 
-- The fork is live; the review queue is populated; nothing has been
-  auto-accepted
-- If they want to test the governance loop, resolve one proposal
-- To exercise the ongoing daily loop on this fork, run `kev-triage` next
+- The fork is live; the proposal chain walked through with reviewer approval
+  at each stage
+- To exercise the ongoing daily loop on this fork (incident attribution,
+  waiver intake, control reviews, daily triage summary), run `kev-triage`
+  next
 - If they want to keep adapting the kit, the next likely changes are provider
   templates, input-file shapes, workflow params, and named queries
 
-Do NOT resolve any proposals on the user's behalf. The governance loop is
-part of the adaptation surface — leave it intact unless the user explicitly
-wants to exercise reviewer mode.
+Approvals issued during Step 7 were user-directed governance decisions. Do
+not issue further approvals outside that flow.
 
 ## When to stop and ask
 
@@ -300,7 +324,9 @@ wants to exercise reviewer mode.
   skill for that.
 - Does not force every optional KEV data surface on the fork. Surfaces are
   required only for queries and workflows the user chooses to keep in Step 3.
-- Does not approve or reject proposals. That's the reviewer's call.
+- Does not approve or reject proposals outside the Step 7 walk-through.
+  Approvals in Step 7 are the user's governance decisions, issued one stage
+  at a time with explicit consent.
 - Does not optimize the full daily triage loop. That is the role of
   `kev-triage` once the fork is producing sane results.
 
