@@ -10,11 +10,21 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Shared truth for humans and agents.** Cruxible is a deterministic world-model runtime with DAG-based receipts.
+**Cruxible turns LLM knowledge bases into governed operational state.**
 
-Define entity graphs, queries, constraints, and governed workflows in YAML. Run them locally from CLI or MCP, and get receipts proving exactly why each result was returned.
+LLMs are getting good at compiling raw documents into markdown wikis, research
+repos, and personal knowledge bases. That is useful, but it is still soft
+state: later agents can reinterpret it, summaries drift, and teams cannot
+safely build repeatable workflows on top of it.
 
-LLMs do not expose a stable, shared internal state that other agents or humans can inspect or verify. Their judgments are prompt-local, frame-sensitive, and transient. Cruxible externalizes accepted facts, relationships, and judgments so work does not depend on drifting summaries or ephemeral model opinions.
+Cruxible takes the parts that need to become shared truth and makes them
+typed, queryable, reviewable, and attributable. Facts, relationships,
+judgments, review status, and outcomes move out of prompt-local memory and
+into governed state that other humans and agents can inspect and rely on.
+
+Define entity graphs, queries, constraints, and governed workflows in YAML.
+Run them locally from CLI or MCP, and get receipts proving exactly why each
+result or proposal was produced.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -36,6 +46,9 @@ LLMs do not expose a stable, shared internal state that other agents or humans c
 
 ## Why This Exists
 
+Knowledge bases help agents remember. They do not, by themselves, decide what
+has become operationally true.
+
 Humans and agents do not naturally stay coherent with each other.
 
 - Two agents can see similar material and still come away with different facts, procedures, or recommendations.
@@ -51,7 +64,7 @@ Cruxible gives that important state a home outside the model:
 
 A simple way to think about it:
 
-> LLMs can reason about truth, but they should not be the only place truth lives.
+> LLMs can reason over knowledge. Cruxible governs what becomes trusted state.
 
 ## Quick Example
 
@@ -226,9 +239,10 @@ Then try:
 
 Every query produces a receipt you can inspect.
 
-## Why Not Just Use Prompts, Docs, or Memory?
+## Why Not Just Use Prompts, Docs, Memory, or a Knowledge Base?
 
-Prompts, markdown playbooks, tickets, and generic memory layers are good at storing context.
+Prompts, markdown playbooks, tickets, generic memory layers, and LLM-built
+knowledge bases are good at storing context.
 
 They are bad at storing hard state.
 
