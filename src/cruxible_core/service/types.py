@@ -8,7 +8,10 @@ from typing import Any, Literal
 from cruxible_core.config.schema import (
     CoreConfig,
     FeedbackRemediationHint,
+    OutcomeAnchorType,
+    OutcomeLabel,
     OutcomeRemediationHint,
+    SurfaceType,
 )
 from cruxible_core.evaluate import EvaluationReport
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -256,7 +259,7 @@ class AnalyzeFeedbackResult:
 
 @dataclass
 class OutcomeGroupSummary:
-    anchor_type: str
+    anchor_type: OutcomeAnchorType
     outcome_code: str
     remediation_hint: OutcomeRemediationHint
     decision_context: dict[str, Any] = field(default_factory=dict)
@@ -269,9 +272,9 @@ class OutcomeGroupSummary:
 @dataclass
 class UncodedOutcomeExample:
     outcome_id: str
-    anchor_type: str
+    anchor_type: OutcomeAnchorType
     anchor_id: str
-    outcome: str
+    outcome: OutcomeLabel
     detail: dict[str, Any] = field(default_factory=dict)
     decision_context: dict[str, Any] = field(default_factory=dict)
     scope_hints: dict[str, Any] = field(default_factory=dict)
@@ -300,7 +303,7 @@ class QueryPolicySuggestion:
 
 @dataclass
 class OutcomeProviderFixCandidate:
-    surface_type: str
+    surface_type: SurfaceType
     surface_name: str
     outcome_code: str
     support_count: int
@@ -322,7 +325,7 @@ class DebugPackage:
 
 @dataclass
 class AnalyzeOutcomesResult:
-    anchor_type: str
+    anchor_type: OutcomeAnchorType
     outcome_count: int
     outcome_counts: dict[str, int] = field(default_factory=dict)
     outcome_code_counts: dict[str, int] = field(default_factory=dict)

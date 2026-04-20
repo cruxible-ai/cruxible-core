@@ -8,7 +8,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from cruxible_core.config.schema import FeedbackRemediationHint, OutcomeRemediationHint
+from cruxible_core.config.schema import (
+    FeedbackRemediationHint,
+    OutcomeAnchorType,
+    OutcomeLabel,
+    OutcomeRemediationHint,
+)
 from cruxible_core.graph.types import RelationshipInstance
 
 
@@ -51,9 +56,9 @@ class OutcomeRecord(BaseModel):
 
     outcome_id: str = Field(default_factory=lambda: f"OUT-{uuid.uuid4().hex[:12]}")
     receipt_id: str
-    anchor_type: Literal["resolution", "receipt"] = "receipt"
+    anchor_type: OutcomeAnchorType = "receipt"
     anchor_id: str | None = None
-    outcome: Literal["correct", "incorrect", "partial", "unknown"]
+    outcome: OutcomeLabel
     outcome_code: str | None = None
     outcome_remediation_hint: OutcomeRemediationHint | None = None
     scope_hints: dict[str, Any] = Field(default_factory=dict)

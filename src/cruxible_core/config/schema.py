@@ -278,6 +278,18 @@ class FeedbackProfileSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+SurfaceType = Literal["query", "workflow", "operation"]
+"""Surface a decision is scoped to: a named query, a workflow, or a graph operation."""
+
+
+OutcomeAnchorType = Literal["resolution", "receipt"]
+"""What an outcome is anchored to: a group resolution or a receipt."""
+
+
+OutcomeLabel = Literal["correct", "incorrect", "partial", "unknown"]
+"""Coarse outcome label captured on every OutcomeRecord."""
+
+
 OutcomeRemediationHint = Literal[
     "trust_adjustment",
     "require_review",
@@ -301,11 +313,11 @@ class OutcomeCodeSchema(BaseModel):
 class OutcomeProfileSchema(BaseModel):
     """Anchor-scoped outcome vocabulary and grouping metadata."""
 
-    anchor_type: Literal["resolution", "receipt"]
+    anchor_type: OutcomeAnchorType
     version: int = 1
     relationship_type: str | None = None
     workflow_name: str | None = None
-    surface_type: Literal["query", "workflow", "operation"] | None = None
+    surface_type: SurfaceType | None = None
     surface_name: str | None = None
     outcome_codes: dict[str, OutcomeCodeSchema] = Field(default_factory=dict)
     scope_keys: dict[str, OutcomePathRef] = Field(default_factory=dict)
