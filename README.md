@@ -66,6 +66,36 @@ A simple way to think about it:
 
 > LLMs can reason over knowledge. Cruxible governs what becomes trusted state.
 
+More specifically, Cruxible lets humans and agents share a governed domain
+world model: typed entities, relationships, workflows, named queries, review
+state, and outcomes.
+
+## How It Works
+
+- **Ontology:** entity types, relationships, and constraints that define the
+  domain.
+- **Providers:** evidence producers and integrations that read, match,
+  classify, score, or enrich data.
+- **Workflows:** repeatable procedures that build reference state, load
+  operational state, or propose governed changes.
+- **Named queries:** deterministic read surfaces over the world model.
+- **Groups and resolutions:** the review boundary where uncertain proposals
+  become accepted state.
+- **Receipts:** structured proof of how a query result or proposal was
+  produced.
+- **Feedback and outcomes:** later evidence that improves future behavior.
+
+The core loop is:
+
+1. Build or ingest domain state.
+2. Run workflows that apply or propose changes.
+3. Review uncertain proposals.
+4. Query and use accepted state from agents, apps, and downstream workflows.
+5. Attach feedback and outcomes so later runs improve.
+
+The output is not just an answer in chat. It is governed operational state
+that later agents, humans, and software can query and act on.
+
 ## Quick Example
 
 **1. Define a domain in YAML:**
