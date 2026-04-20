@@ -60,6 +60,7 @@ If `context show --json` includes an `instance_id`, then run:
 
 ```
 cruxible stats --json
+cruxible query list --json
 ```
 
 Confirm `agent_mode` from `cruxible server info --json` before acting. If the
@@ -71,6 +72,12 @@ Use this step to decide which milestone already exists:
 - Reference layer built
 - Fork layer built
 - Proposal queue already populated
+
+If the remembered instance's query surface does not look like the KEV kit
+(for example it does not include queries such as `kev_assets`,
+`owner_patch_queue`, and `service_blast_radius`), do not try to resume it.
+Treat that as "wrong instance selected" and create or select a KEV instance in
+Step 4 instead.
 
 Do not treat "nonzero entities" as the only branch. A partially built world is
 common when adapting inputs. Resume from the first missing milestone instead of
@@ -282,7 +289,13 @@ If a kept query is expected to be empty for this dataset, note that explicitly
 in the hand-off instead of treating it as a failure.
 
 Render the wiki and inspect at least one subject page (a user asset or
-service) to confirm the linked context renders correctly.
+service) to confirm the linked context renders correctly:
+
+```
+cruxible render-wiki --output wiki
+```
+
+Then open at least one rendered page under `wiki/subjects/`.
 
 ### 9. Hand off
 
