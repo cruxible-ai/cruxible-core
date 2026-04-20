@@ -193,6 +193,27 @@ class TestWorkflowExecutionServices:
                 expected_head_snapshot_id=preview.head_snapshot_id,
             )
 
+    def test_service_apply_workflow_rejects_head_snapshot_mismatch_with_guidance(
+        self,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+
+        with pytest.raises(ConfigError) as exc_info:
+            service_apply_workflow(
+                canonical_workflow_instance,
+                "build_reference",
+                {},
+                expected_apply_digest=preview.apply_digest or "",
+                expected_head_snapshot_id="snap_other",
+            )
+
+        message = str(exc_info.value)
+        assert "Workflow head snapshot changed between preview and apply." in message
+        assert "--apply-digest AND --head-snapshot" in message
+        assert "--preview-file <path>" in message
+
     def test_service_test_supports_expected_error_cases(
         self, workflow_instance: CruxibleInstance
     ) -> None:
@@ -253,24 +274,17 @@ class TestWorkflowExecutionServices:
         assert len(members) == 2
         assert all(member.relationship_type == "recommended_for" for member in members)
 
-    def test_service_run_does_not_create_group_side_effects(
+    def test_service_run_rejects_proposal_workflow(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:
         service_lock(proposal_workflow_instance)
 
-        result = service_run(
-            proposal_workflow_instance,
-            "propose_campaign_recommendations",
-            {"campaign_id": "CMP-1"},
-        )
-
-        assert result.output["relationship_type"] == "recommended_for"
-        assert result.output["members"]
-        group_store = proposal_workflow_instance.get_group_store()
-        try:
-            assert group_store.count_groups() == 0
-        finally:
-            group_store.close()
+        with pytest.raises(QueryExecutionError, match="use 'cruxible propose --workflow"):
+            service_run(
+                proposal_workflow_instance,
+                "propose_campaign_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
 
     def test_service_propose_workflow_rejects_missing_required_signals(
         self, proposal_workflow_instance: CruxibleInstance
@@ -289,7 +303,7 @@ class TestWorkflowExecutionServices:
                 {"campaign_id": "CMP-1"},
             )
 
-    def test_service_run_rejects_signal_for_unknown_candidate_pair(
+    def test_service_propose_workflow_rejects_signal_for_unknown_candidate_pair(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:
         config = proposal_workflow_instance.load_config()
@@ -300,7 +314,7 @@ class TestWorkflowExecutionServices:
         service_lock(proposal_workflow_instance)
 
         with pytest.raises(QueryExecutionError, match="unknown candidate pair CMP-1->SKU-456"):
-            service_run(
+            service_propose_workflow(
                 proposal_workflow_instance,
                 "propose_campaign_recommendations",
                 {"campaign_id": "CMP-1"},

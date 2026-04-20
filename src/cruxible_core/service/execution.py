@@ -101,6 +101,15 @@ def service_run(
 ) -> RunServiceResult:
     """Execute a workflow and return output plus receipt/trace identifiers."""
     config = instance.load_config()
+    workflow = config.workflows.get(workflow_name)
+    if workflow is None:
+        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+    if _workflow_returns_relationship_proposal(workflow):
+        raise QueryExecutionError(
+            f"Workflow '{workflow_name}' produces a governed proposal; use "
+            f"'cruxible propose --workflow {workflow_name}' to bridge output into a "
+            "candidate group."
+        )
     result = execute_workflow(instance, config, workflow_name, input_payload)
     return _build_workflow_execution_result(result, RunServiceResult)
 
@@ -133,7 +142,12 @@ def service_apply_workflow(
     if preview.apply_digest != expected_apply_digest:
         raise ConfigError("Workflow apply digest mismatch; rerun workflow preview before apply")
     if preview.head_snapshot_id != expected_head_snapshot_id:
-        raise ConfigError("Workflow head snapshot changed; rerun workflow preview before apply")
+        raise ConfigError(
+            "Workflow head snapshot changed between preview and apply.\n"
+            "Apply requires both --apply-digest AND --head-snapshot from the preview output,\n"
+            "or pass --preview-file <path> if you used 'run --save-preview'.\n"
+            "Rerun the preview if output was not captured."
+        )
 
     current_lock = load_lock(resolve_lock_path(instance))
     current_lock_digest = compute_lock_digest(current_lock)
@@ -329,3 +343,12 @@ def _contains_subset(actual: Any, expected_subset: Any) -> bool:
         )
 
     return actual == expected_subset
+
+
+def _workflow_returns_relationship_proposal(workflow: Any) -> bool:
+    """Return True when a workflow returns a built-in relationship proposal artifact."""
+    return any(
+        bool(step.as_ == workflow.returns)
+        and step.propose_relationship_group is not None
+        for step in workflow.steps
+    )
