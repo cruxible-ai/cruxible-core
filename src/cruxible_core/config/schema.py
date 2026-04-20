@@ -233,17 +233,21 @@ FeedbackPathRef = Annotated[str, Field(pattern=_FEEDBACK_PATH_PATTERN)]
 OutcomePathRef = Annotated[str, Field(pattern=_OUTCOME_PATH_PATTERN)]
 
 
+FeedbackRemediationHint = Literal[
+    "constraint",
+    "decision_policy",
+    "quality_check",
+    "provider_fix",
+    "unknown",
+]
+"""Bounded remediation lane assigned to a feedback reason code."""
+
+
 class FeedbackReasonCodeSchema(BaseModel):
     """Structured feedback code used by agents and analysis."""
 
     description: str
-    remediation_hint: Literal[
-        "constraint",
-        "decision_policy",
-        "quality_check",
-        "provider_fix",
-        "unknown",
-    ] = "unknown"
+    remediation_hint: FeedbackRemediationHint = "unknown"
     required_scope_keys: list[str] = Field(default_factory=list)
 
 
@@ -274,19 +278,23 @@ class FeedbackProfileSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+OutcomeRemediationHint = Literal[
+    "trust_adjustment",
+    "require_review",
+    "decision_policy",
+    "provider_fix",
+    "workflow_fix",
+    "graph_fix",
+    "unknown",
+]
+"""Bounded remediation lane assigned to an outcome code."""
+
+
 class OutcomeCodeSchema(BaseModel):
     """Structured outcome code used by agents and outcome analysis."""
 
     description: str
-    remediation_hint: Literal[
-        "trust_adjustment",
-        "require_review",
-        "decision_policy",
-        "provider_fix",
-        "workflow_fix",
-        "graph_fix",
-        "unknown",
-    ] = "unknown"
+    remediation_hint: OutcomeRemediationHint = "unknown"
     required_scope_keys: list[str] = Field(default_factory=list)
 
 

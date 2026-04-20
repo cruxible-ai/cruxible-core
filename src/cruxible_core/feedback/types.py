@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from cruxible_core.config.schema import FeedbackRemediationHint, OutcomeRemediationHint
 from cruxible_core.graph.types import RelationshipInstance
 
 
@@ -20,7 +21,7 @@ class FeedbackRecord(BaseModel):
     target: RelationshipInstance
     reason: str = ""
     reason_code: str | None = None
-    reason_remediation_hint: str | None = None
+    reason_remediation_hint: FeedbackRemediationHint | None = None
     scope_hints: dict[str, Any] = Field(default_factory=dict)
     feedback_profile_key: str | None = None
     feedback_profile_version: int | None = None
@@ -54,7 +55,7 @@ class OutcomeRecord(BaseModel):
     anchor_id: str | None = None
     outcome: Literal["correct", "incorrect", "partial", "unknown"]
     outcome_code: str | None = None
-    outcome_remediation_hint: str | None = None
+    outcome_remediation_hint: OutcomeRemediationHint | None = None
     scope_hints: dict[str, Any] = Field(default_factory=dict)
     outcome_profile_key: str | None = None
     outcome_profile_version: int | None = None

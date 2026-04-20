@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import (
+    CoreConfig,
+    FeedbackRemediationHint,
+    OutcomeRemediationHint,
+)
 from cruxible_core.evaluate import EvaluationReport
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import (
@@ -155,7 +159,7 @@ class FeedbackBatchServiceResult:
 class FeedbackGroupSummary:
     relationship_type: str
     reason_code: str
-    remediation_hint: str
+    remediation_hint: FeedbackRemediationHint
     decision_context: dict[str, Any] = field(default_factory=dict)
     scope_hints: dict[str, Any] = field(default_factory=dict)
     feedback_count: int = 0
@@ -254,7 +258,7 @@ class AnalyzeFeedbackResult:
 class OutcomeGroupSummary:
     anchor_type: str
     outcome_code: str
-    remediation_hint: str
+    remediation_hint: OutcomeRemediationHint
     decision_context: dict[str, Any] = field(default_factory=dict)
     scope_hints: dict[str, Any] = field(default_factory=dict)
     outcome_count: int = 0
