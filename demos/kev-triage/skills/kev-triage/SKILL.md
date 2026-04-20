@@ -53,7 +53,7 @@ so the proposals land in context.
 
 ## Agent-mode constraints
 
-This instance may run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
+This instance must run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
 
 - `cruxible add-relationship` is **blocked**. Agents cannot write accepted
   edges directly — only `group propose`.
@@ -68,8 +68,7 @@ do not retry or try to bypass. Surface the error to the user and stop.
 ## Task 1 — Incident attribution
 
 **When:** an incident report, post-mortem, or SIEM investigation references a
-vulnerability and asset(s) that are already tracked. Sample reports live
-under `data/seed/review_material/incidents/`.
+vulnerability and asset(s) that are already tracked.
 
 **Inputs you need from the report:**
 - Incident ID, title, severity, status, occurred_at, resolved_at (if known),

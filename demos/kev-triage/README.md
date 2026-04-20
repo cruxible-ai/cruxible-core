@@ -2,6 +2,13 @@
 
 Forkable cyber world model for vulnerability and KEV triage.
 
+## Skills
+
+- [skills/kev-start/SKILL.md](skills/kev-start/SKILL.md) — adapt the KEV kit
+  to your own asset, inventory, and service-mapping data
+- [skills/kev-triage/SKILL.md](skills/kev-triage/SKILL.md) — the packaged
+  daily triage / incident / waiver / control-effectiveness loop
+
 ## Structure
 
 This demo has two configs that represent the two layers:
