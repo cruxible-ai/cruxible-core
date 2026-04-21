@@ -1198,6 +1198,7 @@ workflows:
           relationship_type: asset_runs_product
           candidates_from: candidates
           signals_from: [signals]
+          pending_refresh_mode: retain_missing
           thesis_text: >
             Fuzzy software-to-product matching from CMDB inventory
           thesis_facts:
