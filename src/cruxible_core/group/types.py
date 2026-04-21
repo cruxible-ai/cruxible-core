@@ -21,6 +21,9 @@ TrustStatus = Literal["trusted", "watch", "invalidated"]
 GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
 """Lifecycle status of a candidate group."""
 
+GroupKind = Literal["propose", "revoke"]
+"""Intent of a candidate group. ``revoke`` is reserved for future flows."""
+
 ReviewPriority = Literal["critical", "review", "normal"]
 """Review priority bucket for a candidate group."""
 
@@ -72,12 +75,14 @@ class CandidateGroup(BaseModel):
     relationship_type: str
     signature: str
     status: GroupStatus = "pending_review"
+    group_kind: GroupKind = "propose"
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
     proposed_by: Literal["human", "agent"] = "agent"
     member_count: int = 0
+    pending_version: int = 1
     review_priority: ReviewPriority = "normal"
     suggested_priority: str | None = None
     source_workflow_name: str | None = None

@@ -7,6 +7,7 @@ Write methods do NOT auto-commit — use transaction() for compound writes.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -15,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
@@ -22,6 +24,8 @@ from cruxible_core.group.types import (
     GroupResolution,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
+
+logger = logging.getLogger(__name__)
 
 # group_resolutions FIRST (referenced by candidate_groups.resolution_id)
 _SCHEMA = """\
@@ -42,18 +46,22 @@ CREATE TABLE IF NOT EXISTS group_resolutions (
 );
 CREATE INDEX IF NOT EXISTS idx_group_resolutions_match
     ON group_resolutions(relationship_type, group_signature);
+CREATE INDEX IF NOT EXISTS idx_group_resolutions_signature_action_confirmed
+    ON group_resolutions(relationship_type, group_signature, action, confirmed);
 
 CREATE TABLE IF NOT EXISTS candidate_groups (
     group_id TEXT PRIMARY KEY,
     relationship_type TEXT NOT NULL,
     signature TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending_review',
+    group_kind TEXT NOT NULL DEFAULT 'propose',
     thesis_text TEXT NOT NULL DEFAULT '',
     thesis_facts TEXT NOT NULL DEFAULT '{}',
     analysis_state TEXT NOT NULL DEFAULT '{}',
     integrations_used TEXT NOT NULL DEFAULT '[]',
     proposed_by TEXT NOT NULL,
     member_count INTEGER NOT NULL DEFAULT 0,
+    pending_version INTEGER NOT NULL DEFAULT 1,
     review_priority TEXT NOT NULL DEFAULT 'normal',
     suggested_priority TEXT,
     source_workflow_name TEXT,
@@ -66,6 +74,8 @@ CREATE TABLE IF NOT EXISTS candidate_groups (
 CREATE INDEX IF NOT EXISTS idx_candidate_groups_signature ON candidate_groups(signature);
 CREATE INDEX IF NOT EXISTS idx_candidate_groups_status ON candidate_groups(status);
 CREATE INDEX IF NOT EXISTS idx_candidate_groups_rel_type ON candidate_groups(relationship_type);
+CREATE INDEX IF NOT EXISTS idx_candidate_groups_signature_status
+    ON candidate_groups(relationship_type, signature, status);
 
 CREATE TABLE IF NOT EXISTS candidate_members (
     group_id TEXT NOT NULL REFERENCES candidate_groups(group_id),
@@ -77,6 +87,13 @@ CREATE TABLE IF NOT EXISTS candidate_members (
     signals TEXT NOT NULL DEFAULT '[]',
     properties TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (group_id, from_type, from_id, to_type, to_id, relationship_type)
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_members_group_identity
+    ON candidate_members(group_id, relationship_type, from_type, from_id, to_type, to_id);
+
+CREATE TABLE IF NOT EXISTS group_store_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -99,6 +116,8 @@ class GroupStore(GroupStoreProtocol):
             for row in self._conn.execute("PRAGMA table_info(candidate_groups)").fetchall()
         }
         additions = [
+            ("group_kind", "TEXT NOT NULL DEFAULT 'propose'"),
+            ("pending_version", "INTEGER NOT NULL DEFAULT 1"),
             ("source_workflow_name", "TEXT"),
             ("source_workflow_receipt_id", "TEXT"),
             ("source_trace_ids", "TEXT NOT NULL DEFAULT '[]'"),
@@ -107,7 +126,95 @@ class GroupStore(GroupStoreProtocol):
         for name, ddl in additions:
             if name not in columns:
                 self._conn.execute(f"ALTER TABLE candidate_groups ADD COLUMN {name} {ddl}")
+
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_group_resolutions_signature_action_confirmed "
+            "ON group_resolutions(relationship_type, group_signature, action, confirmed)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_groups_pending_signature "
+            "ON candidate_groups(relationship_type, signature) "
+            "WHERE status = 'pending_review' AND group_kind = 'propose'"
+        )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_groups_pending_unique "
+            "ON candidate_groups(relationship_type, signature) "
+            "WHERE status = 'pending_review' AND group_kind = 'propose'"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_groups_signature_status "
+            "ON candidate_groups(relationship_type, signature, status)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_members_group_identity "
+            "ON candidate_members(group_id, relationship_type, from_type, from_id, to_type, to_id)"
+        )
+
+        self._run_signature_bucket_migration()
         self._conn.commit()
+
+    def _run_signature_bucket_migration(self) -> None:
+        migrated = self._conn.execute(
+            "SELECT value FROM group_store_meta WHERE key = 'signature_bucket_v1'"
+        ).fetchone()
+        if migrated is not None:
+            return
+
+        dropped = self._drop_legacy_pending_groups()
+        backfilled, preserved = self._backfill_resolved_signatures()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO group_store_meta(key, value) VALUES (?, ?)",
+            ("signature_bucket_v1", datetime.now(timezone.utc).isoformat()),
+        )
+        logger.info("Group store migration: dropped %s legacy pending/transient groups", dropped)
+        logger.info("Group store migration: backfilled %s resolved signatures to sigv1", backfilled)
+        logger.info(
+            "Group store migration: preserved %s legacy resolved rows "
+            "with empty thesis_facts as read-only",
+            preserved,
+        )
+
+    def _drop_legacy_pending_groups(self) -> int:
+        rows = self._conn.execute(
+            "SELECT group_id FROM candidate_groups WHERE status IN "
+            "('pending_review', 'auto_resolved', 'applying')"
+        ).fetchall()
+        group_ids = [row["group_id"] for row in rows]
+        if not group_ids:
+            return 0
+        placeholders = ",".join("?" for _ in group_ids)
+        self._conn.execute(
+            f"DELETE FROM candidate_members WHERE group_id IN ({placeholders})",
+            tuple(group_ids),
+        )
+        self._conn.execute(
+            f"DELETE FROM candidate_groups WHERE group_id IN ({placeholders})",
+            tuple(group_ids),
+        )
+        return len(group_ids)
+
+    def _backfill_resolved_signatures(self) -> tuple[int, int]:
+        rows = self._conn.execute(
+            "SELECT resolution_id, relationship_type, thesis_facts FROM group_resolutions"
+        ).fetchall()
+        backfilled = 0
+        preserved = 0
+        for row in rows:
+            thesis_facts = json.loads(row["thesis_facts"])
+            if not thesis_facts:
+                preserved += 1
+                continue
+            signature = compute_group_signature(row["relationship_type"], thesis_facts)
+            self._conn.execute(
+                "UPDATE group_resolutions SET group_signature = ? WHERE resolution_id = ?",
+                (signature, row["resolution_id"]),
+            )
+            self._conn.execute(
+                "UPDATE candidate_groups SET signature = ? WHERE resolution_id = ?",
+                (signature, row["resolution_id"]),
+            )
+            backfilled += 1
+        return backfilled, preserved
 
     # -----------------------------------------------------------------
     # Transaction support
@@ -116,7 +223,7 @@ class GroupStore(GroupStoreProtocol):
     @contextmanager
     def transaction(self) -> Iterator[None]:
         """Context manager for atomic compound writes."""
-        self._conn.execute("BEGIN")
+        self._conn.execute("BEGIN IMMEDIATE")
         try:
             yield
             self._conn.commit()
@@ -135,24 +242,46 @@ class GroupStore(GroupStoreProtocol):
     def save_group(self, group: CandidateGroup) -> str:
         """Persist a CandidateGroup. Does NOT commit."""
         self._conn.execute(
-            "INSERT OR REPLACE INTO candidate_groups "
-            "(group_id, relationship_type, signature, status, thesis_text, "
+            "INSERT INTO candidate_groups "
+            "(group_id, relationship_type, signature, status, group_kind, thesis_text, "
             "thesis_facts, analysis_state, integrations_used, proposed_by, "
-            "member_count, review_priority, suggested_priority, source_workflow_name, "
-            "source_workflow_receipt_id, source_trace_ids, source_step_ids, "
-            "resolution_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "member_count, pending_version, review_priority, suggested_priority, "
+            "source_workflow_name, source_workflow_receipt_id, source_trace_ids, "
+            "source_step_ids, resolution_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(group_id) DO UPDATE SET "
+            "relationship_type = excluded.relationship_type, "
+            "signature = excluded.signature, "
+            "status = excluded.status, "
+            "group_kind = excluded.group_kind, "
+            "thesis_text = excluded.thesis_text, "
+            "thesis_facts = excluded.thesis_facts, "
+            "analysis_state = excluded.analysis_state, "
+            "integrations_used = excluded.integrations_used, "
+            "proposed_by = excluded.proposed_by, "
+            "member_count = excluded.member_count, "
+            "pending_version = excluded.pending_version, "
+            "review_priority = excluded.review_priority, "
+            "suggested_priority = excluded.suggested_priority, "
+            "source_workflow_name = excluded.source_workflow_name, "
+            "source_workflow_receipt_id = excluded.source_workflow_receipt_id, "
+            "source_trace_ids = excluded.source_trace_ids, "
+            "source_step_ids = excluded.source_step_ids, "
+            "resolution_id = excluded.resolution_id, "
+            "created_at = excluded.created_at",
             (
                 group.group_id,
                 group.relationship_type,
                 group.signature,
                 group.status,
+                group.group_kind,
                 group.thesis_text,
                 json.dumps(group.thesis_facts),
                 json.dumps(group.analysis_state),
                 json.dumps(group.integrations_used),
                 group.proposed_by,
                 group.member_count,
+                group.pending_version,
                 group.review_priority,
                 group.suggested_priority,
                 group.source_workflow_name,
@@ -189,6 +318,7 @@ class GroupStore(GroupStoreProtocol):
         self,
         *,
         relationship_type: str | None = None,
+        signature: str | None = None,
         status: str | None = None,
         limit: int = 50,
     ) -> list[CandidateGroup]:
@@ -198,6 +328,9 @@ class GroupStore(GroupStoreProtocol):
         if relationship_type is not None:
             clauses.append("relationship_type = ?")
             params.append(relationship_type)
+        if signature is not None:
+            clauses.append("signature = ?")
+            params.append(signature)
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
@@ -213,6 +346,7 @@ class GroupStore(GroupStoreProtocol):
         self,
         *,
         relationship_type: str | None = None,
+        signature: str | None = None,
         status: str | None = None,
     ) -> int:
         """Count groups with optional filters."""
@@ -221,6 +355,9 @@ class GroupStore(GroupStoreProtocol):
         if relationship_type is not None:
             clauses.append("relationship_type = ?")
             params.append(relationship_type)
+        if signature is not None:
+            clauses.append("signature = ?")
+            params.append(signature)
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
@@ -251,6 +388,43 @@ class GroupStore(GroupStoreProtocol):
             )
         return self._conn.total_changes > 0
 
+    def update_group(
+        self,
+        group_id: str,
+        *,
+        status: str | None = None,
+        pending_version: int | None = None,
+        member_count: int | None = None,
+        resolution_id: str | None = None,
+        review_priority: str | None = None,
+    ) -> bool:
+        """Update selected group fields. Does NOT commit."""
+        assignments: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            assignments.append("status = ?")
+            params.append(status)
+        if pending_version is not None:
+            assignments.append("pending_version = ?")
+            params.append(pending_version)
+        if member_count is not None:
+            assignments.append("member_count = ?")
+            params.append(member_count)
+        if resolution_id is not None:
+            assignments.append("resolution_id = ?")
+            params.append(resolution_id)
+        if review_priority is not None:
+            assignments.append("review_priority = ?")
+            params.append(review_priority)
+        if not assignments:
+            return False
+        params.append(group_id)
+        cursor = self._conn.execute(
+            f"UPDATE candidate_groups SET {', '.join(assignments)} WHERE group_id = ?",
+            tuple(params),
+        )
+        return cursor.rowcount > 0
+
     @staticmethod
     def _row_to_group(row: sqlite3.Row) -> CandidateGroup:
         return CandidateGroup(
@@ -258,12 +432,14 @@ class GroupStore(GroupStoreProtocol):
             relationship_type=row["relationship_type"],
             signature=row["signature"],
             status=row["status"],
+            group_kind=row["group_kind"],
             thesis_text=row["thesis_text"],
             thesis_facts=json.loads(row["thesis_facts"]),
             analysis_state=json.loads(row["analysis_state"]),
             integrations_used=json.loads(row["integrations_used"]),
             proposed_by=row["proposed_by"],
             member_count=row["member_count"],
+            pending_version=row["pending_version"],
             review_priority=row["review_priority"],
             suggested_priority=row["suggested_priority"],
             source_workflow_name=row["source_workflow_name"],
@@ -299,6 +475,11 @@ class GroupStore(GroupStoreProtocol):
                 ),
             )
 
+    def replace_members(self, group_id: str, members: list[CandidateMember]) -> None:
+        """Replace the full member payload for a group. Does NOT commit."""
+        self._conn.execute("DELETE FROM candidate_members WHERE group_id = ?", (group_id,))
+        self.save_members(group_id, members)
+
     def get_members(self, group_id: str) -> list[CandidateMember]:
         """Load members for a group."""
         rows = self._conn.execute(
@@ -306,6 +487,30 @@ class GroupStore(GroupStoreProtocol):
             (group_id,),
         ).fetchall()
         return [self._row_to_member(r) for r in rows]
+
+    def delete_group(self, group_id: str) -> bool:
+        """Delete a group and its members. Does NOT commit."""
+        self._conn.execute("DELETE FROM candidate_members WHERE group_id = ?", (group_id,))
+        cursor = self._conn.execute("DELETE FROM candidate_groups WHERE group_id = ?", (group_id,))
+        return cursor.rowcount > 0
+
+    def find_pending_group(
+        self,
+        relationship_type: str,
+        signature: str,
+        *,
+        group_kind: str = "propose",
+    ) -> CandidateGroup | None:
+        """Find the current pending bucket for a signature."""
+        row = self._conn.execute(
+            "SELECT * FROM candidate_groups WHERE relationship_type = ? "
+            "AND signature = ? AND status = 'pending_review' AND group_kind = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (relationship_type, signature, group_kind),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_group(row)
 
     @staticmethod
     def _row_to_member(row: sqlite3.Row) -> CandidateMember:
@@ -420,7 +625,9 @@ class GroupStore(GroupStoreProtocol):
         self,
         *,
         relationship_type: str | None = None,
+        signature: str | None = None,
         action: str | None = None,
+        confirmed: bool | None = None,
         limit: int = 50,
     ) -> list[GroupResolution]:
         """List resolutions with optional filters."""
@@ -429,9 +636,15 @@ class GroupStore(GroupStoreProtocol):
         if relationship_type is not None:
             clauses.append("relationship_type = ?")
             params.append(relationship_type)
+        if signature is not None:
+            clauses.append("group_signature = ?")
+            params.append(signature)
         if action is not None:
             clauses.append("action = ?")
             params.append(action)
+        if confirmed is not None:
+            clauses.append("confirmed = ?")
+            params.append(1 if confirmed else 0)
 
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self._conn.execute(
@@ -439,6 +652,34 @@ class GroupStore(GroupStoreProtocol):
             (*params, limit),
         ).fetchall()
         return [self._row_to_resolution(r) for r in rows]
+
+    def list_approved_relationship_tuples(
+        self,
+        relationship_type: str,
+        signature: str,
+        *,
+        group_kind: str = "propose",
+    ) -> set[tuple[str, str, str, str, str]]:
+        """Return approved tuple identities for a signature bucket."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type "
+            "FROM candidate_members m "
+            "JOIN candidate_groups g ON g.group_id = m.group_id "
+            "JOIN group_resolutions r ON r.resolution_id = g.resolution_id "
+            "WHERE g.relationship_type = ? AND g.signature = ? AND g.group_kind = ? "
+            "AND g.status = 'resolved' AND r.action = 'approve' AND r.confirmed = 1",
+            (relationship_type, signature, group_kind),
+        ).fetchall()
+        return {
+            (
+                row["from_type"],
+                row["from_id"],
+                row["to_type"],
+                row["to_id"],
+                row["relationship_type"],
+            )
+            for row in rows
+        }
 
     def update_resolution_trust_status(
         self,

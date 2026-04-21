@@ -21,6 +21,9 @@ OperationType = Literal[
     "ingest",
     "feedback",
     "feedback_batch",
+    "group_propose",
+    "group_rewrite",
+    "group_clear",
     "group_resolve",
 ]
 """Coarse-grained category of operation that produced a receipt."""

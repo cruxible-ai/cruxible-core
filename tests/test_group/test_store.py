@@ -2,18 +2,73 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
 from cruxible_core.feedback.store import FeedbackStore
+from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _create_legacy_group_db(db_path: Path) -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE group_resolutions (
+            resolution_id TEXT PRIMARY KEY,
+            relationship_type TEXT NOT NULL,
+            group_signature TEXT NOT NULL,
+            action TEXT NOT NULL,
+            rationale TEXT DEFAULT '',
+            thesis_text TEXT NOT NULL DEFAULT '',
+            thesis_facts TEXT NOT NULL DEFAULT '{}',
+            analysis_state TEXT NOT NULL DEFAULT '{}',
+            trust_status TEXT NOT NULL DEFAULT 'watch',
+            trust_reason TEXT NOT NULL DEFAULT '',
+            confirmed INTEGER NOT NULL DEFAULT 0,
+            resolved_by TEXT NOT NULL,
+            resolved_at TEXT NOT NULL
+        );
+        CREATE TABLE candidate_groups (
+            group_id TEXT PRIMARY KEY,
+            relationship_type TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending_review',
+            thesis_text TEXT NOT NULL DEFAULT '',
+            thesis_facts TEXT NOT NULL DEFAULT '{}',
+            analysis_state TEXT NOT NULL DEFAULT '{}',
+            integrations_used TEXT NOT NULL DEFAULT '[]',
+            proposed_by TEXT NOT NULL,
+            member_count INTEGER NOT NULL DEFAULT 0,
+            review_priority TEXT NOT NULL DEFAULT 'normal',
+            suggested_priority TEXT,
+            resolution_id TEXT REFERENCES group_resolutions(resolution_id),
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE candidate_members (
+            group_id TEXT NOT NULL REFERENCES candidate_groups(group_id),
+            from_type TEXT NOT NULL,
+            from_id TEXT NOT NULL,
+            to_type TEXT NOT NULL,
+            to_id TEXT NOT NULL,
+            relationship_type TEXT NOT NULL,
+            signals TEXT NOT NULL DEFAULT '[]',
+            properties TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (group_id, from_type, from_id, to_type, to_id, relationship_type)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
 
 
 def _group(
@@ -184,7 +239,7 @@ class TestGroupRoundTrip:
     def test_count_groups(self, store: GroupStore) -> None:
         with store.transaction():
             store.save_group(_group("GRP-1"))
-            store.save_group(_group("GRP-2"))
+            store.save_group(_group("GRP-2", signature="sigv1:def456"))
         assert store.count_groups() == 2
         assert store.count_groups(status="pending_review") == 2
         assert store.count_groups(status="resolved") == 0
@@ -391,3 +446,169 @@ class TestCoexistence:
         assert fs.count_feedback() == 0
         gs.close()
         fs.close()
+
+
+class TestMigration:
+    def test_backfill_resolved_signatures_matches_compute_function(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "legacy-feedback.db"
+        _create_legacy_group_db(db_path)
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        created_at = _now().isoformat()
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO group_resolutions "
+            "(resolution_id, relationship_type, group_signature, action, rationale, thesis_text, "
+            "thesis_facts, analysis_state, trust_status, trust_reason, confirmed, resolved_by, "
+            "resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "RES-1",
+                "fits",
+                "legacy-signature",
+                "approve",
+                "ok",
+                "fit rule",
+                json.dumps(facts),
+                "{}",
+                "trusted",
+                "",
+                1,
+                "human",
+                created_at,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO candidate_groups "
+            "(group_id, relationship_type, signature, status, thesis_text, thesis_facts, "
+            "analysis_state, integrations_used, proposed_by, member_count, review_priority, "
+            "suggested_priority, resolution_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "GRP-1",
+                "fits",
+                "legacy-signature",
+                "resolved",
+                "fit rule",
+                json.dumps(facts),
+                "{}",
+                "[]",
+                "agent",
+                1,
+                "review",
+                None,
+                "RES-1",
+                created_at,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        store = GroupStore(db_path)
+        try:
+            expected = compute_group_signature("fits", facts)
+            group = store.get_group("GRP-1")
+            resolution = store.get_resolution("RES-1")
+        finally:
+            store.close()
+
+        assert group is not None
+        assert resolution is not None
+        assert group.signature == expected
+        assert resolution.group_signature == expected
+
+    def test_migration_drops_pending_and_preserves_empty_thesis_resolved(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "legacy-feedback.db"
+        _create_legacy_group_db(db_path)
+        created_at = _now().isoformat()
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO candidate_groups "
+            "(group_id, relationship_type, signature, status, thesis_text, thesis_facts, "
+            "analysis_state, integrations_used, proposed_by, member_count, review_priority, "
+            "suggested_priority, resolution_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "GRP-pending",
+                "fits",
+                "legacy-pending",
+                "pending_review",
+                "pending",
+                json.dumps({"rule_id": "fit_rule"}),
+                "{}",
+                "[]",
+                "agent",
+                1,
+                "review",
+                None,
+                None,
+                created_at,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO candidate_members "
+            "(group_id, from_type, from_id, to_type, to_id, relationship_type, "
+            "signals, properties) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("GRP-pending", "Part", "BP-1", "Vehicle", "V-1", "fits", "[]", "{}"),
+        )
+        conn.execute(
+            "INSERT INTO group_resolutions "
+            "(resolution_id, relationship_type, group_signature, action, rationale, thesis_text, "
+            "thesis_facts, analysis_state, trust_status, trust_reason, confirmed, resolved_by, "
+            "resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "RES-empty",
+                "fits",
+                "legacy-empty",
+                "approve",
+                "",
+                "",
+                "{}",
+                "{}",
+                "watch",
+                "",
+                1,
+                "human",
+                created_at,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO candidate_groups "
+            "(group_id, relationship_type, signature, status, thesis_text, thesis_facts, "
+            "analysis_state, integrations_used, proposed_by, member_count, review_priority, "
+            "suggested_priority, resolution_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "GRP-resolved",
+                "fits",
+                "legacy-empty",
+                "resolved",
+                "",
+                "{}",
+                "{}",
+                "[]",
+                "agent",
+                0,
+                "review",
+                None,
+                "RES-empty",
+                created_at,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        store = GroupStore(db_path)
+        try:
+            pending = store.get_group("GRP-pending")
+            resolved = store.get_group("GRP-resolved")
+            resolution = store.get_resolution("RES-empty")
+        finally:
+            store.close()
+
+        assert pending is None
+        assert resolved is not None
+        assert resolution is not None
+        assert resolved.signature == "legacy-empty"
+        assert resolution.group_signature == "legacy-empty"

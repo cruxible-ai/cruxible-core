@@ -128,6 +128,7 @@ class GroupStoreProtocol(ABC):
         self,
         *,
         relationship_type: str | None = None,
+        signature: str | None = None,
         status: str | None = None,
         limit: int = 50,
     ) -> list[CandidateGroup]: ...
@@ -136,6 +137,7 @@ class GroupStoreProtocol(ABC):
         self,
         *,
         relationship_type: str | None = None,
+        signature: str | None = None,
         status: str | None = None,
     ) -> int: ...
     @abstractmethod
@@ -144,6 +146,18 @@ class GroupStoreProtocol(ABC):
     def save_members(self, group_id: str, members: list[CandidateMember]) -> None: ...
     @abstractmethod
     def get_members(self, group_id: str) -> list[CandidateMember]: ...
+    @abstractmethod
+    def replace_members(self, group_id: str, members: list[CandidateMember]) -> None: ...
+    @abstractmethod
+    def delete_group(self, group_id: str) -> bool: ...
+    @abstractmethod
+    def find_pending_group(
+        self,
+        relationship_type: str,
+        signature: str,
+        *,
+        group_kind: str = "propose",
+    ) -> CandidateGroup | None: ...
     @abstractmethod
     def save_resolution(
         self,
@@ -175,12 +189,33 @@ class GroupStoreProtocol(ABC):
         self,
         *,
         relationship_type: str | None = None,
+        signature: str | None = None,
         action: str | None = None,
+        confirmed: bool | None = None,
         limit: int = 50,
     ) -> list[GroupResolution]: ...
     @abstractmethod
+    def list_approved_relationship_tuples(
+        self,
+        relationship_type: str,
+        signature: str,
+        *,
+        group_kind: str = "propose",
+    ) -> set[tuple[str, str, str, str, str]]: ...
+    @abstractmethod
     def update_group_status(
         self, group_id: str, status: str, resolution_id: str | None = None
+    ) -> bool: ...
+    @abstractmethod
+    def update_group(
+        self,
+        group_id: str,
+        *,
+        status: str | None = None,
+        pending_version: int | None = None,
+        member_count: int | None = None,
+        resolution_id: str | None = None,
+        review_priority: str | None = None,
     ) -> bool: ...
     @abstractmethod
     def update_resolution_trust_status(
