@@ -826,6 +826,12 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         produced_aliases,
                         errors,
                     )
+                if not step.propose_relationship_group.thesis_facts:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': propose_relationship_group "
+                        "requires non-empty thesis_facts"
+                    )
                 if step.as_ is not None:
                     produced_aliases.add(step.as_)
                 continue

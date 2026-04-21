@@ -11,7 +11,7 @@ def compute_group_signature(
     relationship_type: str,
     thesis_facts: dict[str, Any],
 ) -> str:
-    """SHA-256 of relationship_type + canonical JSON of thesis_facts.
+    """Versioned SHA-256 of relationship_type + canonical JSON of thesis_facts.
 
     Only thesis_facts is hashed, not analysis_state. This ensures signature
     stability — LLM rationales and varying centroids don't break auto-resolve.
@@ -20,5 +20,6 @@ def compute_group_signature(
         {"relationship_type": relationship_type, "thesis_facts": thesis_facts},
         sort_keys=True,
         separators=(",", ":"),
+        allow_nan=False,
     )
-    return hashlib.sha256(payload.encode()).hexdigest()
+    return f"sigv1:{hashlib.sha256(payload.encode()).hexdigest()}"

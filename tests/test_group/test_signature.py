@@ -31,7 +31,8 @@ class TestComputeGroupSignature:
     def test_empty_facts(self) -> None:
         sig = compute_group_signature("fits", {})
         assert isinstance(sig, str)
-        assert len(sig) == 64  # SHA-256 hex digest
+        assert sig.startswith("sigv1:")
+        assert len(sig) == 70  # "sigv1:" + 64-char SHA-256 hex digest
 
     def test_nested_facts(self) -> None:
         """Nested dicts and lists produce a stable hash."""
