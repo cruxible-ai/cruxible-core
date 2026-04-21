@@ -471,6 +471,7 @@ class ProposeGroupToolResult(BaseModel):
     prior_resolution: dict[str, Any] | None = None
     suppressed: bool = False
     policy_summary: dict[str, int] = Field(default_factory=dict)
+    receipt_id: str | None = None
 
 
 class AddDecisionPolicyResult(BaseModel):
@@ -689,3 +690,26 @@ class ListGroupsToolResult(BaseModel):
 class ListResolutionsToolResult(BaseModel):
     resolutions: list[dict[str, Any]]
     total: int
+
+
+class GroupStatusHistoryItem(BaseModel):
+    resolution_id: str
+    action: str
+    trust_status: str
+    confirmed: bool
+    resolved_at: str
+    tuple_count: int
+
+
+class GroupBucketStatusToolResult(BaseModel):
+    signature: str
+    relationship_type: str
+    thesis_text: str
+    thesis_facts: dict[str, Any] = Field(default_factory=dict)
+    latest_trust_status: str | None = None
+    accepted_tuple_count: int
+    pending_delta_count: int
+    pending_group_id: str | None = None
+    pending_version: int | None = None
+    latest_approved_resolution_id: str | None = None
+    approved_history: list[GroupStatusHistoryItem] = Field(default_factory=list)

@@ -878,6 +878,7 @@ def handle_resolve_group(
     action: contracts.GroupAction,
     rationale: str = "",
     resolved_by: contracts.GroupResolvedBy = "human",
+    expected_pending_version: int | None = None,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
     return _dispatch_remote_or_local(
@@ -887,6 +888,7 @@ def handle_resolve_group(
             action=action,
             rationale=rationale,
             resolved_by=resolved_by,
+            expected_pending_version=expected_pending_version,
         ),
         lambda: local_api._handle_resolve_group_local(
             instance_id,
@@ -894,6 +896,7 @@ def handle_resolve_group(
             action,
             rationale=rationale,
             resolved_by=resolved_by,
+            expected_pending_version=expected_pending_version,
         ),
         allow_local=False,
         operation_name="cruxible_resolve_group",
@@ -933,6 +936,27 @@ def handle_get_group(
     return _dispatch_remote_or_local(
         lambda client: client.get_group(instance_id, group_id),
         lambda: local_api._handle_get_group_local(instance_id, group_id),
+    )
+
+
+def handle_group_status(
+    instance_id: str,
+    *,
+    group_id: str | None = None,
+    signature: str | None = None,
+) -> contracts.GroupBucketStatusToolResult:
+    """Get signature-bucket lifecycle status."""
+    return _dispatch_remote_or_local(
+        lambda client: client.get_group_status(
+            instance_id,
+            group_id=group_id,
+            signature=signature,
+        ),
+        lambda: local_api._handle_group_status_local(
+            instance_id,
+            group_id=group_id,
+            signature=signature,
+        ),
     )
 
 

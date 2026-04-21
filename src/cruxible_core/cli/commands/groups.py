@@ -27,6 +27,7 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.service import (
     service_get_group,
+    service_group_status,
     service_list_groups,
     service_list_resolutions,
     service_propose_group,
@@ -156,6 +157,8 @@ def group_propose(
     click.echo(f"  Priority: {result.review_priority}")
     click.echo(f"  Members: {result.member_count}")
     click.echo(f"  Signature: {result.signature[:16]}...")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 @group_group.command("resolve")
@@ -173,6 +176,12 @@ def group_propose(
     default="human",
     help="Who resolved (default: human).",
 )
+@click.option(
+    "--expected-pending-version",
+    required=True,
+    type=int,
+    help="Pending version the reviewer saw when deciding.",
+)
 @json_option
 @handle_errors
 def group_resolve(
@@ -180,6 +189,7 @@ def group_resolve(
     action: str,
     rationale: str,
     source: str,
+    expected_pending_version: int,
     output_json: bool,
 ) -> None:
     """Resolve a candidate group (approve or reject)."""
@@ -190,6 +200,7 @@ def group_resolve(
             action=cast(contracts.GroupAction, action),
             rationale=rationale,
             resolved_by=cast(contracts.GroupResolvedBy, source),
+            expected_pending_version=expected_pending_version,
         ),
         lambda instance: service_resolve_group(
             instance,
@@ -197,6 +208,7 @@ def group_resolve(
             action,  # type: ignore[arg-type]
             rationale=rationale,
             resolved_by=source,  # type: ignore[arg-type]
+            expected_pending_version=expected_pending_version,
         ),
         allow_local=False,
         command_name="group resolve",
@@ -379,3 +391,71 @@ def group_resolutions(
         return
     console.print(resolutions_table(resolutions))
     click.echo(f"{len(resolutions)} of {total} resolution(s) shown.")
+
+
+@group_group.command("status")
+@click.option("--group", "group_id", default=None, help="Concrete group ID.")
+@click.option("--signature", default=None, help="Signature bucket ID.")
+@json_option
+@handle_errors
+def group_status(group_id: str | None, signature: str | None, output_json: bool) -> None:
+    """Show lifecycle status for a signature bucket."""
+    if not group_id and not signature:
+        raise click.BadParameter("Provide --group or --signature.")
+    if group_id and signature:
+        raise click.BadParameter("Provide --group or --signature, not both.")
+
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.get_group_status(
+            instance_id,
+            group_id=group_id,
+            signature=signature,
+        ),
+        lambda instance: service_group_status(
+            instance,
+            group_id=group_id,
+            signature=signature,
+        ),
+    )
+
+    if isinstance(result, contracts.GroupBucketStatusToolResult):
+        payload = result.model_dump(mode="python")
+    else:
+        payload = {
+            "signature": result.signature,
+            "relationship_type": result.relationship_type,
+            "thesis_text": result.thesis_text,
+            "thesis_facts": result.thesis_facts,
+            "latest_trust_status": result.latest_trust_status,
+            "accepted_tuple_count": result.accepted_tuple_count,
+            "pending_delta_count": result.pending_delta_count,
+            "pending_group_id": result.pending_group_id,
+            "pending_version": result.pending_version,
+            "latest_approved_resolution_id": result.latest_approved_resolution_id,
+            "approved_history": [
+                {
+                    "resolution_id": item.resolution_id,
+                    "action": item.action,
+                    "trust_status": item.trust_status,
+                    "confirmed": item.confirmed,
+                    "resolved_at": item.resolved_at,
+                    "tuple_count": item.tuple_count,
+                }
+                for item in result.approved_history
+            ],
+        }
+
+    if output_json:
+        _emit_json(payload)
+        return
+
+    click.echo(f"Signature: {payload['signature']}")
+    click.echo(f"Relationship: {payload['relationship_type']}")
+    click.echo(f"Accepted tuples: {payload['accepted_tuple_count']}")
+    click.echo(f"Pending delta: {payload['pending_delta_count']}")
+    if payload.get("pending_group_id"):
+        click.echo(f"Pending group: {payload['pending_group_id']} (v{payload['pending_version']})")
+    if payload.get("latest_trust_status"):
+        click.echo(f"Latest trust: {payload['latest_trust_status']}")
+    if payload.get("latest_approved_resolution_id"):
+        click.echo(f"Latest approved resolution: {payload['latest_approved_resolution_id']}")

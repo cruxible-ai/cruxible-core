@@ -1715,7 +1715,13 @@ def _seed_group(instance: CruxibleInstance, *, resolve: bool = False) -> str:
     group_id = result.group_id
     assert group_id is not None
     if resolve:
-        service_resolve_group(instance, group_id, "approve", resolved_by="human")
+        service_resolve_group(
+            instance,
+            group_id,
+            "approve",
+            resolved_by="human",
+            expected_pending_version=1,
+        )
     return group_id
 
 

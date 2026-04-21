@@ -226,6 +226,7 @@ def groups_table(groups: list[CandidateGroup]) -> Table:
     """Build a Rich table for a list of candidate groups."""
     table = Table(title="Candidate Groups")
     table.add_column("Group ID", style="cyan", no_wrap=True)
+    table.add_column("Signature", no_wrap=True)
     table.add_column("Relationship")
     table.add_column("Status")
     table.add_column("Priority")
@@ -235,6 +236,7 @@ def groups_table(groups: list[CandidateGroup]) -> Table:
     for g in groups:
         table.add_row(
             g.group_id,
+            g.signature[:16] + "...",
             g.relationship_type,
             g.status,
             g.review_priority,
@@ -260,6 +262,7 @@ def group_detail_table(
     table.add_row("Status", group.status)
     table.add_row("Priority", group.review_priority)
     table.add_row("Signature", group.signature[:16] + "...")
+    table.add_row("Pending Version", str(group.pending_version))
     table.add_row("Members", str(group.member_count))
     if group.thesis_text:
         table.add_row("Thesis", group.thesis_text)

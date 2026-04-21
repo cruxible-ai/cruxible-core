@@ -303,6 +303,7 @@ class GovernedLocalClient:
         action: str,
         rationale: str = "",
         resolved_by: str = "human",
+        expected_pending_version: int = 1,
     ):
         return local_api._handle_resolve_group_local(
             instance_id,
@@ -310,6 +311,7 @@ class GovernedLocalClient:
             action=action,
             rationale=rationale,
             resolved_by=resolved_by,
+            expected_pending_version=expected_pending_version,
         )
 
     def update_trust_status(
@@ -329,6 +331,19 @@ class GovernedLocalClient:
 
     def get_group(self, instance_id: str, group_id: str):
         return local_api._handle_get_group_local(instance_id, group_id)
+
+    def get_group_status(
+        self,
+        instance_id: str,
+        *,
+        group_id: str | None = None,
+        signature: str | None = None,
+    ):
+        return local_api._handle_group_status_local(
+            instance_id,
+            group_id=group_id,
+            signature=signature,
+        )
 
     def list_groups(
         self,

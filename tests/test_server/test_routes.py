@@ -865,7 +865,12 @@ def test_workflow_propose_snapshot_and_fork_round_trip(
 
     resolve = app_client.post(
         f"/api/v1/{instance_id}/groups/{group_id}/resolve",
-        json={"action": "approve", "resolved_by": "human", "rationale": "looks good"},
+        json={
+            "action": "approve",
+            "resolved_by": "human",
+            "rationale": "looks good",
+            "expected_pending_version": 1,
+        },
     )
     assert resolve.status_code == 200
     assert resolve.json()["edges_created"] == 2
@@ -1061,7 +1066,12 @@ def _approve_workflow_group(client: TestClient, instance_id: str, workflow_name:
 
     resolve = client.post(
         f"/api/v1/{instance_id}/groups/{group_id}/resolve",
-        json={"action": "approve", "resolved_by": "human", "rationale": "smoke test"},
+        json={
+            "action": "approve",
+            "resolved_by": "human",
+            "rationale": "smoke test",
+            "expected_pending_version": 1,
+        },
     )
     assert resolve.status_code == 200
 

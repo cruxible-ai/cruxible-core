@@ -242,6 +242,34 @@ async def get_group(instance_id: str, group_id: str) -> contracts.GetGroupToolRe
     return local_api._handle_get_group_local(resolve_server_instance_id(instance_id), group_id)
 
 
+@router.get(
+    "/{instance_id}/groups/{group_id}/status",
+    response_model=contracts.GroupBucketStatusToolResult,
+)
+async def get_group_status_by_group(
+    instance_id: str,
+    group_id: str,
+) -> contracts.GroupBucketStatusToolResult:
+    return local_api._handle_group_status_local(
+        resolve_server_instance_id(instance_id),
+        group_id=group_id,
+    )
+
+
+@router.get(
+    "/{instance_id}/group-status/{signature}",
+    response_model=contracts.GroupBucketStatusToolResult,
+)
+async def get_group_status_by_signature(
+    instance_id: str,
+    signature: str,
+) -> contracts.GroupBucketStatusToolResult:
+    return local_api._handle_group_status_local(
+        resolve_server_instance_id(instance_id),
+        signature=signature,
+    )
+
+
 @router.get("/{instance_id}/groups", response_model=contracts.ListGroupsToolResult)
 async def list_groups(
     instance_id: str,

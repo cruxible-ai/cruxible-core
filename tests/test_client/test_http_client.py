@@ -229,6 +229,108 @@ def test_workflow_lock_sends_force_flag():
     assert captured["payload"] == {"force": True}
 
 
+def test_resolve_group_sends_expected_pending_version():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "group_id": "GRP-1",
+                "action": "approve",
+                "edges_created": 1,
+                "edges_skipped": 0,
+                "resolution_id": "RES-1",
+                "receipt_id": "RCPT-1",
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.resolve_group(
+        "inst_123",
+        "GRP-1",
+        action="approve",
+        rationale="looks good",
+        expected_pending_version=3,
+    )
+
+    assert result.group_id == "GRP-1"
+    assert captured["path"].endswith("/api/v1/inst_123/groups/GRP-1/resolve")
+    assert captured["payload"]["expected_pending_version"] == 3
+    assert captured["payload"]["action"] == "approve"
+
+
+def test_get_group_status_by_group_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "signature": "sigv1:abc",
+                "relationship_type": "fits",
+                "thesis_text": "fit rule",
+                "thesis_facts": {"rule_id": "fit_rule"},
+                "latest_trust_status": "watch",
+                "accepted_tuple_count": 2,
+                "pending_delta_count": 1,
+                "pending_group_id": "GRP-1",
+                "pending_version": 4,
+                "latest_approved_resolution_id": "RES-1",
+                "approved_history": [
+                    {
+                        "resolution_id": "RES-1",
+                        "action": "approve",
+                        "trust_status": "watch",
+                        "confirmed": True,
+                        "resolved_at": "2026-04-20T12:00:00+00:00",
+                        "tuple_count": 2,
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.get_group_status("inst_123", group_id="GRP-1")
+
+    assert result.signature == "sigv1:abc"
+    assert result.pending_version == 4
+    assert captured["path"].endswith("/api/v1/inst_123/groups/GRP-1/status")
+
+
+def test_get_group_status_by_signature_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "signature": "sigv1:def",
+                "relationship_type": "fits",
+                "thesis_text": "",
+                "thesis_facts": {"rule_id": "fit_rule", "rule_version": 2},
+                "latest_trust_status": None,
+                "accepted_tuple_count": 0,
+                "pending_delta_count": 0,
+                "pending_group_id": None,
+                "pending_version": None,
+                "latest_approved_resolution_id": None,
+                "approved_history": [],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.get_group_status("inst_123", signature="sigv1:def")
+
+    assert result.signature == "sigv1:def"
+    assert result.accepted_tuple_count == 0
+    assert captured["path"].endswith("/api/v1/inst_123/group-status/sigv1:def")
+
+
 def test_group_routes_omit_none_query_params():
     captured: dict[str, str] = {}
 

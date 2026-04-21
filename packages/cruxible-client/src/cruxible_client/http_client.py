@@ -820,10 +820,16 @@ class CruxibleClient:
         action: contracts.GroupAction,
         rationale: str = "",
         resolved_by: contracts.GroupResolvedBy = "human",
+        expected_pending_version: int,
     ) -> contracts.ResolveGroupToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/groups/{group_id}/resolve",
-            json={"action": action, "rationale": rationale, "resolved_by": resolved_by},
+            json={
+                "action": action,
+                "rationale": rationale,
+                "resolved_by": resolved_by,
+                "expected_pending_version": expected_pending_version,
+            },
         )
         return self._parse_model(response, contracts.ResolveGroupToolResult)
 
@@ -844,6 +850,22 @@ class CruxibleClient:
     def get_group(self, instance_id: str, group_id: str) -> contracts.GetGroupToolResult:
         response = self._client.get(f"/api/v1/{instance_id}/groups/{group_id}")
         return self._parse_model(response, contracts.GetGroupToolResult)
+
+    def get_group_status(
+        self,
+        instance_id: str,
+        *,
+        group_id: str | None = None,
+        signature: str | None = None,
+    ) -> contracts.GroupBucketStatusToolResult:
+        if group_id is None and signature is None:
+            raise ValueError("Provide group_id or signature")
+        if group_id is not None:
+            response = self._client.get(f"/api/v1/{instance_id}/groups/{group_id}/status")
+        else:
+            assert signature is not None
+            response = self._client.get(f"/api/v1/{instance_id}/group-status/{signature}")
+        return self._parse_model(response, contracts.GroupBucketStatusToolResult)
 
     def list_groups(
         self,

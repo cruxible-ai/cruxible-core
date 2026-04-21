@@ -650,6 +650,7 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         group_id: str,
         action: contracts.GroupAction,
+        expected_pending_version: int,
         rationale: str = "",
         resolved_by: contracts.GroupResolvedBy = "human",
     ) -> contracts.ResolveGroupToolResult:
@@ -661,7 +662,12 @@ def register_tools(server: FastMCP) -> list[str]:
         auto-resolve precedent.
         """
         return handlers.handle_resolve_group(
-            instance_id, group_id, action, rationale=rationale, resolved_by=resolved_by
+            instance_id,
+            group_id,
+            action,
+            rationale=rationale,
+            resolved_by=resolved_by,
+            expected_pending_version=expected_pending_version,
         )
 
     @_tool
@@ -736,6 +742,19 @@ def register_tools(server: FastMCP) -> list[str]:
             relationship_type=relationship_type,
             action=action,
             limit=limit,
+        )
+
+    @_tool
+    def cruxible_group_status(
+        instance_id: str,
+        group_id: str | None = None,
+        signature: str | None = None,
+    ) -> contracts.GroupBucketStatusToolResult:
+        """Show lifecycle status for a signature bucket or concrete group."""
+        return handlers.handle_group_status(
+            instance_id,
+            group_id=group_id,
+            signature=signature,
         )
 
     @_tool

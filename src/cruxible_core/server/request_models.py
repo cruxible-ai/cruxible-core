@@ -109,6 +109,7 @@ class ResolveGroupRequest(BaseModel):
     action: contracts.GroupAction
     rationale: str = ""
     resolved_by: contracts.GroupResolvedBy = "human"
+    expected_pending_version: int
 
 
 class UpdateTrustStatusRequest(BaseModel):

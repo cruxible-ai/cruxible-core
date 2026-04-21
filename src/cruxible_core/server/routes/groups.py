@@ -51,6 +51,7 @@ async def resolve_group(
         action=req.action,
         rationale=req.rationale,
         resolved_by=req.resolved_by,
+        expected_pending_version=req.expected_pending_version,
     )
 
 

@@ -47,6 +47,7 @@ from cruxible_core.service import (
     service_get_outcome_profile,
     service_get_receipt,
     service_get_relationship,
+    service_group_status,
     service_ingest,
     service_init,
     service_inspect_entity,
@@ -1611,6 +1612,7 @@ def _handle_propose_group_local(
         ),
         suppressed=result.suppressed,
         policy_summary=result.policy_summary,
+        receipt_id=result.receipt_id,
     )
 
 
@@ -1620,6 +1622,7 @@ def _handle_resolve_group_local(
     action: contracts.GroupAction,
     rationale: str = "",
     resolved_by: contracts.GroupResolvedBy = "human",
+    expected_pending_version: int | None = None,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
     check_permission("cruxible_resolve_group", instance_id=instance_id)
@@ -1631,6 +1634,7 @@ def _handle_resolve_group_local(
         action,
         rationale=rationale,
         resolved_by=resolved_by,
+        expected_pending_version=expected_pending_version,
     )
     return contracts.ResolveGroupToolResult(
         group_id=result.group_id,
@@ -1698,6 +1702,42 @@ def _handle_list_groups_local(
     return contracts.ListGroupsToolResult(
         groups=[group.model_dump(mode="json") for group in result.groups],
         total=result.total,
+    )
+
+
+def _handle_group_status_local(
+    instance_id: str,
+    *,
+    group_id: str | None = None,
+    signature: str | None = None,
+) -> contracts.GroupBucketStatusToolResult:
+    """Return bucket lifecycle status for a group signature."""
+    check_permission("cruxible_get_group")
+    instance = get_manager().get(instance_id)
+
+    result = service_group_status(instance, group_id=group_id, signature=signature)
+    return contracts.GroupBucketStatusToolResult(
+        signature=result.signature,
+        relationship_type=result.relationship_type,
+        thesis_text=result.thesis_text,
+        thesis_facts=result.thesis_facts,
+        latest_trust_status=result.latest_trust_status,
+        accepted_tuple_count=result.accepted_tuple_count,
+        pending_delta_count=result.pending_delta_count,
+        pending_group_id=result.pending_group_id,
+        pending_version=result.pending_version,
+        latest_approved_resolution_id=result.latest_approved_resolution_id,
+        approved_history=[
+            contracts.GroupStatusHistoryItem(
+                resolution_id=item.resolution_id,
+                action=item.action,
+                trust_status=item.trust_status,
+                confirmed=item.confirmed,
+                resolved_at=item.resolved_at,
+                tuple_count=item.tuple_count,
+            )
+            for item in result.approved_history
+        ],
     )
 
 

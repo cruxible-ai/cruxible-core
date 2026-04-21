@@ -247,6 +247,7 @@ class TestResolveGroup:
                 "instance_id": instance_id,
                 "group_id": pr["group_id"],
                 "action": "approve",
+                "expected_pending_version": 1,
             },
         )
         assert result["action"] == "approve"
@@ -271,6 +272,7 @@ class TestResolveGroup:
                 "instance_id": instance_id,
                 "group_id": pr["group_id"],
                 "action": "reject",
+                "expected_pending_version": 1,
             },
         )
         assert result["action"] == "reject"
@@ -284,6 +286,7 @@ class TestResolveGroup:
                 "instance_id": instance_id,
                 "group_id": "GRP-nonexistent",
                 "action": "approve",
+                "expected_pending_version": 1,
             },
         )
         assert "GRP-nonexistent" in error
@@ -308,6 +311,7 @@ class TestUpdateTrustStatus:
                 "instance_id": instance_id,
                 "group_id": pr["group_id"],
                 "action": "approve",
+                "expected_pending_version": 1,
             },
         )
         # Get resolution_id from the group
@@ -374,6 +378,7 @@ class TestGroupPermissions:
                 "instance_id": instance_id,
                 "group_id": "GRP-xxx",
                 "action": "approve",
+                "expected_pending_version": 1,
             },
         )
         assert "GRAPH_WRITE" in error
@@ -472,6 +477,7 @@ class TestListGroups:
                 "instance_id": instance_id,
                 "group_id": pr["group_id"],
                 "action": "reject",
+                "expected_pending_version": 1,
             },
         )
         pending = call_tool(
@@ -509,6 +515,7 @@ class TestListResolutions:
                 "group_id": pr["group_id"],
                 "action": "approve",
                 "rationale": "looks good",
+                "expected_pending_version": 1,
             },
         )
         result = call_tool(
@@ -540,6 +547,7 @@ class TestListResolutions:
                 "instance_id": instance_id,
                 "group_id": pr["group_id"],
                 "action": "reject",
+                "expected_pending_version": 1,
             },
         )
         approvals = call_tool(
@@ -554,6 +562,57 @@ class TestListResolutions:
             {"instance_id": instance_id, "action": "reject"},
         )
         assert rejects["total"] == 1
+
+
+class TestGroupStatus:
+    def test_status_by_group_and_signature(self, server, instance_id):
+        proposed = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1")],
+                "thesis_text": "brake pad fit",
+                "thesis_facts": {"rule_id": "fit_rule", "rule_version": 1},
+            },
+        )
+        signature = proposed["signature"]
+        group_result = call_tool(
+            server,
+            "cruxible_group_status",
+            {"instance_id": instance_id, "group_id": proposed["group_id"]},
+        )
+        assert group_result["signature"] == signature
+        assert group_result["pending_group_id"] == proposed["group_id"]
+        assert group_result["pending_version"] == 1
+        assert group_result["pending_delta_count"] == 1
+        assert group_result["accepted_tuple_count"] == 0
+        assert group_result["approved_history"] == []
+
+        call_tool(
+            server,
+            "cruxible_resolve_group",
+            {
+                "instance_id": instance_id,
+                "group_id": proposed["group_id"],
+                "action": "approve",
+                "expected_pending_version": 1,
+            },
+        )
+        signature_result = call_tool(
+            server,
+            "cruxible_group_status",
+            {"instance_id": instance_id, "signature": signature},
+        )
+        assert signature_result["signature"] == signature
+        assert signature_result["pending_group_id"] is None
+        assert signature_result["pending_version"] is None
+        assert signature_result["pending_delta_count"] == 0
+        assert signature_result["accepted_tuple_count"] == 1
+        assert signature_result["latest_trust_status"] == "watch"
+        assert signature_result["latest_approved_resolution_id"]
+        assert len(signature_result["approved_history"]) == 1
 
 
 class TestReadPermissions:
