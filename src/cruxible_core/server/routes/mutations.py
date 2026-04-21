@@ -30,8 +30,9 @@ def _reject_in_agent_mode(operation: str) -> None:
     """Raise if the operation is blocked under CRUXIBLE_AGENT_MODE."""
     if is_agent_mode():
         raise PermissionDeniedError(
-            f"{operation} is disabled in agent mode. "
-            "Use 'group propose' to submit governed relationship proposals."
+            tool_name=operation,
+            current_mode="agent",
+            required_mode="operator",
         )
 
 

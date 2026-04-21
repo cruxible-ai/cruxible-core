@@ -154,6 +154,11 @@ workflows:
         as: exposure
 """
 
+
+def _trace_timing() -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    return {"started_at": now, "finished_at": now, "duration_ms": 0.0}
+
 def _build_test_graph() -> EntityGraph:
     graph = EntityGraph()
     graph.add_entity(
@@ -197,50 +202,50 @@ def _build_test_graph() -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="asset_affected_by_vulnerability",
-            from_entity_type="Asset",
-            from_entity_id="prod-web-01",
-            to_entity_type="Vulnerability",
-            to_entity_id="CVE-2021-41773",
+            from_type="Asset",
+            from_id="prod-web-01",
+            to_type="Vulnerability",
+            to_id="CVE-2021-41773",
             properties={"review_status": "accepted", "basis": "inventory_match"},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="asset_requires_action_for_vulnerability",
-            from_entity_type="Asset",
-            from_entity_id="prod-web-01",
-            to_entity_type="Vulnerability",
-            to_entity_id="CVE-2021-41773",
+            from_type="Asset",
+            from_id="prod-web-01",
+            to_type="Vulnerability",
+            to_id="CVE-2021-41773",
             properties={"review_status": "accepted", "priority": "urgent"},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="service_impacted_by_vulnerability",
-            from_entity_type="BusinessService",
-            from_entity_id="svc-billing",
-            to_entity_type="Vulnerability",
-            to_entity_id="CVE-2021-41773",
+            from_type="BusinessService",
+            from_id="svc-billing",
+            to_type="Vulnerability",
+            to_id="CVE-2021-41773",
             properties={"review_status": "accepted", "basis": "dependency_chain"},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="asset_supports_service",
-            from_entity_type="Asset",
-            from_entity_id="prod-web-01",
-            to_entity_type="BusinessService",
-            to_entity_id="svc-billing",
+            from_type="Asset",
+            from_id="prod-web-01",
+            to_type="BusinessService",
+            to_id="svc-billing",
             properties={"source": "cmdb"},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="asset_owned_by",
-            from_entity_type="Asset",
-            from_entity_id="prod-web-01",
-            to_entity_type="Owner",
-            to_entity_id="owner-seceng",
+            from_type="Asset",
+            from_id="prod-web-01",
+            to_type="Owner",
+            to_id="owner-seceng",
             properties={"source": "fork_seed"},
         )
     )
@@ -358,6 +363,7 @@ def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str
                 input_payload={"vulnerability_id": "CVE-2021-41773"},
                 output_payload={"items": [{"asset_id": "prod-web-01"}]},
                 status="success",
+                **_trace_timing(),
             )
         )
         receipt_store.save_trace(
@@ -377,6 +383,7 @@ def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str
                 },
                 output_payload={"requires_action": True, "asset_id": "prod-web-01"},
                 status="success",
+                **_trace_timing(),
             )
         )
     finally:
@@ -423,7 +430,7 @@ def _seed_review_history(
                     },
                     analysis_state={"priority": "urgent"},
                     integrations_used=["inventory"],
-                    proposed_by="ai_review",
+                    proposed_by="agent",
                     member_count=1,
                     review_priority="review",
                     source_workflow_name="propose_asset_exposure",
@@ -463,7 +470,7 @@ def _seed_review_history(
                     },
                     analysis_state={"priority": "review"},
                     integrations_used=["inventory"],
-                    proposed_by="ai_review",
+                    proposed_by="agent",
                     member_count=1,
                     review_priority="review",
                     source_workflow_name="propose_asset_exposure",
@@ -677,7 +684,7 @@ def test_render_wiki_pending_review_filters_members_for_current_subject(tmp_path
                     thesis_facts={"vulnerability_id": "CVE-2021-41773"},
                     analysis_state={"priority": "review"},
                     integrations_used=["inventory"],
-                    proposed_by="ai_review",
+                    proposed_by="agent",
                     member_count=2,
                     review_priority="review",
                     source_workflow_name="propose_asset_exposure",

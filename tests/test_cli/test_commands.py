@@ -1769,7 +1769,16 @@ class TestGroupResolveCLI:
         _assert_local_mutation_disabled(
             runner,
             group_instance.root,
-            ["group", "resolve", "--group", group_id, "--action", "approve"],
+            [
+                "group",
+                "resolve",
+                "--group",
+                group_id,
+                "--action",
+                "approve",
+                "--expected-pending-version",
+                "1",
+            ],
             "group resolve",
         )
 

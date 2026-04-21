@@ -279,6 +279,20 @@ tests:
 """
 
 
+@pytest.fixture(autouse=True)
+def isolate_cli_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Keep tests isolated from any user-scoped remembered CLI/server context."""
+
+    context_dir = tmp_path_factory.mktemp("cli-context")
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_dir / "client-context.json"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
+
+
 @pytest.fixture
 def configs_dir() -> Path:
     """Path to the configs directory."""

@@ -20,7 +20,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
-from cruxible_core.group.types import CandidateGroup, CandidateMember
+from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
@@ -206,7 +206,7 @@ class _WikiGenerator:
         list[CandidateGroup],
         dict[str, list[CandidateMember]],
         dict[str, list[CandidateGroup]],
-        dict[str, dict[str, Any]],
+        dict[str, GroupResolution],
     ]:
         store = self.instance.get_group_store()
         try:
@@ -226,8 +226,8 @@ class _WikiGenerator:
                             seen_per_subject[key].add(group.group_id)
                             groups_by_subject[key].append(group)
             resolutions = {
-                record["resolution_id"]: record
-                for record in store.list_resolutions(limit=MAX_STORE_SCAN)
+                resolution.resolution_id: resolution
+                for resolution in store.list_resolutions(limit=MAX_STORE_SCAN)
             }
             return groups, members_by_group, groups_by_subject, resolutions
         finally:
@@ -804,11 +804,11 @@ class _WikiGenerator:
                 resolution = self.resolutions_by_id.get(group.resolution_id or "")
                 if resolution is None:
                     continue
-                line = f"- {resolution['action']} on {group.relationship_type}"
-                if resolution.get("trust_status"):
-                    line += f" (trust: {resolution['trust_status']})"
-                if resolution.get("rationale"):
-                    line += f" — {resolution['rationale']}"
+                line = f"- {resolution.action} on {group.relationship_type}"
+                if resolution.trust_status:
+                    line += f" (trust: {resolution.trust_status})"
+                if resolution.rationale:
+                    line += f" — {resolution.rationale}"
                 members = self.members_by_group.get(group.group_id, [])
                 if members:
                     member_labels = []
@@ -1273,7 +1273,7 @@ class _WikiGenerator:
     def _render_recent_decisions_page(self, rendered_subjects: set[SubjectRef]) -> str:
         resolutions = sorted(
             self.resolutions_by_id.values(),
-            key=lambda record: record["resolved_at"],
+            key=lambda record: record.resolved_at,
             reverse=True,
         )
         lines = ["# Recent Decisions", ""]
@@ -1282,17 +1282,17 @@ class _WikiGenerator:
             return "\n".join(lines).rstrip() + "\n"
 
         for resolution in resolutions[:50]:
-            lines.append(f"## {resolution['resolution_id']}")
-            lines.append(f"- Action: {resolution['action']}")
-            lines.append(f"- Relationship: {resolution['relationship_type']}")
-            lines.append(f"- Trust: {resolution['trust_status']}")
-            if resolution.get("rationale"):
-                lines.append(f"- Rationale: {resolution['rationale']}")
+            lines.append(f"## {resolution.resolution_id}")
+            lines.append(f"- Action: {resolution.action}")
+            lines.append(f"- Relationship: {resolution.relationship_type}")
+            lines.append(f"- Trust: {resolution.trust_status}")
+            if resolution.rationale:
+                lines.append(f"- Rationale: {resolution.rationale}")
             group = next(
                 (
                     candidate
                     for candidate in self.groups
-                    if candidate.resolution_id == resolution["resolution_id"]
+                    if candidate.resolution_id == resolution.resolution_id
                 ),
                 None,
             )
