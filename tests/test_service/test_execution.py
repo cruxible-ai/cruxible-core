@@ -23,6 +23,7 @@ from cruxible_core.service import (
     service_test,
 )
 from cruxible_core.workflow import get_legacy_lock_path, get_lock_path
+from tests.support import workflow_test_providers
 
 
 @pytest.fixture
@@ -274,6 +275,77 @@ class TestWorkflowExecutionServices:
         assert len(members) == 2
         assert all(member.relationship_type == "recommended_for" for member in members)
 
+    def test_service_propose_workflow_honors_retain_missing_pending_refresh_mode(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        for step in config.workflows["propose_campaign_recommendations"].steps:
+            if step.propose_relationship_group is not None:
+                step.propose_relationship_group.pending_refresh_mode = "retain_missing"
+        proposal_workflow_instance.save_config(config)
+
+        responses = iter(
+            [
+                {
+                    "items": [
+                        {
+                            "product_sku": "SKU-123",
+                            "verdict": "match",
+                            "reason": "north bestseller",
+                        }
+                    ]
+                },
+                {
+                    "items": [
+                        {
+                            "product_sku": "SKU-456",
+                            "verdict": "fallback",
+                            "reason": "north fallback",
+                        }
+                    ]
+                },
+            ]
+        )
+
+        def dynamic_campaign_recommendations(_input_payload, _context):
+            return next(responses)
+
+        monkeypatch.setattr(
+            workflow_test_providers,
+            "campaign_recommendations",
+            dynamic_campaign_recommendations,
+        )
+        service_lock(proposal_workflow_instance)
+
+        first = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+        second = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert second.group_id == first.group_id
+
+        group_store = proposal_workflow_instance.get_group_store()
+        try:
+            group = group_store.get_group(first.group_id)
+            members = group_store.get_members(first.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.pending_version == 2
+        assert {(member.from_id, member.to_id) for member in members} == {
+            ("CMP-1", "SKU-123"),
+            ("CMP-1", "SKU-456"),
+        }
+
     def test_service_run_rejects_proposal_workflow(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:
@@ -333,6 +405,7 @@ class TestWorkflowExecutionServices:
             proposal_workflow_instance,
             proposed.group_id,
             "approve",
+            expected_pending_version=1,
         )
         assert resolved.edges_created == 2
 

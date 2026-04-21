@@ -209,6 +209,7 @@ def service_propose_workflow(
         members,
         thesis_text=proposal_payload.thesis_text,
         thesis_facts=proposal_payload.thesis_facts,
+        pending_refresh_mode=proposal_payload.pending_refresh_mode,
         analysis_state=proposal_payload.analysis_state,
         integrations_used=proposal_payload.integrations_used,
         proposed_by=proposal_payload.proposed_by,

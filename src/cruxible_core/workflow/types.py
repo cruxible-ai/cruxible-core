@@ -188,6 +188,7 @@ class RelationshipGroupProposalArtifact(BaseModel):
     members: list[CandidateMember]
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
+    pending_refresh_mode: Literal["replace", "retain_missing"] = "replace"
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     integrations_used: list[str] = Field(default_factory=list)
     suggested_priority: str | None = None

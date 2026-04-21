@@ -234,6 +234,29 @@ class TestWorkflowCompiler:
         assert plan.steps[4].propose_relationship_group_spec is not None
         assert plan.steps[4].propose_relationship_group_spec.signals_from == ["catalog_signals"]
 
+    def test_compile_workflow_preserves_pending_refresh_mode(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        for step in config.workflows["propose_campaign_recommendations"].steps:
+            if step.propose_relationship_group is not None:
+                step.propose_relationship_group.pending_refresh_mode = "retain_missing"
+        proposal_workflow_instance.save_config(config)
+        _write_lock_for_instance(proposal_workflow_instance)
+
+        plan = compile_workflow(
+            proposal_workflow_instance.load_config(),
+            build_lock(proposal_workflow_instance.load_config()),
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert plan.steps[4].propose_relationship_group_spec is not None
+        assert (
+            plan.steps[4].propose_relationship_group_spec.pending_refresh_mode
+            == "retain_missing"
+        )
+
     def test_compile_canonical_workflow_carries_canonical_metadata(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:

@@ -834,6 +834,7 @@ def _build_relationship_group_proposal(
                 input_payload,
                 step_outputs,
             ),
+            "pending_refresh_mode": spec.pending_refresh_mode,
             "analysis_state": resolve_value(
                 spec.analysis_state,
                 input_payload,
