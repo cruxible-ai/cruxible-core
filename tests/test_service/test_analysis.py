@@ -916,6 +916,7 @@ def _create_resolution_anchor(instance: CruxibleInstance) -> str:
         action="approve",
         rationale="accepted",
         resolved_by="human",
+        expected_pending_version=1,
     )
     assert resolve_result.resolution_id is not None
     return resolve_result.resolution_id

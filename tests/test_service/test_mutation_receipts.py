@@ -459,7 +459,12 @@ def _propose_group(instance: CruxibleInstance, members=None) -> str:
 class TestGroupResolveReceipts:
     def test_resolve_approve_produces_receipt(self, resolve_instance: CruxibleInstance):
         group_id = _propose_group(resolve_instance)
-        result = service_resolve_group(resolve_instance, group_id, "approve")
+        result = service_resolve_group(
+            resolve_instance,
+            group_id,
+            "approve",
+            expected_pending_version=1,
+        )
         assert result.receipt_id is not None
 
         store = resolve_instance.get_receipt_store()
@@ -473,7 +478,12 @@ class TestGroupResolveReceipts:
 
     def test_resolve_reject_produces_receipt(self, resolve_instance: CruxibleInstance):
         group_id = _propose_group(resolve_instance)
-        result = service_resolve_group(resolve_instance, group_id, "reject")
+        result = service_resolve_group(
+            resolve_instance,
+            group_id,
+            "reject",
+            expected_pending_version=1,
+        )
         assert result.receipt_id is not None
 
         store = resolve_instance.get_receipt_store()
@@ -488,7 +498,7 @@ class TestGroupResolveReceipts:
     def test_resolve_no_inner_relationship_receipt(self, resolve_instance: CruxibleInstance):
         """Only 1 receipt (group_resolve), not 2 — inner add_relationships suppressed."""
         group_id = _propose_group(resolve_instance)
-        service_resolve_group(resolve_instance, group_id, "approve")
+        service_resolve_group(resolve_instance, group_id, "approve", expected_pending_version=1)
 
         store = resolve_instance.get_receipt_store()
         try:
@@ -501,7 +511,12 @@ class TestGroupResolveReceipts:
 
     def test_resolve_receipt_has_validation_nodes(self, resolve_instance: CruxibleInstance):
         group_id = _propose_group(resolve_instance)
-        result = service_resolve_group(resolve_instance, group_id, "approve")
+        result = service_resolve_group(
+            resolve_instance,
+            group_id,
+            "approve",
+            expected_pending_version=1,
+        )
 
         store = resolve_instance.get_receipt_store()
         try:
@@ -513,7 +528,12 @@ class TestGroupResolveReceipts:
 
     def test_resolve_receipt_has_write_nodes(self, resolve_instance: CruxibleInstance):
         group_id = _propose_group(resolve_instance)
-        result = service_resolve_group(resolve_instance, group_id, "approve")
+        result = service_resolve_group(
+            resolve_instance,
+            group_id,
+            "approve",
+            expected_pending_version=1,
+        )
 
         store = resolve_instance.get_receipt_store()
         try:

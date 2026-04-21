@@ -124,7 +124,7 @@ def _propose_and_approve(instance, from_id="BP-1", to_id="V-1", facts=None):
     """Propose and approve a group, returning the resolution_id."""
     f = facts or {"style": "casual"}
     pr = service_propose_group(instance, "fits", [_member(from_id, to_id)], thesis_facts=f)
-    service_resolve_group(instance, pr.group_id, "approve")
+    service_resolve_group(instance, pr.group_id, "approve", expected_pending_version=1)
     store = instance.get_group_store()
     try:
         group = store.get_group(pr.group_id)
@@ -168,7 +168,7 @@ class TestUpdateTrustStatus:
     def test_rejected_resolution_fails(self, instance: CruxibleInstance) -> None:
         """Cannot update trust on rejected resolutions."""
         pr = service_propose_group(instance, "fits", [_member()], thesis_facts={"k": "v"})
-        service_resolve_group(instance, pr.group_id, "reject")
+        service_resolve_group(instance, pr.group_id, "reject", expected_pending_version=1)
         store = instance.get_group_store()
         try:
             group = store.get_group(pr.group_id)
@@ -223,7 +223,7 @@ class TestUpdateTrustStatus:
         res_id_1 = _propose_and_approve(instance, "BP-1", "V-1", facts=facts)
         # Reject with same signature
         pr2 = service_propose_group(instance, "fits", [_member("BP-2", "V-2")], thesis_facts=facts)
-        service_resolve_group(instance, pr2.group_id, "reject")
+        service_resolve_group(instance, pr2.group_id, "reject", expected_pending_version=1)
         # res_id_1 is still the latest confirmed approval
         service_update_trust_status(instance, res_id_1, "trusted")
         store = instance.get_group_store()
@@ -264,7 +264,7 @@ class TestTrustEffects:
         # Second batch — will auto-resolve
         pr2 = service_propose_group(instance, "fits", [_member("BP-3", "V-3")], thesis_facts=facts)
         assert pr2.status == "auto_resolved"
-        service_resolve_group(instance, pr2.group_id, "approve")
+        service_resolve_group(instance, pr2.group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:

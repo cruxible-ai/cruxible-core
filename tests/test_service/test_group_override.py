@@ -259,7 +259,7 @@ class TestGroupOverride:
             ),
         ]
         pr = service_propose_group(instance, "fits", members, thesis_facts={"test": True})
-        result = service_resolve_group(instance, pr.group_id, "approve")
+        result = service_resolve_group(instance, pr.group_id, "approve", expected_pending_version=1)
         # BP-1→V-1 already exists (group_override) → skipped
         assert result.edges_skipped == 1
         assert result.edges_created == 1

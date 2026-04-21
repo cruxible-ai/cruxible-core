@@ -34,6 +34,7 @@ from cruxible_core.service.feedback import (
 from cruxible_core.service.groups import (
     derive_review_priority,
     service_get_group,
+    service_group_status,
     service_list_groups,
     service_list_resolutions,
     service_propose_group,
@@ -222,6 +223,7 @@ __all__ = [
     # Groups
     "derive_review_priority",
     "service_get_group",
+    "service_group_status",
     "service_list_groups",
     "service_list_resolutions",
     "service_propose_group",

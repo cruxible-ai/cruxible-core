@@ -16,13 +16,15 @@ from cruxible_core.config.schema import (
     MatchingSchema,
 )
 from cruxible_core.errors import ConfigError
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
+from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateMember, CandidateSignal, GroupResolution
 from cruxible_core.service import (
     ProposeGroupResult,
     derive_review_priority,
     service_propose_group,
+    service_resolve_group,
 )
 
 
@@ -290,6 +292,39 @@ def _seed_policy_graph(instance: CruxibleInstance) -> None:
     instance.save_graph(graph)
 
 
+def _seed_fitment_entities(instance: CruxibleInstance) -> None:
+    """Seed entity state for resolution and override tests."""
+    graph = instance.load_graph()
+    for part_id, vehicle_id in [
+        ("BP-1001", "V-2024-CIVIC"),
+        ("BP-1002", "V-2024-ACCORD"),
+    ]:
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id=part_id,
+                properties={
+                    "part_number": part_id,
+                    "name": f"Part {part_id}",
+                    "category": "brakes",
+                },
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id=vehicle_id,
+                properties={
+                    "vehicle_id": vehicle_id,
+                    "year": 2024,
+                    "make": "Honda",
+                    "model": vehicle_id.split("-")[-1].title(),
+                },
+            )
+        )
+    instance.save_graph(graph)
+
+
 # ---------------------------------------------------------------------------
 # Basic proposal tests
 # ---------------------------------------------------------------------------
@@ -353,11 +388,16 @@ class TestBasicProposal:
 class TestValidationErrors:
     def test_invalid_relationship_type(self, matching_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="not found in config"):
-            service_propose_group(matching_instance, "nonexistent", [_member()])
+            service_propose_group(
+                matching_instance,
+                "nonexistent",
+                [_member()],
+                thesis_facts={"test": True},
+            )
 
     def test_empty_members(self, matching_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="must not be empty"):
-            service_propose_group(matching_instance, "fits", [])
+            service_propose_group(matching_instance, "fits", [], thesis_facts={"test": True})
 
     def test_member_relationship_type_mismatch(self, matching_instance: CruxibleInstance) -> None:
         bad = CandidateMember(
@@ -371,7 +411,7 @@ class TestValidationErrors:
         with pytest.raises(
             ConfigError, match="has relationship_type 'replaces' but group is for 'fits'"
         ):
-            service_propose_group(matching_instance, "fits", [bad])
+            service_propose_group(matching_instance, "fits", [bad], thesis_facts={"test": True})
 
     def test_member_from_type_mismatch(self, matching_instance: CruxibleInstance) -> None:
         bad = CandidateMember(
@@ -383,7 +423,7 @@ class TestValidationErrors:
             signals=_all_support_signals(),
         )
         with pytest.raises(ConfigError, match="from_type 'Vehicle' does not match"):
-            service_propose_group(matching_instance, "fits", [bad])
+            service_propose_group(matching_instance, "fits", [bad], thesis_facts={"test": True})
 
     def test_member_to_type_mismatch(self, matching_instance: CruxibleInstance) -> None:
         bad = CandidateMember(
@@ -395,12 +435,12 @@ class TestValidationErrors:
             signals=_all_support_signals(),
         )
         with pytest.raises(ConfigError, match="to_type 'Part' does not match"):
-            service_propose_group(matching_instance, "fits", [bad])
+            service_propose_group(matching_instance, "fits", [bad], thesis_facts={"test": True})
 
     def test_duplicate_members(self, matching_instance: CruxibleInstance) -> None:
         m = _member("BP-1", "V-1", signals=_all_support_signals())
         with pytest.raises(ConfigError, match="Duplicate member"):
-            service_propose_group(matching_instance, "fits", [m, m])
+            service_propose_group(matching_instance, "fits", [m, m], thesis_facts={"test": True})
 
     def test_non_serializable_thesis_facts(self, matching_instance: CruxibleInstance) -> None:
         members = [_member(signals=_all_support_signals())]
@@ -416,7 +456,7 @@ class TestValidationErrors:
         # max_group_size is 200 in config
         members = [_member(f"BP-{i}", f"V-{i}", signals=_all_support_signals()) for i in range(201)]
         with pytest.raises(ConfigError, match="exceeds max_group_size"):
-            service_propose_group(matching_instance, "fits", members)
+            service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_workflow_suppress_applies_before_max_group_size(
         self, matching_instance: CruxibleInstance
@@ -489,7 +529,7 @@ class TestSignalValidation:
         ]
         members = [_member(signals=sigs)]
         with pytest.raises(ConfigError, match="undeclared integration 'unknown_integration'"):
-            service_propose_group(matching_instance, "fits", members)
+            service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_duplicate_signals_same_integration(self, matching_instance: CruxibleInstance) -> None:
         sigs = _all_support_signals() + [
@@ -499,7 +539,7 @@ class TestSignalValidation:
         with pytest.raises(
             ConfigError, match="duplicate signals from integration 'bolt_pattern_check'"
         ):
-            service_propose_group(matching_instance, "fits", members)
+            service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_missing_blocking_signal(self, matching_instance: CruxibleInstance) -> None:
         # Only provide year_range_check and description_fit_v1 (missing bolt_pattern_check)
@@ -511,7 +551,7 @@ class TestSignalValidation:
         with pytest.raises(
             ConfigError, match="missing signal from blocking integration 'bolt_pattern_check'"
         ):
-            service_propose_group(matching_instance, "fits", members)
+            service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_missing_required_signal(self, matching_instance: CruxibleInstance) -> None:
         # Only provide blocking integrations (missing description_fit_v1 which is required)
@@ -523,7 +563,7 @@ class TestSignalValidation:
         with pytest.raises(
             ConfigError, match="missing signal from required integration 'description_fit_v1'"
         ):
-            service_propose_group(matching_instance, "fits", members)
+            service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_missing_advisory_signal_ok(self, matching_instance: CruxibleInstance) -> None:
         """Advisory signals may be absent — no error."""
@@ -539,6 +579,7 @@ class TestSignalValidation:
                 "fits",
                 members,
                 integrations_used=["unknown"],
+                thesis_facts={"test": True},
             )
 
 
@@ -588,6 +629,563 @@ class TestSignature:
         result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
         expected = compute_group_signature("fits", facts)
         assert result.signature == expected
+
+
+class TestPendingBuckets:
+    def test_same_signature_reuses_group_and_bumps_pending_version(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        first = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1002", "V-2024-ACCORD", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+
+        assert second.group_id == first.group_id
+        assert second.receipt_id is not None
+
+        group_store = matching_instance.get_group_store()
+        try:
+            group = group_store.get_group(first.group_id)
+            members = group_store.get_members(first.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.pending_version == 2
+        assert group.member_count == 1
+        assert [(member.from_id, member.to_id) for member in members] == [
+            ("BP-1002", "V-2024-ACCORD")
+        ]
+
+        receipt_store = matching_instance.get_receipt_store()
+        try:
+            receipt = receipt_store.get_receipt(second.receipt_id)
+        finally:
+            receipt_store.close()
+
+        assert receipt is not None
+        assert receipt.operation_type == "group_rewrite"
+        validation_nodes = [node for node in receipt.nodes if node.node_type == "validation"]
+        assert any(
+            node.detail.get("added_tuples")
+            == [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1002",
+                    "to_type": "Vehicle",
+                    "to_id": "V-2024-ACCORD",
+                    "relationship_type": "fits",
+                }
+            ]
+            and node.detail.get("removed_tuples")
+            == [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1001",
+                    "to_type": "Vehicle",
+                    "to_id": "V-2024-CIVIC",
+                    "relationship_type": "fits",
+                }
+            ]
+            for node in validation_nodes
+        )
+
+    def test_empty_delta_clears_pending_group_and_emits_receipt(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_fitment_entities(matching_instance)
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        approved = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+        service_resolve_group(
+            matching_instance,
+            approved.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        pending = service_propose_group(
+            matching_instance,
+            "fits",
+            [
+                _member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals()),
+                _member("BP-1002", "V-2024-ACCORD", signals=_all_support_signals()),
+            ],
+            thesis_facts=facts,
+        )
+        cleared = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+
+        assert pending.group_id is not None
+        assert cleared.group_id is None
+        assert cleared.status == "suppressed"
+        assert cleared.suppressed is True
+        assert cleared.receipt_id is not None
+
+        group_store = matching_instance.get_group_store()
+        try:
+            assert group_store.get_group(pending.group_id) is None
+        finally:
+            group_store.close()
+
+        receipt_store = matching_instance.get_receipt_store()
+        try:
+            receipt = receipt_store.get_receipt(cleared.receipt_id)
+        finally:
+            receipt_store.close()
+
+        assert receipt is not None
+        assert receipt.operation_type == "group_clear"
+        validation_nodes = [node for node in receipt.nodes if node.node_type == "validation"]
+        assert any(
+            node.detail.get("cleared_tuples")
+            == [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1002",
+                    "to_type": "Vehicle",
+                    "to_id": "V-2024-ACCORD",
+                    "relationship_type": "fits",
+                }
+            ]
+            for node in validation_nodes
+        )
+
+    def test_retain_missing_keeps_absent_pending_members(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        first = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1002", "V-2024-ACCORD", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+
+        assert second.group_id == first.group_id
+
+        group_store = matching_instance.get_group_store()
+        try:
+            group = group_store.get_group(first.group_id)
+            members = group_store.get_members(first.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.pending_version == 2
+        assert group.member_count == 2
+        assert {(member.from_id, member.to_id) for member in members} == {
+            ("BP-1001", "V-2024-CIVIC"),
+            ("BP-1002", "V-2024-ACCORD"),
+        }
+
+        receipt_store = matching_instance.get_receipt_store()
+        try:
+            receipt = receipt_store.get_receipt(second.receipt_id)
+        finally:
+            receipt_store.close()
+
+        assert receipt is not None
+        assert receipt.operation_type == "group_rewrite"
+        validation_nodes = [node for node in receipt.nodes if node.node_type == "validation"]
+        assert any(
+            node.detail.get("added_tuples")
+            == [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1002",
+                    "to_type": "Vehicle",
+                    "to_id": "V-2024-ACCORD",
+                    "relationship_type": "fits",
+                }
+            ]
+            and node.detail.get("removed_tuples") == []
+            for node in validation_nodes
+        )
+
+    def test_retain_missing_does_not_clear_pending_on_empty_delta(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_fitment_entities(matching_instance)
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        approved = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+        service_resolve_group(
+            matching_instance,
+            approved.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        pending = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1002", "V-2024-ACCORD", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+        retained = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+
+        assert retained.group_id == pending.group_id
+        assert retained.receipt_id is None
+        assert retained.status == "pending_review"
+        assert retained.member_count == 1
+
+        group_store = matching_instance.get_group_store()
+        try:
+            group = group_store.get_group(pending.group_id)
+            members = group_store.get_members(pending.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.pending_version == 1
+        assert [(member.from_id, member.to_id) for member in members] == [
+            ("BP-1002", "V-2024-ACCORD")
+        ]
+
+    def test_retain_missing_keeps_overridden_pending_member(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_fitment_entities(matching_instance)
+        graph = matching_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC",
+                properties={"group_override": True},
+            )
+        )
+        matching_instance.save_graph(graph)
+
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        first = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1002", "V-2024-ACCORD", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+
+        assert first.review_priority == "review"
+        assert second.group_id == first.group_id
+        assert second.review_priority == "review"
+
+        group_store = matching_instance.get_group_store()
+        try:
+            group = group_store.get_group(first.group_id)
+            members = group_store.get_members(first.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.pending_version == 2
+        assert group.review_priority == "review"
+        assert {(member.from_id, member.to_id) for member in members} == {
+            ("BP-1001", "V-2024-CIVIC"),
+            ("BP-1002", "V-2024-ACCORD"),
+        }
+
+    def test_delta_subtracts_approved_and_ignores_property_drift(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_fitment_entities(matching_instance)
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        approved = service_propose_group(
+            matching_instance,
+            "fits",
+            [
+                _member(
+                    "BP-1001",
+                    "V-2024-CIVIC",
+                    signals=_all_support_signals(),
+                    properties={"raw_score": 0.99},
+                )
+            ],
+            thesis_facts=facts,
+        )
+        service_resolve_group(
+            matching_instance,
+            approved.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            [
+                _member(
+                    "BP-1001",
+                    "V-2024-CIVIC",
+                    signals=_all_support_signals(),
+                    properties={"raw_score": 0.10},
+                ),
+                _member(
+                    "BP-1002",
+                    "V-2024-ACCORD",
+                    signals=_all_support_signals(),
+                    properties={"raw_score": 0.55},
+                ),
+            ],
+            thesis_facts=facts,
+        )
+
+        assert result.group_id is not None
+        assert result.member_count == 1
+        group_store = matching_instance.get_group_store()
+        try:
+            members = group_store.get_members(result.group_id)
+        finally:
+            group_store.close()
+
+        assert [(member.from_id, member.to_id) for member in members] == [
+            ("BP-1002", "V-2024-ACCORD")
+        ]
+
+    def test_rule_version_bump_creates_fresh_bucket_without_prior(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_fitment_entities(matching_instance)
+        facts_v1 = {"rule_id": "fit_rule", "rule_version": 1}
+        initial = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts_v1,
+        )
+        service_resolve_group(
+            matching_instance,
+            initial.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        facts_v2 = {"rule_id": "fit_rule", "rule_version": 2}
+        reproposed = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts_v2,
+        )
+
+        assert reproposed.signature != initial.signature
+        assert reproposed.prior_resolution is None
+        assert reproposed.status == "pending_review"
+        assert reproposed.member_count == 1
+
+    def test_override_blocks_auto_resolve_for_new_signature(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_fitment_entities(matching_instance)
+        facts_v1 = {"rule_id": "fit_rule", "rule_version": 1}
+        initial = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts_v1,
+        )
+        service_resolve_group(
+            matching_instance,
+            initial.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        graph = matching_instance.load_graph()
+        assert graph.update_edge_properties(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC",
+            "fits",
+            {"group_override": True},
+        )
+        matching_instance.save_graph(graph)
+
+        facts_v2 = {"rule_id": "fit_rule_v2", "rule_version": 1}
+        _create_prior_resolution(
+            matching_instance,
+            thesis_facts=facts_v2,
+            trust_status="trusted",
+        )
+
+        reproposed = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts_v2,
+        )
+
+        assert reproposed.status == "pending_review"
+        assert reproposed.review_priority == "review"
+
+    def test_integrity_error_fallback_rewrites_existing_pending_group(
+        self,
+        matching_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        first = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+
+        original_find_pending_group = GroupStore.find_pending_group
+        call_count = {"value": 0}
+
+        def hide_existing_pending_once(self, relationship_type: str, signature: str):
+            if relationship_type == "fits" and signature == first.signature:
+                call_count["value"] += 1
+                if call_count["value"] == 1:
+                    return None
+            return original_find_pending_group(self, relationship_type, signature)
+
+        monkeypatch.setattr(GroupStore, "find_pending_group", hide_existing_pending_once)
+
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1002", "V-2024-ACCORD", signals=_all_support_signals())],
+            thesis_facts=facts,
+        )
+
+        assert call_count["value"] >= 2
+        assert second.group_id == first.group_id
+        group_store = matching_instance.get_group_store()
+        try:
+            group = group_store.get_group(first.group_id)
+            members = group_store.get_members(first.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.pending_version == 2
+        assert [(member.from_id, member.to_id) for member in members] == [
+            ("BP-1002", "V-2024-ACCORD")
+        ]
+
+    def test_integrity_error_fallback_merges_pending_group_for_retain_missing(
+        self,
+        matching_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        first = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+
+        original_find_pending_group = GroupStore.find_pending_group
+        call_count = {"value": 0}
+
+        def hide_existing_pending_once(self, relationship_type: str, signature: str):
+            if relationship_type == "fits" and signature == first.signature:
+                call_count["value"] += 1
+                if call_count["value"] == 1:
+                    return None
+            return original_find_pending_group(self, relationship_type, signature)
+
+        monkeypatch.setattr(GroupStore, "find_pending_group", hide_existing_pending_once)
+
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1002", "V-2024-ACCORD", signals=_all_support_signals())],
+            thesis_facts=facts,
+            pending_refresh_mode="retain_missing",
+        )
+
+        assert call_count["value"] >= 2
+        assert second.group_id == first.group_id
+
+        group_store = matching_instance.get_group_store()
+        try:
+            group = group_store.get_group(first.group_id)
+            members = group_store.get_members(first.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.pending_version == 2
+        assert {(member.from_id, member.to_id) for member in members} == {
+            ("BP-1001", "V-2024-CIVIC"),
+            ("BP-1002", "V-2024-ACCORD"),
+        }
+
+        receipt_store = matching_instance.get_receipt_store()
+        try:
+            receipt = receipt_store.get_receipt(second.receipt_id)
+        finally:
+            receipt_store.close()
+
+        assert receipt is not None
+        validation_nodes = [node for node in receipt.nodes if node.node_type == "validation"]
+        assert any(
+            node.detail.get("race_resolved_as_rewrite") is True
+            and node.detail.get("removed_tuples") == []
+            and node.detail.get("added_tuples")
+            == [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1002",
+                    "to_type": "Vehicle",
+                    "to_id": "V-2024-ACCORD",
+                    "relationship_type": "fits",
+                }
+            ]
+            for node in validation_nodes
+        )
 
 
 # ---------------------------------------------------------------------------

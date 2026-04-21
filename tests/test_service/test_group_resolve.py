@@ -169,7 +169,7 @@ def _propose(instance: CruxibleInstance, members=None, facts=None) -> str:
 class TestApproveBasic:
     def test_approve_creates_edges(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert isinstance(result, ResolveGroupResult)
         assert result.action == "approve"
         assert result.edges_created == 1
@@ -177,7 +177,7 @@ class TestApproveBasic:
 
     def test_created_edges_have_provenance(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         graph = instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
         assert rel is not None
@@ -187,12 +187,18 @@ class TestApproveBasic:
     def test_multiple_members_approved(self, instance: CruxibleInstance) -> None:
         members = [_member("BP-1", "V-1"), _member("BP-2", "V-2")]
         group_id = _propose(instance, members)
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 2
 
     def test_resolution_stored(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "approve", rationale="looks good")
+        service_resolve_group(
+            instance,
+            group_id,
+            "approve",
+            rationale="looks good",
+            expected_pending_version=1,
+        )
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
@@ -225,7 +231,7 @@ class TestPerMemberValidation:
             signals=[CandidateSignal(integration="check_v1", signal="support")],
         )
         group_id = _propose(instance, [_member("BP-1", "V-1"), bad_member])
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1
         assert result.edges_skipped == 1
 
@@ -246,7 +252,7 @@ class TestPerMemberValidation:
         instance.save_graph(graph)
 
         group_id = _propose(instance, [_member("BP-1", "V-1"), _member("BP-2", "V-2")])
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1  # BP-2→V-2
         assert result.edges_skipped == 1  # BP-1→V-1 already exists
 
@@ -259,7 +265,7 @@ class TestPerMemberValidation:
 class TestReject:
     def test_reject_no_edges(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        result = service_resolve_group(instance, group_id, "reject")
+        result = service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
         assert result.action == "reject"
         assert result.edges_created == 0
         assert result.edges_skipped == 0
@@ -267,7 +273,7 @@ class TestReject:
     def test_reject_skips_applying_state(self, instance: CruxibleInstance) -> None:
         """Reject goes directly to resolved, no applying intermediate."""
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "reject")
+        service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
@@ -278,7 +284,7 @@ class TestReject:
 
     def test_reject_resolution_confirmed_immediately(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "reject")
+        service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
@@ -292,7 +298,7 @@ class TestReject:
     def test_reject_trust_status_watch(self, instance: CruxibleInstance) -> None:
         """Rejections always get trust_status=watch."""
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "reject")
+        service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
@@ -323,7 +329,7 @@ class TestReject:
             store.close()
 
         with pytest.raises(ConfigError, match="Group is in applying state from a prior approve"):
-            service_resolve_group(instance, group_id, "reject")
+            service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
 
 
 # ---------------------------------------------------------------------------
@@ -332,15 +338,39 @@ class TestReject:
 
 
 class TestStatusGuards:
+    def test_missing_expected_pending_version_fails(self, instance: CruxibleInstance) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        with pytest.raises(ConfigError, match="expected_pending_version"):
+            service_resolve_group(instance, group_id, "approve")
+
+    def test_stale_expected_pending_version_fails(self, instance: CruxibleInstance) -> None:
+        facts = {"style": "casual"}
+        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        rewritten = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-2", "V-2")],
+            thesis_text="test",
+            thesis_facts=facts,
+        )
+        assert rewritten.group_id == group_id
+        with pytest.raises(ConfigError, match="expected pending_version 1, found 2"):
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
     def test_resolved_group_rejected(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         with pytest.raises(ConfigError, match="already resolved"):
-            service_resolve_group(instance, group_id, "approve")
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
     def test_not_found(self, instance: CruxibleInstance) -> None:
         with pytest.raises(GroupNotFoundError):
-            service_resolve_group(instance, "GRP-nonexistent", "approve")
+            service_resolve_group(
+                instance,
+                "GRP-nonexistent",
+                "approve",
+                expected_pending_version=1,
+            )
 
     def test_auto_resolved_accepts_resolution(self, instance: CruxibleInstance) -> None:
         """Auto-resolved groups can be explicitly resolved."""
@@ -377,7 +407,7 @@ class TestStatusGuards:
         finally:
             store.close()
 
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1
 
 
@@ -390,7 +420,7 @@ class TestConfirmedFlag:
     def test_approve_starts_unconfirmed_then_confirmed(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
         # After resolve, resolution should be confirmed
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
@@ -463,7 +493,7 @@ class TestTrustInheritance:
             store.close()
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
@@ -495,7 +525,7 @@ class TestTrustInheritance:
             store.close()
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
@@ -527,7 +557,7 @@ class TestTrustInheritance:
             store.close()
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
@@ -539,7 +569,7 @@ class TestTrustInheritance:
 
     def test_no_prior_starts_watch(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
@@ -571,7 +601,7 @@ class TestTrustInheritance:
             store.close()
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
@@ -625,7 +655,7 @@ class TestTrustRevalidation:
             store.close()
 
         # Resolve — should revalidate trust at confirmation
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
@@ -658,7 +688,7 @@ class TestTrustRevalidation:
             store.close()
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
@@ -677,7 +707,7 @@ class TestTrustRevalidation:
 class TestLifecycle:
     def test_pending_to_resolved(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "approve")
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
@@ -717,7 +747,7 @@ class TestApplyingRetry:
             store.close()
 
         # Now resolve (retry path)
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1
 
         # Verify only one resolution exists for this group
@@ -768,7 +798,7 @@ class TestApplyingRetry:
         finally:
             store.close()
 
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1  # only BP-2→V-2
         assert result.edges_skipped == 1  # BP-1→V-1 already exists
 
@@ -810,7 +840,7 @@ class TestApplyingRetry:
             store.close()
 
         # Retry with zero valid members — should succeed
-        result = service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 0
         assert result.edges_skipped == 1
 
@@ -838,8 +868,14 @@ class TestZeroEdgeApprove:
         instance.save_graph(graph)
 
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        with pytest.raises(ConfigError, match="no creatable edges"):
-            service_resolve_group(instance, group_id, "approve")
+        result = service_resolve_group(
+            instance,
+            group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+        assert result.edges_created == 0
+        assert result.edges_skipped == 1
 
 
 # ---------------------------------------------------------------------------
@@ -855,5 +891,5 @@ class TestCacheInvalidation:
         with patch.object(
             instance, "invalidate_graph_cache", wraps=instance.invalidate_graph_cache
         ) as mock_invalidate:
-            service_resolve_group(instance, group_id, "approve")
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
             mock_invalidate.assert_called()

@@ -533,12 +533,13 @@ class WorldPullApplyResult:
 class ProposeGroupResult:
     group_id: str | None
     signature: str
-    status: GroupStatus
+    status: GroupStatus | Literal["suppressed"]
     review_priority: ReviewPriority
     member_count: int
     prior_resolution: GroupResolution | None
     suppressed: bool = False
     policy_summary: dict[str, int] = field(default_factory=dict)
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -568,3 +569,28 @@ class ListGroupsResult:
 class ListResolutionsResult:
     resolutions: list[GroupResolution]
     total: int
+
+
+@dataclass
+class GroupStatusHistoryItem:
+    resolution_id: str
+    action: ResolutionAction
+    trust_status: TrustStatus
+    confirmed: bool
+    resolved_at: str
+    tuple_count: int
+
+
+@dataclass
+class GroupStatusResult:
+    signature: str
+    relationship_type: str
+    thesis_text: str
+    thesis_facts: dict[str, Any]
+    latest_trust_status: TrustStatus | None
+    accepted_tuple_count: int
+    pending_delta_count: int
+    pending_group_id: str | None
+    pending_version: int | None
+    latest_approved_resolution_id: str | None
+    approved_history: list[GroupStatusHistoryItem] = field(default_factory=list)

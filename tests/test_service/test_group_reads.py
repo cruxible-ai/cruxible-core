@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,10 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import GroupNotFoundError
 from cruxible_core.group.signature import compute_group_signature
-from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.service import (
     service_get_group,
+    service_group_status,
     service_list_groups,
     service_list_resolutions,
     service_propose_group,
@@ -158,7 +160,7 @@ class TestGetGroup:
             [_member("BP-1", "V-1")],
             thesis_facts={"k": "v"},
         )
-        service_resolve_group(instance, result.group_id, "approve")
+        service_resolve_group(instance, result.group_id, "approve", expected_pending_version=1)
         get_result = service_get_group(instance, result.group_id)
         assert get_result.resolution is not None
         assert get_result.resolution.trust_status is not None
@@ -189,7 +191,7 @@ class TestListGroups:
             instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1}
         )
         service_propose_group(instance, "fits", [_member("BP-2", "V-2")], thesis_facts={"a": 2})
-        service_resolve_group(instance, pr.group_id, "reject")
+        service_resolve_group(instance, pr.group_id, "reject", expected_pending_version=1)
         pending = service_list_groups(instance, status="pending_review")
         assert pending.total == 1
         resolved = service_list_groups(instance, status="resolved")
@@ -260,7 +262,13 @@ class TestListResolutions:
             thesis_facts={"k": "v"},
             analysis_state={"centroid": [0.1, 0.2]},
         )
-        service_resolve_group(instance, pr.group_id, "approve", rationale="good")
+        service_resolve_group(
+            instance,
+            pr.group_id,
+            "approve",
+            rationale="good",
+            expected_pending_version=1,
+        )
         result = service_list_resolutions(instance)
         assert result.total == 1
         r = result.resolutions[0]
@@ -273,7 +281,7 @@ class TestListResolutions:
         pr = service_propose_group(
             instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"k": "v"}
         )
-        service_resolve_group(instance, pr.group_id, "approve")
+        service_resolve_group(instance, pr.group_id, "approve", expected_pending_version=1)
         fits = service_list_resolutions(instance, relationship_type="fits")
         assert fits.total == 1
         replaces = service_list_resolutions(instance, relationship_type="replaces")
@@ -283,11 +291,11 @@ class TestListResolutions:
         pr1 = service_propose_group(
             instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1}
         )
-        service_resolve_group(instance, pr1.group_id, "approve")
+        service_resolve_group(instance, pr1.group_id, "approve", expected_pending_version=1)
         pr2 = service_propose_group(
             instance, "fits", [_member("BP-2", "V-2")], thesis_facts={"a": 2}
         )
-        service_resolve_group(instance, pr2.group_id, "reject")
+        service_resolve_group(instance, pr2.group_id, "reject", expected_pending_version=1)
         approvals = service_list_resolutions(instance, action="approve")
         assert approvals.total == 1
         rejects = service_list_resolutions(instance, action="reject")
@@ -301,6 +309,86 @@ class TestListResolutions:
                 [_member(f"BP-{i + 1}", f"V-{i + 1}")],
                 thesis_facts={"i": i},
             )
-            service_resolve_group(instance, pr.group_id, "reject")
+            service_resolve_group(instance, pr.group_id, "reject", expected_pending_version=1)
         result = service_list_resolutions(instance, limit=2)
         assert len(result.resolutions) == 2
+
+
+class TestGroupStatus:
+    def test_pending_thesis_text_takes_precedence(self, instance: CruxibleInstance) -> None:
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        approved = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="approved thesis",
+            thesis_facts=facts,
+        )
+        service_resolve_group(instance, approved.group_id, "approve", expected_pending_version=1)
+
+        pending = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-2", "V-2")],
+            thesis_text="pending thesis",
+            thesis_facts=facts,
+        )
+
+        status = service_group_status(instance, signature=pending.signature)
+        assert status.thesis_text == "pending thesis"
+        assert status.pending_group_id == pending.group_id
+        assert status.pending_delta_count == 1
+
+    def test_latest_resolution_thesis_text_used_without_pending(
+        self, instance: CruxibleInstance
+    ) -> None:
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        first = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="first thesis",
+            thesis_facts=facts,
+        )
+        service_resolve_group(instance, first.group_id, "approve", expected_pending_version=1)
+
+        second = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-2", "V-2")],
+            thesis_text="latest thesis",
+            thesis_facts=facts,
+        )
+        service_resolve_group(instance, second.group_id, "approve", expected_pending_version=1)
+
+        status = service_group_status(instance, signature=second.signature)
+        assert status.pending_group_id is None
+        assert status.thesis_text == "latest thesis"
+        assert status.latest_approved_resolution_id is not None
+
+    def test_reference_group_thesis_text_used_without_pending_or_resolution(
+        self, instance: CruxibleInstance
+    ) -> None:
+        signature = compute_group_signature("fits", {"rule_id": "manual", "rule_version": 1})
+        group = CandidateGroup(
+            group_id="GRP-reference001",
+            relationship_type="fits",
+            signature=signature,
+            status="applying",
+            thesis_text="reference thesis",
+            thesis_facts={"rule_id": "manual", "rule_version": 1},
+            proposed_by="agent",
+            member_count=1,
+            created_at=datetime.now(timezone.utc),
+        )
+        store = instance.get_group_store()
+        try:
+            with store.transaction():
+                store.save_group(group)
+        finally:
+            store.close()
+
+        status = service_group_status(instance, group_id=group.group_id)
+        assert status.thesis_text == "reference thesis"
+        assert status.pending_group_id is None
+        assert status.latest_approved_resolution_id is None
