@@ -84,7 +84,12 @@ def _apply_canonical_workflow(instance: CruxibleInstance, workflow_name: str) ->
 def _approve_workflow_group(instance: CruxibleInstance, workflow_name: str) -> None:
     proposed = service_propose_workflow(instance, workflow_name, {})
     assert proposed.group_id is not None
-    resolved = service_resolve_group(instance, proposed.group_id, "approve")
+    resolved = service_resolve_group(
+        instance,
+        proposed.group_id,
+        "approve",
+        expected_pending_version=1,
+    )
     assert resolved.edges_created > 0
 
 

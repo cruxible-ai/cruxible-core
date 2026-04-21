@@ -224,14 +224,17 @@ Capture the returned `group_id`, then inspect it:
 
 ```
 cruxible group get --group <group_id>
+cruxible group status --group <group_id> --json
 ```
 
 Ask the user to approve. If they agree:
 
 ```
 cruxible group resolve --group <group_id> --action approve \
-  --source ai_review --rationale "<reason>"
+  --source agent --expected-pending-version <n> --rationale "<reason>"
 ```
+
+Use the `pending_version` surfaced by `group get` / `group status` as `<n>`.
 
 Do not proceed to Stage 2 until this group is resolved. If the user rejects,
 explain that Stages 2–4 depend on approved `asset_runs_product` edges and

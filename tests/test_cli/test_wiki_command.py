@@ -7,7 +7,6 @@ from pathlib import Path
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature

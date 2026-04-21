@@ -261,14 +261,16 @@ does not approve or resolve governed proposals directly.
    groups you just created. Hand the summary to the next reviewer step
    (human, ticket queue, or agent reviewer).
 
-**Idempotence.** If the same proposal chain ran yesterday, today's run
-produces the same groups. The group store deduplicates by signature. Safe to
-re-run.
+**Idempotence.** Re-running the same proposal chain rewrites one pending
+bucket per signature instead of compounding the queue. Once a signature has
+approved history, unchanged tuples suppress cleanly and only new delta tuples
+remain reviewable.
 
 ## Review feedback loop
 
 After a reviewer resolves a group (`cruxible group resolve --group <id>
---action approve|reject --source human|ai_review`), the system records a
+--action approve|reject --source human|agent --expected-pending-version <n>`),
+the system records a
 resolution. From there,
 reviewers have two different follow-up tools:
 
@@ -284,7 +286,8 @@ Agents do not drive this loop — but should be aware that:
 
 - Rejected proposals are signal that the thesis or evidence was insufficient.
   Before re-proposing a rejected relationship, read the resolution rationale
-  (`cruxible group get --group <id>`) and adjust.
+  (`cruxible group get --group <id>`) and the bucket view
+  (`cruxible group status --group <id>`) and adjust.
 - `watch` or `invalidated` trust on a resolution means the reviewer wants a
   second look. Treat those as "unconfirmed" when summarizing.
 
@@ -323,7 +326,7 @@ Stop and ask the user (don't guess) when:
 |---|---|
 | `cruxible group propose` rejects with "integration not declared" | The `--integration` name must match the fork's `integrations` config. Use `cruxible schema --json` and inspect the `integrations` section. |
 | `cruxible run` fails with "Artifact ... sha256 mismatch" | A seed file was edited without re-pinning. Operator needs to run `cruxible lock --force`. Do not retry as agent. |
-| Query returns empty when you expected results | Likely the proposal chain ran but nothing has been approved yet. `group list --status pending_review` will show the backlog. |
+| Query returns empty when you expected results | Likely the proposal chain ran but nothing has been approved yet. `group list --status pending_review` shows the backlog and `group status --group <id>` shows the accepted-vs-pending split for a specific bucket. |
 | `add-entity` says "entity updated" when you expected "added" | ID collision — the entity already exists. Fetch it (`get-entity`) and decide whether to continue. |
 | Thesis is accepted but proposal still blocks | `group propose` enforces integration signals. A proposal with no `signals` array and no `--integration` flag will be rejected. |
 

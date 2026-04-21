@@ -1200,6 +1200,10 @@ workflows:
           signals_from: [signals]
           thesis_text: >
             Fuzzy software-to-product matching from CMDB inventory
+          thesis_facts:
+            rule_id: cmdb_inventory_fuzzy_product_match
+            rule_version: 1
+            source: cmdb_inventory
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1262,6 +1266,10 @@ workflows:
           thesis_text: >
             Installed versions fall within KEV reference-layer affected
             ranges
+          thesis_facts:
+            rule_id: installed_version_in_kev_affected_range
+            rule_version: 1
+            reference_source: kev_reference
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1346,6 +1354,10 @@ workflows:
           thesis_text: >
             Approved affected assets are materially exposed after
             posture and control review
+          thesis_facts:
+            rule_id: exposure_assessment_from_posture_and_controls
+            rule_version: 1
+            source: asset_posture_and_controls
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1410,6 +1422,10 @@ workflows:
           thesis_text: >
             Approved exposed assets create downstream business-service
             impact
+          thesis_facts:
+            rule_id: dependency_rollup_from_exposed_assets
+            rule_version: 1
+            source: service_asset_dependencies
           proposed_by: agent
         as: proposal
     returns: proposal
