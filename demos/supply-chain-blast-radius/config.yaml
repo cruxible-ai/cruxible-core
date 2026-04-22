@@ -1,0 +1,1291 @@
+version: "1.0"
+name: supply_chain_blast_radius
+kind: world_model
+description: >
+  Supply chain incident blast-radius kit. Deterministic base world of
+  suppliers, components (with recursive BOM), products, facilities, and
+  shipments. Incidents arrive as new entities and cascade through four
+  staged governed-relationship workflows: incident → supplier →
+  component → product → at-risk shipment. Each governed edge is rule-
+  centric (the bucket signature carries rule_id + rule_version, not
+  incident_id), so trust accumulates on rules across many incidents
+  rather than starting fresh per incident.
+
+# ─── Entity types ────────────────────────────────────────────────────
+
+entity_types:
+  Supplier:
+    description: External supplier of components or sub-assemblies.
+    properties:
+      supplier_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      primary_geography:
+        type: string
+        optional: true
+      tier_hint:
+        type: string
+        optional: true
+        description: Operator-supplied hint (tier-1, tier-2, tier-3); not authoritative — true tier is computed via BOM traversal.
+
+  Component:
+    description: A part, sub-assembly, or raw input. Recursion via component_part_of_component captures BOM depth.
+    properties:
+      component_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      criticality:
+        type: string
+        optional: true
+        enum: [critical, standard, low]
+      category:
+        type: string
+        optional: true
+
+  Product:
+    description: Finished good shipped to customers.
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+      sku:
+        type: string
+        indexed: true
+      name:
+        type: string
+      active:
+        type: bool
+        optional: true
+
+  Facility:
+    description: Physical site (factory, warehouse, port, distribution center).
+    properties:
+      facility_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      geography:
+        type: string
+        optional: true
+      facility_type:
+        type: string
+        optional: true
+        enum: [factory, warehouse, port, distribution_center]
+
+  Shipment:
+    description: A specific outbound shipment of products to a customer.
+    properties:
+      shipment_id:
+        type: string
+        primary_key: true
+      customer_id:
+        type: string
+        indexed: true
+      status:
+        type: string
+        optional: true
+        enum: [in_flight, delivered, cancelled]
+      ship_date:
+        type: date
+        optional: true
+      eta:
+        type: date
+        optional: true
+
+  Incident:
+    description: A supplier-side disruption (factory fire, port closure, recall, geography event).
+    properties:
+      incident_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      severity:
+        type: string
+        optional: true
+        enum: [critical, high, medium, low]
+      scope_type:
+        type: string
+        optional: true
+        enum: [facility, supplier, geography]
+      scope_id:
+        type: string
+        optional: true
+        description: Identifier of the in-scope facility, supplier, or geography string.
+      reported_at:
+        type: date
+        optional: true
+      summary:
+        type: string
+        optional: true
+
+# ─── Deterministic relationships ─────────────────────────────────────
+
+relationships:
+  - name: supplier_supplies_component
+    description: A supplier provides a component. Properties capture lead time and active status.
+    from: Supplier
+    to: Component
+    properties:
+      lead_time_days:
+        type: int
+        optional: true
+      active:
+        type: bool
+        optional: true
+
+  - name: component_part_of_component
+    description: Recursive BOM edge. A sub-component is part of a parent component.
+    from: Component
+    to: Component
+    properties:
+      quantity:
+        type: int
+        optional: true
+
+  - name: component_part_of_product
+    description: Top-level BOM edge linking a component into a finished product.
+    from: Component
+    to: Product
+    properties:
+      quantity:
+        type: int
+        optional: true
+
+  - name: supplier_operates_facility
+    description: Supplier owns or operates a physical facility.
+    from: Supplier
+    to: Facility
+
+  - name: shipment_contains_product
+    description: A shipment contains one or more units of a product.
+    from: Shipment
+    to: Product
+    properties:
+      qty:
+        type: int
+        optional: true
+
+# ─── Governed relationships ──────────────────────────────────────────
+#
+# Each governed edge is created through propose_relationship_group +
+# resolution. The matching block names the integration that supplies
+# tri-state signals; the auto_resolve_when policy gates when proposals
+# can apply without human review.
+#
+# Bucket signatures are rule-centric (rule_id + rule_version live in
+# thesis_facts on the propose step), so trust accumulates on the rule
+# across many incidents — not per incident.
+
+  - name: incident_impacts_supplier
+    description: Governed judgment that an incident materially impacts a supplier.
+    from: Incident
+    to: Supplier
+    properties:
+      match_basis:
+        type: string
+        optional: true
+        enum: [direct, facility, geography]
+        description: How the incident scope matched this supplier.
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_supplier_scope_match:
+          role: required
+          always_review_on_unsure: true
+      auto_resolve_when: all_support
+
+  - name: incident_impacts_component
+    description: Governed judgment that an incident impacts a component via its impacted suppliers.
+    from: Incident
+    to: Component
+    properties:
+      alternate_state:
+        type: string
+        optional: true
+        enum: [no_alternate, alternate_in_scope, alternate_active]
+        description: State of substitute supplier coverage at cascade time.
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_component_cascade:
+          role: required
+          always_review_on_unsure: true
+      auto_resolve_when: all_support
+
+  - name: incident_impacts_product
+    description: Governed judgment that an incident impacts a finished product through BOM cascade.
+    from: Incident
+    to: Product
+    properties:
+      bom_depth_bucket:
+        type: string
+        optional: true
+        enum: [direct, tier_2, tier_3_plus]
+        description: Discretized BOM traversal depth from impacted component to product.
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_product_cascade:
+          role: required
+          always_review_on_unsure: true
+      # Product-level impact is too load-bearing to auto-resolve in v1
+      # even when signals are clean. Keep on review track.
+      # NOTE (schema gap): there is no `auto_resolve_when: never` value
+      # in MatchingSchema. Setting all_support + relying on
+      # auto_resolve_requires_prior_trust=trusted_only (the default)
+      # means first-incident review-everything; later incidents with
+      # accrued trust on this bucket *could* auto-apply unless we
+      # leave always_review_on_unsure plus a decision_policy below.
+      auto_resolve_when: all_support
+
+  - name: shipment_at_risk
+    description: Governed judgment that an in-flight shipment is at risk because it carries an impacted product.
+    from: Incident
+    to: Shipment
+    properties:
+      shipment_state:
+        type: string
+        optional: true
+        enum: [in_flight, delivered, pre_incident]
+        description: Computed shipment state relative to the incident at cascade time.
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        shipment_risk_assessment:
+          role: required
+          always_review_on_unsure: true
+      auto_resolve_when: all_support
+
+# ─── Decision policies ───────────────────────────────────────────────
+#
+# Force product-impact and shipment-at-risk proposals to require
+# review even when bucket trust would otherwise allow auto-apply.
+# This is how we express "always human review for customer-facing
+# judgments" given the current MatchingSchema does not have a
+# `never_auto_resolve` option.
+
+decision_policies:
+  - name: product_impact_always_review
+    description: Customer-facing product impact must always be reviewed.
+    rationale: Product impact drives customer comms and recall planning; human approval required.
+    applies_to: workflow
+    workflow_name: propose_incident_impacts_product
+    relationship_type: incident_impacts_product
+    effect: require_review
+
+  - name: shipment_risk_always_review
+    description: Customer shipment risk must always be reviewed.
+    rationale: At-risk shipments reach customers; human approval required before action.
+    applies_to: workflow
+    workflow_name: propose_shipment_at_risk
+    relationship_type: shipment_at_risk
+    effect: require_review
+
+# ─── Named queries ───────────────────────────────────────────────────
+#
+# All graph-native single-purpose reads. Composition (e.g. "products
+# at risk plus their single-source flags") happens in the skill, not
+# in a query.
+
+named_queries:
+  incident_impacted_suppliers:
+    description: Starting from an incident, find suppliers judged impacted.
+    entry_point: Incident
+    returns: Supplier
+    traversal:
+      - relationship: incident_impacts_supplier
+        direction: outgoing
+
+  incident_impacted_components:
+    description: Starting from an incident, find components judged impacted via the supplier cascade.
+    entry_point: Incident
+    returns: Component
+    traversal:
+      - relationship: incident_impacts_component
+        direction: outgoing
+
+  incident_impacted_products:
+    description: >
+      Starting from an incident, find finished products judged impacted via BOM cascade.
+      The bom_depth_bucket edge property lets the skill filter for tier_2 / tier_3_plus.
+    entry_point: Incident
+    returns: Product
+    traversal:
+      - relationship: incident_impacts_product
+        direction: outgoing
+
+  incident_at_risk_shipments:
+    description: Starting from an incident, find at-risk in-flight shipments.
+    entry_point: Incident
+    returns: Shipment
+    traversal:
+      - relationship: shipment_at_risk
+        direction: outgoing
+
+  single_source_components_for_incident:
+    description: >
+      Starting from an incident, find impacted components that have only one
+      active supplier path. Surfaces the "no alternate active supplier"
+      enrichment for the operator summary.
+    entry_point: Incident
+    returns: Component
+    traversal:
+      - relationship: incident_impacts_component
+        direction: outgoing
+        target_filter:
+          alternate_state: no_alternate
+
+# ─── Quality checks ──────────────────────────────────────────────────
+
+quality_checks:
+  - name: components_have_supplier
+    kind: cardinality
+    description: Every component should have at least one supplier (orphan detector).
+    entity_type: Component
+    relationship_type: supplier_supplies_component
+    direction: incoming
+    min_count: 1
+    severity: warning
+
+  - name: critical_components_have_redundancy
+    kind: cardinality
+    description: Critical components should have at least two active suppliers (single-source flag).
+    entity_type: Component
+    relationship_type: supplier_supplies_component
+    direction: incoming
+    min_count: 2
+    severity: warning
+
+  - name: products_have_bom
+    kind: cardinality
+    description: Products should have at least one component in their BOM.
+    entity_type: Product
+    relationship_type: component_part_of_product
+    direction: incoming
+    min_count: 1
+    severity: error
+
+# ─── Integrations ────────────────────────────────────────────────────
+#
+# One integration per governed relationship in v1. Each integration is
+# the named "voice" that emits tri-state signals through map_signals.
+# Adding a second voice per relationship (e.g. separating facility-
+# match from geography-match for incident_impacts_supplier) is a v1.5
+# enrichment that does not require schema changes.
+
+integrations:
+  incident_supplier_scope_match:
+    kind: incident_scope_match
+    contract: null
+    notes: >
+      Matches incident scope (facility|supplier|geography) to suppliers
+      via supplier_operates_facility and supplier.primary_geography.
+
+  incident_component_cascade:
+    kind: supplier_to_component_cascade
+    contract: null
+    notes: >
+      Cascades from impacted suppliers through supplier_supplies_component
+      to components, downgrading the signal when an active alternate
+      supplier exists outside incident scope.
+
+  incident_product_cascade:
+    kind: bom_recursive_cascade
+    contract: null
+    notes: >
+      Recursive BOM traversal from impacted components up through
+      component_part_of_component and component_part_of_product to
+      finished goods. Records discretized depth in bom_depth_bucket.
+
+  shipment_risk_assessment:
+    kind: shipment_state_assessment
+    contract: null
+    notes: >
+      Assesses each in-flight shipment containing an impacted product
+      against shipment status and ship_date relative to incident.reported_at.
+
+# ─── Contracts ───────────────────────────────────────────────────────
+
+contracts:
+  EmptyInput:
+    fields: {}
+
+  SupplyChainSeedData:
+    description: Deterministic base-world entities and edges loaded from seed CSVs.
+    fields:
+      suppliers:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              supplier_id: {type: string}
+              name: {type: string}
+              primary_geography: {type: string}
+              tier_hint: {type: string}
+      components:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              component_id: {type: string}
+              name: {type: string}
+              criticality: {type: string}
+              category: {type: string}
+      products:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id: {type: string}
+              sku: {type: string}
+              name: {type: string}
+              active: {type: boolean}
+      facilities:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              facility_id: {type: string}
+              name: {type: string}
+              geography: {type: string}
+              facility_type: {type: string}
+      shipments:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              shipment_id: {type: string}
+              customer_id: {type: string}
+              status: {type: string}
+              ship_date: {type: string}
+              eta: {type: string}
+      supplier_supplies_component:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              supplier_id: {type: string}
+              component_id: {type: string}
+              lead_time_days: {type: integer}
+              active: {type: boolean}
+      component_part_of_component:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              parent_component_id: {type: string}
+              child_component_id: {type: string}
+              quantity: {type: integer}
+      component_part_of_product:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              component_id: {type: string}
+              product_id: {type: string}
+              quantity: {type: integer}
+      supplier_operates_facility:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              supplier_id: {type: string}
+              facility_id: {type: string}
+      shipment_contains_product:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              shipment_id: {type: string}
+              product_id: {type: string}
+              qty: {type: integer}
+
+  IncidentScopeAssessmentInput:
+    description: Open incidents plus suppliers, facilities, and supplier_operates_facility edges for scope matching.
+    fields:
+      incidents:
+        type: json
+      suppliers:
+        type: json
+      facilities:
+        type: json
+      supplier_operates_facility_edges:
+        type: json
+
+  IncidentScopeAssessmentResults:
+    description: Candidate (incident, supplier) judgments with match_basis and tri-state verdict.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              incident_id: {type: string}
+              supplier_id: {type: string}
+              match_basis: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
+  IncidentComponentCascadeInput:
+    description: Resolved incident_impacts_supplier edges plus supplier_supplies_component context.
+    fields:
+      impacted_supplier_edges:
+        type: json
+      supplier_supplies_component_edges:
+        type: json
+      components:
+        type: json
+
+  IncidentComponentCascadeResults:
+    description: Candidate (incident, component) judgments with alternate_state and verdict.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              incident_id: {type: string}
+              component_id: {type: string}
+              alternate_state: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
+  IncidentProductCascadeInput:
+    description: Resolved component impacts plus full BOM edges for recursive product cascade.
+    fields:
+      impacted_component_edges:
+        type: json
+      component_part_of_component_edges:
+        type: json
+      component_part_of_product_edges:
+        type: json
+      products:
+        type: json
+
+  IncidentProductCascadeResults:
+    description: Candidate (incident, product) judgments with bom_depth_bucket and verdict.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              incident_id: {type: string}
+              product_id: {type: string}
+              bom_depth_bucket: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
+  ShipmentRiskAssessmentInput:
+    description: Resolved product impacts plus shipments and shipment_contains_product edges.
+    fields:
+      impacted_product_edges:
+        type: json
+      shipments:
+        type: json
+      shipment_contains_product_edges:
+        type: json
+      incidents:
+        type: json
+
+  ShipmentRiskAssessmentResults:
+    description: Candidate (incident, shipment) judgments with shipment_state and verdict.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              incident_id: {type: string}
+              shipment_id: {type: string}
+              shipment_state: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
+# ─── Artifacts ───────────────────────────────────────────────────────
+#
+# The seed bundle artifact will be added once seed data is authored.
+# Validator requires sha256 to be present on every artifact entry, so
+# we leave this section empty for v1 draft and re-attach the artifact
+# (and the load_supply_chain_seed_data provider's `artifact:` field)
+# in the seed-data PR.
+
+artifacts: {}
+
+# ─── Providers ───────────────────────────────────────────────────────
+#
+# Five providers: one to load seed CSVs, four cascade-stage assessors.
+# All deterministic. The cascade providers operate on whatever is
+# currently in the graph (open incidents, resolved upstream impacts) —
+# bucket dedup handles the case where they re-propose existing pairs.
+
+providers:
+  load_supply_chain_seed_data:
+    kind: function
+    description: Load all base-world entities and deterministic edges from the seed bundle.
+    contract_in: EmptyInput
+    contract_out: SupplyChainSeedData
+    ref: cruxible_core.demo_providers.supply_chain_blast_radius.load_seed_data
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    # artifact: supply_chain_seed_bundle  # re-attach once seed bundle authored
+
+  assess_incident_supplier_scope:
+    kind: function
+    description: Match each open incident's scope to suppliers via direct, facility, or geography basis.
+    contract_in: IncidentScopeAssessmentInput
+    contract_out: IncidentScopeAssessmentResults
+    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_supplier_scope
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  assess_incident_component_cascade:
+    kind: function
+    description: Cascade impacted suppliers to components, downgrading where active alternates exist.
+    contract_in: IncidentComponentCascadeInput
+    contract_out: IncidentComponentCascadeResults
+    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_component_cascade
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  assess_incident_product_cascade:
+    kind: function
+    description: Recursive BOM cascade from impacted components up to finished products; records bom_depth_bucket.
+    contract_in: IncidentProductCascadeInput
+    contract_out: IncidentProductCascadeResults
+    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_product_cascade
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  assess_shipment_risk:
+    kind: function
+    description: Assess in-flight shipments containing impacted products against status and ship_date.
+    contract_in: ShipmentRiskAssessmentInput
+    contract_out: ShipmentRiskAssessmentResults
+    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_shipment_risk
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+# ─── Workflows ───────────────────────────────────────────────────────
+#
+# Five workflows: one canonical base loader plus four propose stages.
+# Each propose workflow is contract_in: EmptyInput and operates on
+# the current graph state (KEV pattern). Operators run them in order;
+# the skill orchestrates and pauses for human review between stages.
+
+workflows:
+
+  build_seed_state:
+    # KNOWN VALIDATE GAP: this workflow uses apply_* steps which require
+    # canonical: true, and canonical requires the load_supply_chain_seed_data
+    # provider to declare an artifact bundle with a real sha256. Both will be
+    # set once the seed CSVs are authored. Until then `cruxible validate`
+    # surfaces a cross-reference error on this single workflow; the rest of
+    # the config (entity types, relationships, four propose workflows, named
+    # queries, feedback profiles, decision policies, quality checks) validates
+    # cleanly.
+    canonical: true
+    description: Load base-world suppliers, components, products, facilities, shipments, and deterministic edges.
+    contract_in: EmptyInput
+    steps:
+      - id: seed
+        provider: load_supply_chain_seed_data
+        input: {}
+        as: seed
+
+      # --- Entities ---
+      - id: suppliers
+        make_entities:
+          entity_type: Supplier
+          items: $steps.seed.suppliers
+          entity_id: $item.supplier_id
+          properties:
+            supplier_id: $item.supplier_id
+            name: $item.name
+            primary_geography: $item.primary_geography
+            tier_hint: $item.tier_hint
+        as: suppliers
+      - id: components
+        make_entities:
+          entity_type: Component
+          items: $steps.seed.components
+          entity_id: $item.component_id
+          properties:
+            component_id: $item.component_id
+            name: $item.name
+            criticality: $item.criticality
+            category: $item.category
+        as: components
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: $steps.seed.products
+          entity_id: $item.product_id
+          properties:
+            product_id: $item.product_id
+            sku: $item.sku
+            name: $item.name
+            active: $item.active
+        as: products
+      - id: facilities
+        make_entities:
+          entity_type: Facility
+          items: $steps.seed.facilities
+          entity_id: $item.facility_id
+          properties:
+            facility_id: $item.facility_id
+            name: $item.name
+            geography: $item.geography
+            facility_type: $item.facility_type
+        as: facilities
+      - id: shipments
+        make_entities:
+          entity_type: Shipment
+          items: $steps.seed.shipments
+          entity_id: $item.shipment_id
+          properties:
+            shipment_id: $item.shipment_id
+            customer_id: $item.customer_id
+            status: $item.status
+            ship_date: $item.ship_date
+            eta: $item.eta
+        as: shipments
+
+      # --- Relationships ---
+      - id: supplies_edges
+        make_relationships:
+          relationship_type: supplier_supplies_component
+          items: $steps.seed.supplier_supplies_component
+          from_type: Supplier
+          from_id: $item.supplier_id
+          to_type: Component
+          to_id: $item.component_id
+          properties:
+            lead_time_days: $item.lead_time_days
+            active: $item.active
+        as: supplies_edges
+      - id: bom_recursive_edges
+        make_relationships:
+          relationship_type: component_part_of_component
+          items: $steps.seed.component_part_of_component
+          from_type: Component
+          from_id: $item.child_component_id
+          to_type: Component
+          to_id: $item.parent_component_id
+          properties:
+            quantity: $item.quantity
+        as: bom_recursive_edges
+      - id: bom_product_edges
+        make_relationships:
+          relationship_type: component_part_of_product
+          items: $steps.seed.component_part_of_product
+          from_type: Component
+          from_id: $item.component_id
+          to_type: Product
+          to_id: $item.product_id
+          properties:
+            quantity: $item.quantity
+        as: bom_product_edges
+      - id: facility_edges
+        make_relationships:
+          relationship_type: supplier_operates_facility
+          items: $steps.seed.supplier_operates_facility
+          from_type: Supplier
+          from_id: $item.supplier_id
+          to_type: Facility
+          to_id: $item.facility_id
+        as: facility_edges
+      - id: shipment_edges
+        make_relationships:
+          relationship_type: shipment_contains_product
+          items: $steps.seed.shipment_contains_product
+          from_type: Shipment
+          from_id: $item.shipment_id
+          to_type: Product
+          to_id: $item.product_id
+          properties:
+            qty: $item.qty
+        as: shipment_edges
+
+      # --- Apply ---
+      - id: apply_suppliers
+        apply_entities:
+          entities_from: suppliers
+        as: apply_suppliers
+      - id: apply_components
+        apply_entities:
+          entities_from: components
+        as: apply_components
+      - id: apply_products
+        apply_entities:
+          entities_from: products
+        as: apply_products
+      - id: apply_facilities
+        apply_entities:
+          entities_from: facilities
+        as: apply_facilities
+      - id: apply_shipments
+        apply_entities:
+          entities_from: shipments
+        as: apply_shipments
+      - id: apply_supplies
+        apply_relationships:
+          relationships_from: supplies_edges
+        as: apply_supplies
+      - id: apply_bom_recursive
+        apply_relationships:
+          relationships_from: bom_recursive_edges
+        as: apply_bom_recursive
+      - id: apply_bom_product
+        apply_relationships:
+          relationships_from: bom_product_edges
+        as: apply_bom_product
+      - id: apply_facility_edges
+        apply_relationships:
+          relationships_from: facility_edges
+        as: apply_facility_edges
+      - id: apply_shipment_edges
+        apply_relationships:
+          relationships_from: shipment_edges
+        as: apply_shipment_edges
+    returns: apply_shipment_edges
+
+  # ── Stage 1: incident → supplier ───────────────────────────────────
+
+  propose_incident_impacts_supplier:
+    canonical: false
+    description: >
+      Match every open incident's scope to suppliers via direct,
+      facility, or geography basis. Bucket signature is rule-centric
+      (rule_id=incident_scope_match_to_supplier), so trust accumulates
+      across many incidents.
+    contract_in: EmptyInput
+    steps:
+      - id: incidents
+        list_entities:
+          entity_type: Incident
+        as: incidents
+      - id: suppliers
+        list_entities:
+          entity_type: Supplier
+        as: suppliers
+      - id: facilities
+        list_entities:
+          entity_type: Facility
+        as: facilities
+      - id: facility_edges
+        list_relationships:
+          relationship_type: supplier_operates_facility
+        as: facility_edges
+      - id: assessments
+        provider: assess_incident_supplier_scope
+        input:
+          incidents: $steps.incidents.items
+          suppliers: $steps.suppliers.items
+          facilities: $steps.facilities.items
+          supplier_operates_facility_edges: $steps.facility_edges.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: incident_impacts_supplier
+          items: $steps.assessments.items
+          from_type: Incident
+          from_id: $item.incident_id
+          to_type: Supplier
+          to_id: $item.supplier_id
+          properties:
+            match_basis: $item.match_basis
+            rationale: $item.rationale
+        as: candidates
+      - id: signals
+        map_signals:
+          integration: incident_supplier_scope_match
+          items: $steps.assessments.items
+          from_id: $item.incident_id
+          to_id: $item.supplier_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: incident_impacts_supplier
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            Open incidents match suppliers via direct, facility, or
+            geography scope.
+          thesis_facts:
+            rule_id: incident_scope_match_to_supplier
+            rule_version: 1
+            source: incident_scope_and_supplier_facility_geography
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  # ── Stage 2: supplier → component ──────────────────────────────────
+
+  propose_incident_impacts_component:
+    canonical: false
+    description: >
+      Cascade resolved incident_impacts_supplier edges through
+      supplier_supplies_component to candidate component impacts.
+      Records alternate_state to capture whether alternate active
+      suppliers exist outside incident scope.
+    contract_in: EmptyInput
+    steps:
+      - id: impacted_supplier_edges
+        list_relationships:
+          relationship_type: incident_impacts_supplier
+        as: impacted_supplier_edges
+      - id: supplies_edges
+        list_relationships:
+          relationship_type: supplier_supplies_component
+        as: supplies_edges
+      - id: components
+        list_entities:
+          entity_type: Component
+        as: components
+      - id: assessments
+        provider: assess_incident_component_cascade
+        input:
+          impacted_supplier_edges: $steps.impacted_supplier_edges.items
+          supplier_supplies_component_edges: $steps.supplies_edges.items
+          components: $steps.components.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: incident_impacts_component
+          items: $steps.assessments.items
+          from_type: Incident
+          from_id: $item.incident_id
+          to_type: Component
+          to_id: $item.component_id
+          properties:
+            alternate_state: $item.alternate_state
+            rationale: $item.rationale
+        as: candidates
+      - id: signals
+        map_signals:
+          integration: incident_component_cascade
+          items: $steps.assessments.items
+          from_id: $item.incident_id
+          to_id: $item.component_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: incident_impacts_component
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            Components are impacted via the supplier cascade,
+            adjusted for alternate active supplier coverage.
+          thesis_facts:
+            rule_id: cascade_from_impacted_supplier_to_component
+            rule_version: 1
+            source: supplier_supplies_component_edges
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  # ── Stage 3: component → product (recursive BOM) ───────────────────
+
+  propose_incident_impacts_product:
+    canonical: false
+    description: >
+      Recursive BOM cascade from impacted components up through
+      component_part_of_component and component_part_of_product to
+      finished goods. Records bom_depth_bucket to surface tier-2+
+      exposure.
+    contract_in: EmptyInput
+    steps:
+      - id: impacted_component_edges
+        list_relationships:
+          relationship_type: incident_impacts_component
+        as: impacted_component_edges
+      - id: bom_recursive
+        list_relationships:
+          relationship_type: component_part_of_component
+        as: bom_recursive
+      - id: bom_product
+        list_relationships:
+          relationship_type: component_part_of_product
+        as: bom_product
+      - id: products
+        list_entities:
+          entity_type: Product
+        as: products
+      - id: assessments
+        provider: assess_incident_product_cascade
+        input:
+          impacted_component_edges: $steps.impacted_component_edges.items
+          component_part_of_component_edges: $steps.bom_recursive.items
+          component_part_of_product_edges: $steps.bom_product.items
+          products: $steps.products.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: incident_impacts_product
+          items: $steps.assessments.items
+          from_type: Incident
+          from_id: $item.incident_id
+          to_type: Product
+          to_id: $item.product_id
+          properties:
+            bom_depth_bucket: $item.bom_depth_bucket
+            rationale: $item.rationale
+        as: candidates
+      - id: signals
+        map_signals:
+          integration: incident_product_cascade
+          items: $steps.assessments.items
+          from_id: $item.incident_id
+          to_id: $item.product_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: incident_impacts_product
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            Products are impacted via recursive BOM cascade from
+            impacted components.
+          thesis_facts:
+            rule_id: cascade_through_bom_to_product
+            rule_version: 1
+            source: bill_of_materials_traversal
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  # ── Stage 4: product → shipment ────────────────────────────────────
+
+  propose_shipment_at_risk:
+    canonical: false
+    description: >
+      Assess in-flight shipments containing impacted products against
+      status and ship_date relative to incident.reported_at.
+    contract_in: EmptyInput
+    steps:
+      - id: impacted_product_edges
+        list_relationships:
+          relationship_type: incident_impacts_product
+        as: impacted_product_edges
+      - id: shipments
+        list_entities:
+          entity_type: Shipment
+        as: shipments
+      - id: contains_edges
+        list_relationships:
+          relationship_type: shipment_contains_product
+        as: contains_edges
+      - id: incidents
+        list_entities:
+          entity_type: Incident
+        as: incidents
+      - id: assessments
+        provider: assess_shipment_risk
+        input:
+          impacted_product_edges: $steps.impacted_product_edges.items
+          shipments: $steps.shipments.items
+          shipment_contains_product_edges: $steps.contains_edges.items
+          incidents: $steps.incidents.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: shipment_at_risk
+          items: $steps.assessments.items
+          from_type: Incident
+          from_id: $item.incident_id
+          to_type: Shipment
+          to_id: $item.shipment_id
+          properties:
+            shipment_state: $item.shipment_state
+            rationale: $item.rationale
+        as: candidates
+      - id: signals
+        map_signals:
+          integration: shipment_risk_assessment
+          items: $steps.assessments.items
+          from_id: $item.incident_id
+          to_id: $item.shipment_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: shipment_at_risk
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            In-flight shipments containing impacted products are at
+            risk; delivered or pre-incident shipments are not.
+          thesis_facts:
+            rule_id: shipment_contains_impacted_product
+            rule_version: 1
+            source: in_flight_shipment_assessment
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+# ─── Feedback profiles ───────────────────────────────────────────────
+#
+# Per-relationship feedback vocabulary used when reviewers reject or
+# qualify resolutions. scope_keys pull from the resolved edge's
+# endpoints/properties — they are NOT bucket signature fields. The
+# bucket signature is rule-centric (set in propose.thesis_facts).
+
+feedback_profiles:
+  incident_impacts_supplier:
+    version: 1
+    reason_codes:
+      wrong_facility_match:
+        description: Rule said this supplier matched via facility but the facility was not actually in scope.
+        remediation_hint: provider_fix
+        required_scope_keys: [supplier, match_basis]
+      geography_stale:
+        description: Supplier's primary_geography was outdated; supplier is no longer in scope.
+        remediation_hint: provider_fix
+        required_scope_keys: [supplier, match_basis]
+      supplier_recently_cleared:
+        description: Supplier was cleared for a similar incident recently and should not have been re-flagged.
+        remediation_hint: decision_policy
+        required_scope_keys: [supplier]
+    scope_keys:
+      incident: FROM.incident_id
+      supplier: TO.supplier_id
+      match_basis: EDGE.match_basis
+
+  incident_impacts_component:
+    version: 1
+    reason_codes:
+      alternate_supplier_active:
+        description: Component has an active alternate supplier outside incident scope; cascade should have stopped.
+        remediation_hint: provider_fix
+        required_scope_keys: [component]
+      component_decommissioned:
+        description: Component is no longer in active use.
+        remediation_hint: quality_check
+        required_scope_keys: [component]
+      supplier_substitution_planned:
+        description: A planned substitution mitigates this cascade.
+        remediation_hint: decision_policy
+        required_scope_keys: [component, alternate_state]
+    scope_keys:
+      incident: FROM.incident_id
+      component: TO.component_id
+      alternate_state: EDGE.alternate_state
+
+  incident_impacts_product:
+    version: 1
+    reason_codes:
+      product_inactive:
+        description: Product is inactive; cascade should not have included it.
+        remediation_hint: quality_check
+        required_scope_keys: [product]
+      bom_variant_mismatch:
+        description: Product uses a BOM variant that does not include the impacted component.
+        remediation_hint: provider_fix
+        required_scope_keys: [product]
+      bom_depth_overstated:
+        description: BOM traversal recorded a tier closer than reality.
+        remediation_hint: provider_fix
+        required_scope_keys: [product, bom_depth_bucket]
+    scope_keys:
+      incident: FROM.incident_id
+      product: TO.product_id
+      bom_depth_bucket: EDGE.bom_depth_bucket
+
+  shipment_at_risk:
+    version: 1
+    reason_codes:
+      already_delivered:
+        description: Shipment was already delivered when incident occurred.
+        remediation_hint: provider_fix
+        required_scope_keys: [shipment, shipment_state]
+      ships_before_incident:
+        description: Shipment ship_date predates incident; not actually at risk.
+        remediation_hint: provider_fix
+        required_scope_keys: [shipment, shipment_state]
+      alternate_source_shipment:
+        description: Shipment uses product variant from an alternate source not in incident scope.
+        remediation_hint: provider_fix
+        required_scope_keys: [shipment]
+    scope_keys:
+      incident: FROM.incident_id
+      shipment: TO.shipment_id
+      shipment_state: EDGE.shipment_state
