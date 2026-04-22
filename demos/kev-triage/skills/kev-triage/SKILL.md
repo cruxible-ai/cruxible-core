@@ -1,6 +1,6 @@
 ---
 name: kev-triage
-description: Run the KEV fork's daily triage loop, incident attribution, waiver intake, and control-effectiveness proposals against a KEV triage instance using governed proposal flows.
+description: Run the KEV fork's daily triage loop, incident intake, remediation verification, waiver intake, and control-effectiveness proposals against a KEV triage instance using governed proposal flows.
 ---
 
 # KEV Security Triage
@@ -10,18 +10,23 @@ taking any action against the graph.
 
 ## What this skill does
 
-This skill covers four agent tasks against a KEV triage instance:
+This skill covers five agent tasks against a KEV triage instance:
 
-1. **Incident attribution** — fold a post-mortem or incident report into the
-   graph as `Incident` + `Finding` entities and governed relationships.
+1. **Incident intake and synthesis** — open or update an `Incident` with the
+   user when a post-mortem, investigation, or triage evidence justifies it,
+   then fold that incident into the graph as `Incident` + `Finding` entities
+   and governed relationships.
 2. **Exception / waiver intake** — propose a patch exception when a team has a
    legitimate reason to delay remediation.
 3. **Control effectiveness review** — propose that a compensating control
    materially reduces exposure to a specific CVE class.
-4. **Daily triage pass** — refresh the reference layer, run the proposal
-   chain, and produce an actionable summary enriched with incident history.
+4. **Remediation verification** — record that an asset-vulnerability pair has
+   been remediated or otherwise verified closed.
+5. **Daily triage pass** — refresh the reference layer, run the proposal
+   chain, and produce an actionable summary enriched with incident history and
+   remediation state.
 
-All four routes share one rule: **the agent proposes, a reviewer resolves.**
+All five routes share one rule: **the agent proposes, a reviewer resolves.**
 Nothing gets written to the graph as an accepted edge without going through
 `group propose` → reviewer → `group resolve`. The reviewer may be a human or
 another agent operating in review mode; the recorded attribution comes from the
@@ -39,8 +44,8 @@ Every session, before making proposals:
 3. `cruxible schema --json` — confirm the schema includes the fork types and
    surfaces this skill expects: `Incident`, `Finding`, the governed
    relationships listed below, and the `incident_attribution` /
-   `policy_review` / `control_effectiveness` integrations. If they don't
-   match, stop and ask.
+   `policy_review` / `control_effectiveness` /
+   `remediation_verification` integrations. If they don't match, stop and ask.
 4. `cruxible stats` — note the current entity and edge counts so you can
    detect accidental drift later.
 5. `cruxible group list --status pending_review --json` — check what's already
@@ -69,22 +74,43 @@ This instance must run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
 If a command fails with `PermissionDeniedError: ... disabled in agent mode`,
 do not retry or try to bypass. Surface the error to the user and stop.
 
-## Task 1 — Incident attribution
+## Task 1 — Incident intake and synthesis
 
-**When:** an incident report, post-mortem, or SIEM investigation references a
-vulnerability and asset(s) that are already tracked.
+**When:** either:
 
-**Inputs you need from the report:**
+- an incident report, post-mortem, or SIEM investigation references a
+  vulnerability and asset(s) that are already tracked, or
+- the daily triage pass surfaces a small number of incident-worthy candidates
+  and the user wants to open or update an incident directly from that triage
+  evidence.
+
+In practice, expect `0-2` incident candidates from a normal triage pass. Work
+those directly with the user instead of assuming a fully formed external
+report already exists.
+
+**Inputs you need from the user and available evidence:**
+- New incident vs existing incident to update
 - Incident ID, title, severity, status, occurred_at, resolved_at (if known),
   source system, free-text summary
 - The asset(s) involved — match to existing `Asset` entity IDs
-- The vulnerability exploited — match to existing `Vulnerability` entity IDs
+- The vulnerability exploited or suspected — match to existing
+  `Vulnerability` entity IDs
 - The owner accountable — match to existing `Owner` entity IDs
-- Zero or more findings (root causes)
+- Zero or more findings (root causes), if known
+
+If the evidence is still provisional, that is fine. Create the `Incident` with
+`status=investigating` or another in-progress state and keep the governed edge
+theses explicit about uncertainty. Do not overstate a suspected cluster as a
+confirmed compromise.
 
 **Steps:**
 
-1. Create the `Incident` entity:
+1. Confirm the incident decision with the user:
+   - Should this become a new `Incident`, or update an existing one?
+   - What title, severity, and short summary should be recorded?
+   - Which assets, vulnerability IDs, and owner are in scope right now?
+
+2. Create or update the `Incident` entity:
    ```
    cruxible add-entity --type Incident --id INC-2025-003 \
      --props '{"incident_id":"INC-2025-003","title":"WebLogic admin console RCE",
@@ -93,7 +119,7 @@ vulnerability and asset(s) that are already tracked.
                "summary":"Attacker reached the WebLogic admin console on partner-api-01..."}'
    ```
 
-2. Propose `incident_owned_by`:
+3. Propose `incident_owned_by`:
    ```
    cruxible group propose \
      --relationship incident_owned_by \
@@ -108,7 +134,7 @@ vulnerability and asset(s) that are already tracked.
      --integration incident_attribution
    ```
 
-3. Propose `incident_involved_asset` (one member per asset):
+4. Propose `incident_involved_asset` (one member per asset):
    ```
    cruxible group propose \
      --relationship incident_involved_asset \
@@ -123,7 +149,7 @@ vulnerability and asset(s) that are already tracked.
      --integration incident_attribution
    ```
 
-4. Propose `incident_exploited_vulnerability`:
+5. Propose `incident_exploited_vulnerability`:
    ```
    cruxible group propose \
      --relationship incident_exploited_vulnerability \
@@ -137,13 +163,18 @@ vulnerability and asset(s) that are already tracked.
      --integration incident_attribution
    ```
 
-5. Create `Finding` entities for each root cause identified in the
+6. Create `Finding` entities for each root cause identified in the
    post-mortem, then propose `finding_from_incident` linking them back.
 
 **Thesis quality.** Every proposal must include a thesis that names the
-evidence — the specific report line, SIEM rule, or interview note. Reviewers
-use the thesis to decide; a thesis that just restates the relationship ("this
-incident involved this asset") is not useful.
+evidence — the specific report line, triage clue, SIEM rule, or interview
+note. Reviewers use the thesis to decide; a thesis that just restates the
+relationship ("this incident involved this asset") is not useful.
+
+**Triage-to-incident is a user-confirmed escalation.** If the daily triage
+pass suggests a likely incident, pause, show the user the evidence cluster,
+and ask whether to open or update an `Incident`. Do not silently create one
+from elevated risk alone.
 
 **One member per proposal group is fine.** The grouping matters when a single
 judgment covers multiple edges (e.g., "this incident touched these five
@@ -211,7 +242,53 @@ materially blocks a specific CVE class.
      --integration control_effectiveness
    ```
 
-## Task 4 — Daily triage pass
+## Task 4 — Remediation verification
+
+**When:** a team says a patch, upgrade, config change, or decommissioning
+action is complete, or scanner/manual validation shows that a specific
+asset-vulnerability pair is now closed.
+
+**Steps:**
+
+1. Confirm the remediation claim with the user:
+   - Which `Asset` and `Vulnerability` pair is being closed?
+   - What remediation type applies (`patch`, `upgrade`, `config_change`,
+     `decommission`, `vendor_fix`, etc.)?
+   - What evidence supports closure right now?
+   - Is there a ticket/change ID to record?
+
+2. Propose `asset_remediated_vulnerability`:
+   ```
+   cruxible group propose \
+     --relationship asset_remediated_vulnerability \
+     --members '[{"from_type":"Asset","from_id":"ASSET-8",
+                   "to_type":"Vulnerability","to_id":"CVE-2020-14882",
+                   "relationship_type":"asset_remediated_vulnerability",
+                   "properties":{"remediation_type":"patch",
+                                 "verified_at":"2026-04-22",
+                                 "evidence_source":"scanner",
+                                 "ticket_id":"CHG-40123"},
+                   "signals":[{"integration":"remediation_verification","signal":"support",
+                                "evidence":"Post-patch scan no longer detects WebLogic admin console bypass"}]}]' \
+     --thesis "ASSET-8 was patched and scanner verification on 2026-04-22 no longer detects CVE-2020-14882" \
+     --thesis-facts '{"asset_id":"ASSET-8","cve_id":"CVE-2020-14882","remediation_type":"patch"}' \
+     --integration remediation_verification
+   ```
+
+3. If this also closes a root cause, update the related `Finding` entity:
+   - set `status=remediated`
+   - set `remediated_at`
+   - set `remediation_action` if useful
+
+4. If all findings for an incident are remediated, ask the user whether the
+   `Incident` should also move to `resolved`.
+
+**Important boundary.** Remediation state should be explicit. Do not assume an
+exposure disappeared just because a later proposal run did not reproduce it.
+Use `asset_remediated_vulnerability` when the user or evidence actually
+supports closure.
+
+## Task 5 — Daily triage pass
 
 Runs on a cadence (typically daily). The agent's job is to produce a
 human-actionable summary. It may safely refresh the KEV reference layer, but it
@@ -243,11 +320,12 @@ does not approve or resolve governed proposals directly.
    Each produces governed groups that enter the review queue.
 
 3. For each new `asset_exposed_to_vulnerability` candidate, query prior
-   exploitation context:
+   exploitation and remediation context:
    ```
    cruxible query --query incident_history_for_product --param product_id=<product>
    cruxible query --query open_findings_for_asset --param asset_id=<asset>
    cruxible query --query prior_exploitation_context --param cve_id=<cve>
+   cruxible query --query asset_remediation_context --param asset_id=<asset>
    ```
 
 4. Produce a summary that distinguishes:
@@ -256,8 +334,24 @@ does not approve or resolve governed proposals directly.
    - **Standard priority**: exposures with no prior history.
    - **Overdue**: exposures past `kev_due_date` with no exception on file.
    - **Waived**: exposures covered by an active exception.
+   - **Remediated or conflict-state**: remediation has been recorded for the
+     asset-vulnerability pair, but current triage still needs explanation
+     (for example, remediation looks stale, evidence is weak, or exposure
+     appears to have returned).
+   - **Incident candidate**: a small number of clusters where the combined
+     evidence suggests this should be opened or updated as an `Incident`
+     rather than treated as routine triage only.
 
-5. Unless you are explicitly operating in reviewer mode, do not resolve the
+5. If the summary produces `0-2` incident candidates, pause and work those
+   directly with the user:
+   - explain why each candidate looks incident-worthy
+   - ask whether to open a new `Incident`, update an existing one, or keep it
+     as elevated triage only
+   - if the user wants an incident, switch into **Task 1** and create/update
+     the `Incident` with `status=investigating` unless they provide a stronger
+     status
+
+6. Unless you are explicitly operating in reviewer mode, do not resolve the
    groups you just created. Hand the summary to the next reviewer step
    (human, ticket queue, or agent reviewer).
 
@@ -303,6 +397,8 @@ Agents do not drive this loop — but should be aware that:
 | Prior post-mortem for this CVE | `query --query prior_exploitation_context --param cve_id=<cve>` |
 | All exceptions on an asset | `query --query asset_exception_context --param asset_id=<asset>` |
 | All controls on an asset | `query --query asset_control_context --param asset_id=<asset>` |
+| What remediation state exists on this asset? | `query --query asset_remediation_context --param asset_id=<asset>` |
+| Which assets were explicitly remediated for this CVE? | `query --query remediated_assets_for_vulnerability --param cve_id=<cve>` |
 
 ## When to stop and ask
 
@@ -311,6 +407,12 @@ Stop and ask the user (don't guess) when:
 - An incident report names an asset, owner, vulnerability, or product that
   does not resolve to an existing entity ID. Proposing against a wrong ID
   corrupts the graph.
+- A daily triage pass suggests an incident candidate, but the likely asset,
+  vulnerability, owner, or incident boundary is still ambiguous. Confirm the
+  scope with the user before creating or updating an `Incident`.
+- A remediation claim exists, but the asset/CVE mapping or verification
+  evidence is ambiguous. Confirm the closure scope with the user before
+  proposing `asset_remediated_vulnerability`.
 - A proposal would create a relationship type not listed in the fork's
   governed relationships. The schema is authoritative.
 - Review material conflicts with graph state (e.g., the report says an
@@ -342,11 +444,12 @@ Every governed relationship the agent can propose:
 | `service_impacted_by_vulnerability` | BusinessService → Vulnerability | `dependency_context` |
 | `asset_patch_exception_for` | Asset → Vulnerability | `policy_review` |
 | `control_reduces_exposure_to` | CompensatingControl → Vulnerability | `control_effectiveness` |
+| `asset_remediated_vulnerability` | Asset → Vulnerability | `remediation_verification` |
 | `incident_owned_by` | Incident → Owner | `incident_attribution` |
 | `incident_involved_asset` | Incident → Asset | `incident_attribution` |
 | `incident_exploited_vulnerability` | Incident → Vulnerability | `incident_attribution` |
 | `finding_from_incident` | Finding → Incident | `incident_attribution` |
 
 The first four are typically produced by batch workflows (`propose_*`). The
-last six are typically produced by one-off agent proposals from review
+last seven are typically produced by one-off agent proposals from review
 material.

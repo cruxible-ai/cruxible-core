@@ -320,6 +320,32 @@ relationships:
           role: required
           always_review_on_unsure: true
 
+  - name: asset_remediated_vulnerability
+    description: Accepted judgment that an asset-vulnerability pair has been remediated or otherwise verified closed.
+    from: Asset
+    to: Vulnerability
+    properties:
+      remediation_type:
+        type: string
+        optional: true
+      verified_at:
+        type: string
+        optional: true
+      evidence_source:
+        type: string
+        optional: true
+      ticket_id:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        remediation_verification:
+          role: required
+          always_review_on_unsure: true
+
 # ─── Governed incident relationships ─────────────────────────────────
 #
 # These are proposed by an agent reading incident reports and
@@ -484,6 +510,26 @@ named_queries:
       - relationship: asset_has_control
         direction: outgoing
 
+  asset_remediation_context:
+    description: >
+      Starting from an asset, find vulnerabilities that have been explicitly
+      marked remediated for that asset.
+    entry_point: Asset
+    returns: Vulnerability
+    traversal:
+      - relationship: asset_remediated_vulnerability
+        direction: outgoing
+
+  remediated_assets_for_vulnerability:
+    description: >
+      Starting from a vulnerability, find assets that have explicit remediation
+      state recorded for it.
+    entry_point: Vulnerability
+    returns: Asset
+    traversal:
+      - relationship: asset_remediated_vulnerability
+        direction: incoming
+
   incident_history_for_product:
     description: >
       Starting from a product, find incidents where vulnerabilities
@@ -624,6 +670,15 @@ integrations:
       vulnerabilities, and findings based on investigation
       evidence. Typically proposed one at a time via group
       propose after reading incident reports or post-mortems.
+
+  remediation_verification:
+    kind: remediation_verification
+    contract: null
+    notes: >
+      Reviews whether a specific asset-vulnerability pair has
+      been remediated or verified closed based on scanner
+      evidence, change tickets, upgrade confirmation,
+      decommissioning, or manual validation.
 
 # ─── Contracts ────────────────────────────────────────────────────────
 
@@ -1535,6 +1590,25 @@ feedback_profiles:
       control_type: FROM.control_type
       cve: TO.cve_id
 
+  asset_remediated_vulnerability:
+    version: 1
+    reason_codes:
+      wrong_closure:
+        description: The asset-vulnerability pair was not actually remediated.
+        remediation_hint: provider_fix
+        required_scope_keys: [asset, cve]
+      insufficient_verification:
+        description: Evidence was too weak to claim verified remediation.
+        remediation_hint: quality_check
+        required_scope_keys: [asset, cve]
+      regression_after_fix:
+        description: The issue reappeared after remediation was recorded.
+        remediation_hint: provider_fix
+        required_scope_keys: [asset, cve]
+    scope_keys:
+      asset: FROM.asset_id
+      cve: TO.cve_id
+
   incident_exploited_vulnerability:
     version: 1
     reason_codes:
@@ -1647,6 +1721,25 @@ outcome_profiles:
         required_scope_keys: [relationship_type]
       underestimated_exposure:
         description: An attack path was missed during exposure assessment.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  asset_remediated_resolution:
+    anchor_type: resolution
+    relationship_type: asset_remediated_vulnerability
+    version: 1
+    outcome_codes:
+      premature_closure:
+        description: The remediation was accepted before the asset was actually closed.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      verified_remediation:
+        description: The remediation decision was correct and the asset remained closed.
+        required_scope_keys: [relationship_type]
+      reopened_after_regression:
+        description: The asset later became exposed again after remediation.
         remediation_hint: require_review
         required_scope_keys: [relationship_type]
     scope_keys:
