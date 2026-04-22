@@ -11,6 +11,7 @@ from click.testing import CliRunner
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.service import service_propose_group, service_resolve_group
@@ -40,6 +41,34 @@ def _assert_local_mutation_disabled(
     result = _chdir_run(runner, directory, args)
     assert result.exit_code == 2
     assert f"Local mutation disabled for {label}" in result.output
+
+
+@pytest.fixture
+def governed_view_instance(
+    tmp_path: Path,
+    proposal_workflow_config_yaml: str,
+) -> CruxibleInstance:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(proposal_workflow_config_yaml)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Campaign",
+            entity_id="CMP-1",
+            properties={"campaign_id": "CMP-1", "region": "north"},
+        )
+    )
+    for sku in ("SKU-123", "SKU-456"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id=sku,
+                properties={"sku": sku, "category": "beverages"},
+            )
+        )
+    instance.save_graph(graph)
+    return instance
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +406,133 @@ class TestStatsInspectReload:
             ["reload-config", "--config", str(new_config)],
             "reload-config",
         )
+
+
+class TestCanonicalViews:
+    def test_inspect_ontology_mermaid_outputs_governed_edge(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "ontology", "--format", "mermaid"],
+        )
+        assert result.exit_code == 0
+        assert "Campaign" in result.output
+        assert "recommended_for [governed]" in result.output
+
+    def test_inspect_workflows_json_summarizes_workflow_shape(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["workflow_count"] == 1
+        workflow = payload["workflows"][0]
+        assert workflow["name"] == "propose_campaign_recommendations"
+        assert workflow["queries"] == ["get_campaign_context"]
+        assert workflow["providers"] == ["campaign_recommendations"]
+        assert workflow["proposes_relationships"] == ["recommended_for"]
+
+    def test_inspect_queries_json_surfaces_traversal_and_params(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "queries", "--format", "json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["query_count"] == 1
+        query = payload["queries"][0]
+        assert query["name"] == "get_campaign_context"
+        assert query["entry_point"] == "Campaign"
+        assert query["required_params"] == ["campaign_id"]
+
+    def test_inspect_governance_tracks_pending_and_approved_state(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        proposed = service_propose_group(
+            governed_view_instance,
+            "recommended_for",
+            [
+                CandidateMember(
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id="SKU-123",
+                    relationship_type="recommended_for",
+                    signals=[
+                        CandidateSignal(
+                            integration="catalog",
+                            signal="support",
+                            evidence="seasonal match",
+                        )
+                    ],
+                    properties={"reason": "seasonal match"},
+                )
+            ],
+            thesis_text="Recommend products for regional campaign",
+            thesis_facts={"rule_id": "campaign_recommendations", "rule_version": 1},
+        )
+
+        pending_result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "governance", "--format", "json"],
+        )
+        assert pending_result.exit_code == 0
+        pending_payload = json.loads(pending_result.output)
+        assert pending_payload["governed_relationship_count"] == 1
+        assert pending_payload["pending_group_count"] == 1
+        assert pending_payload["relationships"][0]["pending_group_count"] == 1
+
+        service_resolve_group(
+            governed_view_instance,
+            proposed.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        approved_result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "governance", "--format", "json"],
+        )
+        assert approved_result.exit_code == 0
+        approved_payload = json.loads(approved_result.output)
+        assert approved_payload["pending_group_count"] == 0
+        assert approved_payload["approved_resolution_count"] == 1
+        assert approved_payload["relationships"][0]["approved_resolution_count"] == 1
+
+    def test_inspect_overview_outputs_generated_markdown(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "overview"],
+        )
+        assert result.exit_code == 0
+        assert "# Config Overview" in result.output
+        assert "## Relationship Map" in result.output
+        assert "```mermaid" in result.output
+        assert "propose_campaign_recommendations" in result.output
 
 
 # ---------------------------------------------------------------------------
