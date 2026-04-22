@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli,
     _dispatch_cli_instance,
+    _get_client,
     _remember_server_context,
 )
 from cruxible_core.cli.main import handle_errors
@@ -82,19 +85,26 @@ def world_publish_cmd(
     is_flag=True,
     help="Skip automatic kit application and create a bare fork overlay.",
 )
-@click.option("--root-dir", required=True, help="Root directory for the new local fork.")
+@click.option(
+    "--root-dir",
+    default=None,
+    help="Workspace root for the new fork overlay (defaults to current directory in server mode).",
+)
 @handle_errors
 def world_fork_cmd(
     transport_ref: str | None,
     world_ref: str | None,
     kit: str | None,
     no_kit: bool,
-    root_dir: str,
+    root_dir: str | None,
 ) -> None:
     """Create a new local fork instance from a published world release."""
+    effective_root_dir = root_dir
+    if _get_client() is not None and effective_root_dir is None:
+        effective_root_dir = str(Path.cwd())
     result = _dispatch_cli(
         lambda client: client.world_fork(
-            root_dir=root_dir,
+            root_dir=effective_root_dir or str(Path.cwd()),
             transport_ref=transport_ref,
             world_ref=world_ref,
             kit=kit,
@@ -105,7 +115,7 @@ def world_fork_cmd(
             world_ref=world_ref,
             kit=kit,
             no_kit=no_kit,
-            root_dir=root_dir,
+            root_dir=Path(effective_root_dir) if effective_root_dir is not None else Path.cwd(),
         ),
         allow_local=False,
         command_name="world fork",
