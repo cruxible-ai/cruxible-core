@@ -37,28 +37,28 @@ another agent operating in review mode; the recorded attribution comes from the
 Every session, before making proposals:
 
 1. `cruxible context show` — confirm which instance you're connected to.
-2. `cruxible query list --json` — confirm the named queries used in the daily
-   pass are present. Use `cruxible query describe --query <name> --json` to
-   inspect required params and example IDs for the specific read surfaces you
-   plan to call.
-3. `cruxible schema --json` — confirm the schema includes the fork types and
-   surfaces this skill expects: `Incident`, `Finding`, the governed
-   relationships listed below, and the `incident_attribution` /
-   `policy_review` / `control_effectiveness` /
-   `remediation_verification` integrations. If they don't match, stop and ask.
-4. `cruxible stats` — note the current entity and edge counts so you can
+2. `cruxible stats` — note the current entity and edge counts so you can
    detect accidental drift later.
-5. `cruxible group list --status pending_review --json` — check what's already
+3. `cruxible group list --status pending_review --json` — check what's already
    awaiting review. Don't re-propose something already in the queue.
 
-If the reviewer is about to act on proposals you make, also run:
+When you need a specific read surface, use:
+
+```
+cruxible query describe --query <name> --json
+```
+
+to inspect required params and example IDs for that query only. Do not
+enumerate the full query catalog unless you are debugging the kit.
+
+If the reviewer is about to act on proposals you make, run the relevant
+context queries for the specific owner or CVE involved so the decision lands
+in queue and blast-radius context. Typical examples:
 
 ```
 cruxible query --query owner_patch_queue --param owner_id=<owner>
 cruxible query --query service_blast_radius --param cve_id=<cve_id>
 ```
-
-so the proposals land in context.
 
 ## Agent-mode constraints
 
@@ -302,13 +302,10 @@ does not approve or resolve governed proposals directly.
    cruxible world pull-preview
    cruxible world pull-apply --apply-digest <digest>
    ```
-   Use `world pull-*` when the fork tracks a published upstream KEV reference.
-   KEV reference releases are data-safe/additive, so the agent may pull them
-   directly. If this instance is a local demo root that does not track an
-   upstream release, refresh the composed reference workflow instead:
-   ```
-   cruxible run --workflow build_public_kev_reference --apply
-   ```
+   Use `world pull-*` for the KEV daily refresh path. KEV reference releases
+   are data-safe/additive, so the agent may pull them directly. If this
+   instance is not tracking a published upstream KEV reference, stop and fix
+   that first instead of rebuilding the reference layer locally.
 
 2. Run the fork proposal chain:
    ```
@@ -413,8 +410,9 @@ Stop and ask the user (don't guess) when:
 - A remediation claim exists, but the asset/CVE mapping or verification
   evidence is ambiguous. Confirm the closure scope with the user before
   proposing `asset_remediated_vulnerability`.
-- A proposal would create a relationship type not listed in the fork's
-  governed relationships. The schema is authoritative.
+- A proposal needs a relationship or integration not already used by this
+  skill's documented flows. Stop and ask rather than guessing a new write
+  surface.
 - Review material conflicts with graph state (e.g., the report says an
   exception exists but no `Exception` entity is found).
 - You hit `PermissionDeniedError` in agent mode. Retrying won't help.
@@ -426,7 +424,7 @@ Stop and ask the user (don't guess) when:
 
 | Symptom | Check |
 |---|---|
-| `cruxible group propose` rejects with "integration not declared" | The `--integration` name must match the fork's `integrations` config. Use `cruxible schema --json` and inspect the `integrations` section. |
+| `cruxible group propose` rejects with "integration not declared" | Use the integration names documented in this skill for the task you are performing. If the instance still rejects the name, stop and ask rather than probing the schema directly. |
 | `cruxible run` fails with "Artifact ... sha256 mismatch" | A seed file was edited without re-pinning. Operator needs to run `cruxible lock --force`. Do not retry as agent. |
 | Query returns empty when you expected results | Likely the proposal chain ran but nothing has been approved yet. `group list --status pending_review` shows the backlog and `group status --group <id>` shows the accepted-vs-pending split for a specific bucket. |
 | `add-entity` says "entity updated" when you expected "added" | ID collision — the entity already exists. Fetch it (`get-entity`) and decide whether to continue. |
