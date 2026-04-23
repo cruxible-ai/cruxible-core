@@ -15,6 +15,7 @@ from cruxible_core.demo_providers.kev_triage import (
     load_fork_seed_data,
     match_software_to_products,
 )
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.service import (
     service_apply_workflow,
@@ -408,6 +409,64 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert owner_patch_queue.total_results > 0
     assert service_blast_radius.total_results > 0
     assert product_kev_exposure.total_results > 0
+
+
+def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    service_lock(instance)
+
+    _apply_canonical_workflow(instance, "build_public_kev_reference")
+    _apply_canonical_workflow(instance, "build_fork_state")
+    _approve_workflow_group(instance, "propose_asset_products")
+    _approve_workflow_group(instance, "propose_asset_affected")
+    _approve_workflow_group(instance, "propose_asset_exposure")
+
+    graph = instance.load_graph()
+    asset_to_owner = {
+        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
+    }
+    owner_vuln_counts: dict[tuple[str, str], int] = {}
+    unique_pair: tuple[str, str, str] | None = None
+    for edge in graph.list_edges("asset_exposed_to_vulnerability"):
+        owner_id = asset_to_owner.get(edge["from_id"])
+        if owner_id is None:
+            continue
+        key = (owner_id, edge["to_id"])
+        owner_vuln_counts[key] = owner_vuln_counts.get(key, 0) + 1
+    for edge in graph.list_edges("asset_exposed_to_vulnerability"):
+        owner_id = asset_to_owner.get(edge["from_id"])
+        if owner_id is None:
+            continue
+        key = (owner_id, edge["to_id"])
+        if owner_vuln_counts.get(key) == 1:
+            unique_pair = (edge["from_id"], edge["to_id"], owner_id)
+            break
+
+    assert unique_pair is not None
+    asset_id, cve_id, owner_id = unique_pair
+
+    before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+    before_ids = {item.entity_id for item in before.results}
+    assert cve_id in before_ids
+
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="asset_remediated_vulnerability",
+            from_type="Asset",
+            from_id=asset_id,
+            to_type="Vulnerability",
+            to_id=cve_id,
+            properties={"review_status": "human_approved"},
+        )
+    )
+    instance.save_graph(graph)
+
+    after = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+    after_ids = {item.entity_id for item in after.results}
+
+    assert cve_id not in after_ids
+    assert after.total_results == before.total_results - 1
 
 
 def test_release_backed_kev_fork_can_propose_asset_products(tmp_path: Path) -> None:

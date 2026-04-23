@@ -445,6 +445,9 @@ named_queries:
         direction: incoming
       - relationship: asset_exposed_to_vulnerability
         direction: outgoing
+        exclude_if_related:
+          - relationship: asset_remediated_vulnerability
+            direction: outgoing
 
   product_kev_exposure:
     description: >
