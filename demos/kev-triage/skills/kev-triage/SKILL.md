@@ -12,19 +12,19 @@ taking any action against the graph.
 
 This skill covers five agent tasks against a KEV triage instance:
 
-1. **Incident intake and synthesis** — open or update an `Incident` with the
+1. **Daily triage pass** — refresh the reference layer, run the proposal
+   chain, and produce an actionable summary enriched with incident history and
+   remediation state.
+2. **Incident intake and synthesis** — open or update an `Incident` with the
    user when a post-mortem, investigation, or triage evidence justifies it,
    then fold that incident into the graph as `Incident` + `Finding` entities
    and governed relationships.
-2. **Exception / waiver intake** — propose a patch exception when a team has a
+3. **Exception / waiver intake** — propose a patch exception when a team has a
    legitimate reason to delay remediation.
-3. **Control effectiveness review** — propose that a compensating control
+4. **Control effectiveness review** — propose that a compensating control
    materially reduces exposure to a specific CVE class.
-4. **Remediation verification** — record that an asset-vulnerability pair has
+5. **Remediation verification** — record that an asset-vulnerability pair has
    been remediated or otherwise verified closed.
-5. **Daily triage pass** — refresh the reference layer, run the proposal
-   chain, and produce an actionable summary enriched with incident history and
-   remediation state.
 
 All five routes share one rule: **the agent proposes, a reviewer resolves.**
 Nothing gets written to the graph as an accepted edge without going through
@@ -74,7 +74,76 @@ This instance must run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
 If a command fails with `PermissionDeniedError: ... disabled in agent mode`,
 do not retry or try to bypass. Surface the error to the user and stop.
 
-## Task 1 — Incident intake and synthesis
+## Task 1 — Daily triage pass
+
+Runs on a cadence (typically daily). The agent's job is to produce a
+human-actionable summary. It may safely refresh the KEV reference layer, but it
+does not approve or resolve governed proposals directly.
+
+**Steps:**
+
+1. Refresh the reference layer:
+   ```
+   cruxible world status
+   cruxible world pull-preview
+   cruxible world pull-apply --apply-digest <digest>
+   ```
+   Use `world pull-*` for the KEV daily refresh path. KEV reference releases
+   are data-safe/additive, so the agent may pull them directly. If this
+   instance is not tracking a published upstream KEV reference, stop and fix
+   that first instead of rebuilding the reference layer locally.
+
+2. Run the fork proposal chain:
+   ```
+   cruxible propose --workflow propose_asset_products
+   cruxible propose --workflow propose_asset_affected
+   cruxible propose --workflow propose_asset_exposure
+   cruxible propose --workflow propose_service_impact
+   ```
+   Each produces governed groups that enter the review queue.
+
+3. For each new `asset_exposed_to_vulnerability` candidate, query prior
+   exploitation and remediation context:
+   ```
+   cruxible query --query incident_history_for_product --param product_id=<product>
+   cruxible query --query open_findings_for_asset --param asset_id=<asset>
+   cruxible query --query prior_exploitation_context --param cve_id=<cve>
+   cruxible query --query asset_remediation_context --param asset_id=<asset>
+   ```
+
+4. Produce a summary that distinguishes:
+   - **Elevated priority**: exposures on products with prior exploitation
+     history, or assets with open findings that match the new CVE class.
+   - **Standard priority**: exposures with no prior history.
+   - **Overdue**: exposures past `kev_due_date` with no exception on file.
+   - **Waived**: exposures covered by an active exception.
+   - **Remediated or conflict-state**: remediation has been recorded for the
+     asset-vulnerability pair, but current triage still needs explanation
+     (for example, remediation looks stale, evidence is weak, or exposure
+     appears to have returned).
+   - **Incident candidate**: a small number of clusters where the combined
+     evidence suggests this should be opened or updated as an `Incident`
+     rather than treated as routine triage only.
+
+5. If the summary produces `0-2` incident candidates, pause and work those
+   directly with the user:
+   - explain why each candidate looks incident-worthy
+   - ask whether to open a new `Incident`, update an existing one, or keep it
+     as elevated triage only
+   - if the user wants an incident, switch into **Task 2** and create/update
+     the `Incident` with `status=investigating` unless they provide a stronger
+     status
+
+6. Unless you are explicitly operating in reviewer mode, do not resolve the
+   groups you just created. Hand the summary to the next reviewer step
+   (human, ticket queue, or agent reviewer).
+
+**Idempotence.** Re-running the same proposal chain rewrites one pending
+bucket per signature instead of compounding the queue. Once a signature has
+approved history, unchanged tuples suppress cleanly and only new delta tuples
+remain reviewable.
+
+## Task 2 — Incident intake and synthesis
 
 **When:** either:
 
@@ -180,7 +249,7 @@ from elevated risk alone.
 judgment covers multiple edges (e.g., "this incident touched these five
 assets"). Otherwise, a group with one member is correct and easier to review.
 
-## Task 2 — Exception / waiver intake
+## Task 3 — Exception / waiver intake
 
 **When:** a team requests a patch exception for a specific CVE on a specific
 asset, with an approver, rationale, and review date.
@@ -215,7 +284,7 @@ The deterministic `asset_has_exception` edge is loaded from seed data or
 added separately by an operator. The *governed* part is the judgment that a
 specific CVE is covered by the exception.
 
-## Task 3 — Control effectiveness review
+## Task 4 — Control effectiveness review
 
 **When:** a compensating control is already tracked (`CompensatingControl`
 entity + `asset_has_control` edges from seed), and there is evidence that it
@@ -242,7 +311,7 @@ materially blocks a specific CVE class.
      --integration control_effectiveness
    ```
 
-## Task 4 — Remediation verification
+## Task 5 — Remediation verification
 
 **When:** a team says a patch, upgrade, config change, or decommissioning
 action is complete, or scanner/manual validation shows that a specific
@@ -287,75 +356,6 @@ asset-vulnerability pair is now closed.
 exposure disappeared just because a later proposal run did not reproduce it.
 Use `asset_remediated_vulnerability` when the user or evidence actually
 supports closure.
-
-## Task 5 — Daily triage pass
-
-Runs on a cadence (typically daily). The agent's job is to produce a
-human-actionable summary. It may safely refresh the KEV reference layer, but it
-does not approve or resolve governed proposals directly.
-
-**Steps:**
-
-1. Refresh the reference layer:
-   ```
-   cruxible world status
-   cruxible world pull-preview
-   cruxible world pull-apply --apply-digest <digest>
-   ```
-   Use `world pull-*` for the KEV daily refresh path. KEV reference releases
-   are data-safe/additive, so the agent may pull them directly. If this
-   instance is not tracking a published upstream KEV reference, stop and fix
-   that first instead of rebuilding the reference layer locally.
-
-2. Run the fork proposal chain:
-   ```
-   cruxible propose --workflow propose_asset_products
-   cruxible propose --workflow propose_asset_affected
-   cruxible propose --workflow propose_asset_exposure
-   cruxible propose --workflow propose_service_impact
-   ```
-   Each produces governed groups that enter the review queue.
-
-3. For each new `asset_exposed_to_vulnerability` candidate, query prior
-   exploitation and remediation context:
-   ```
-   cruxible query --query incident_history_for_product --param product_id=<product>
-   cruxible query --query open_findings_for_asset --param asset_id=<asset>
-   cruxible query --query prior_exploitation_context --param cve_id=<cve>
-   cruxible query --query asset_remediation_context --param asset_id=<asset>
-   ```
-
-4. Produce a summary that distinguishes:
-   - **Elevated priority**: exposures on products with prior exploitation
-     history, or assets with open findings that match the new CVE class.
-   - **Standard priority**: exposures with no prior history.
-   - **Overdue**: exposures past `kev_due_date` with no exception on file.
-   - **Waived**: exposures covered by an active exception.
-   - **Remediated or conflict-state**: remediation has been recorded for the
-     asset-vulnerability pair, but current triage still needs explanation
-     (for example, remediation looks stale, evidence is weak, or exposure
-     appears to have returned).
-   - **Incident candidate**: a small number of clusters where the combined
-     evidence suggests this should be opened or updated as an `Incident`
-     rather than treated as routine triage only.
-
-5. If the summary produces `0-2` incident candidates, pause and work those
-   directly with the user:
-   - explain why each candidate looks incident-worthy
-   - ask whether to open a new `Incident`, update an existing one, or keep it
-     as elevated triage only
-   - if the user wants an incident, switch into **Task 1** and create/update
-     the `Incident` with `status=investigating` unless they provide a stronger
-     status
-
-6. Unless you are explicitly operating in reviewer mode, do not resolve the
-   groups you just created. Hand the summary to the next reviewer step
-   (human, ticket queue, or agent reviewer).
-
-**Idempotence.** Re-running the same proposal chain rewrites one pending
-bucket per signature instead of compounding the queue. Once a signature has
-approved history, unchanged tuples suppress cleanly and only new delta tuples
-remain reviewable.
 
 ## Review feedback loop
 
