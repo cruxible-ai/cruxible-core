@@ -22,6 +22,7 @@ from cruxible_core.config.schema import (
     PropertySchema,
     ProviderArtifactSchema,
     ProviderSchema,
+    RelatedExclusionSpec,
     RelationshipSchema,
     TraversalStep,
     UniquenessQualityCheck,
@@ -116,6 +117,7 @@ class TestTraversalStep:
         assert step.direction == "outgoing"
         assert step.filter is None
         assert step.constraint is None
+        assert step.exclude_if_related == []
         assert step.max_depth == 1
 
     def test_full(self):
@@ -124,10 +126,28 @@ class TestTraversalStep:
             direction="incoming",
             filter={"verified": True},
             constraint="target.year >= 2020",
+            exclude_if_related=[
+                RelatedExclusionSpec(relationship="retired_fit", direction="incoming")
+            ],
             max_depth=2,
         )
         assert step.direction == "incoming"
         assert step.filter == {"verified": True}
+        assert step.exclude_if_related[0].relationship == "retired_fit"
+
+    def test_related_exclusion_rejects_blank_relationship(self):
+        with pytest.raises(ValidationError, match="relationship must be a non-empty string"):
+            TraversalStep(
+                relationship="fits",
+                exclude_if_related=[{"relationship": "   "}],
+            )
+
+    def test_related_exclusion_rejects_invalid_direction(self):
+        with pytest.raises(ValidationError, match="outgoing|incoming|both"):
+            TraversalStep(
+                relationship="fits",
+                exclude_if_related=[{"relationship": "retired_fit", "direction": "sideways"}],
+            )
 
 
 class TestNamedQuerySchema:
@@ -150,6 +170,43 @@ class TestNamedQuerySchema:
             returns="list[Part]",
         )
         assert len(query.traversal) == 2
+
+
+class TestCoreConfigQueryValidation:
+    def test_rejects_unknown_related_exclusion_relationship(self):
+        with pytest.raises(ValidationError, match="exclude_if_related"):
+            CoreConfig(
+                name="test",
+                entity_types={
+                    "Vehicle": EntityTypeSchema(
+                        properties={"vehicle_id": PropertySchema(type="string", primary_key=True)}
+                    ),
+                    "Part": EntityTypeSchema(
+                        properties={"part_number": PropertySchema(type="string", primary_key=True)}
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle")
+                ],
+                named_queries={
+                    "parts_for_vehicle": NamedQuerySchema(
+                        entry_point="Vehicle",
+                        traversal=[
+                            TraversalStep(
+                                relationship="fits",
+                                direction="incoming",
+                                exclude_if_related=[
+                                    RelatedExclusionSpec(
+                                        relationship="suppressed_fit",
+                                        direction="incoming",
+                                    )
+                                ],
+                            )
+                        ],
+                        returns="list[Part]",
+                    )
+                },
+            )
 
 
 class TestConstraintSchema:

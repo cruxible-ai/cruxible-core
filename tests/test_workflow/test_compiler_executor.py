@@ -9,10 +9,17 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.config.schema import PropertySchema, WorkflowStepSchema
+from cruxible_core.config.schema import (
+    NamedQuerySchema,
+    PropertySchema,
+    RelationshipSchema,
+    TraversalStep,
+    WorkflowSchema,
+    WorkflowStepSchema,
+)
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.receipt.serializer import to_markdown
 from cruxible_core.service import service_list
 from cruxible_core.workflow import (
@@ -375,6 +382,91 @@ class TestWorkflowExecutor:
         rendered = to_markdown(result.receipt)
         assert "**Workflow:** evaluate_promo" in rendered
         assert "## Plan Steps" in rendered
+
+    def test_query_step_inherits_related_edge_exclusion(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.relationships.append(
+            RelationshipSchema(
+                name="suppressed_for",
+                from_entity="Campaign",
+                to_entity="Product",
+            )
+        )
+        config.named_queries["get_active_recommendations"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    exclude_if_related=[
+                        {
+                            "relationship": "suppressed_for",
+                            "direction": "outgoing",
+                        }
+                    ],
+                )
+            ],
+            returns="list[Product]",
+        )
+        config.workflows["query_active_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="products",
+                    query="get_active_recommendations",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "products"},
+                )
+            ],
+            returns="products",
+        )
+        proposal_workflow_instance.save_config(config)
+
+        graph = proposal_workflow_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="recommended_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-123",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="recommended_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-456",
+                properties={},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-456",
+                properties={},
+            )
+        )
+        proposal_workflow_instance.save_graph(graph)
+        _write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_active_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.output["total_results"] == 1
+        assert [item["entity_id"] for item in result.output["results"]] == ["SKU-123"]
 
     def test_execute_workflow_list_entities_step_returns_items(
         self, workflow_instance: CruxibleInstance

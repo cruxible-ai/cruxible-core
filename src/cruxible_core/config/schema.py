@@ -157,13 +157,28 @@ class RelationshipSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class RelatedExclusionSpec(BaseModel):
+    """Exclude a candidate when a second relationship exists for the same pair."""
+
+    relationship: str
+    direction: Literal["outgoing", "incoming", "both"] = "outgoing"
+
+    @field_validator("relationship")
+    @classmethod
+    def validate_relationship_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("relationship must be a non-empty string")
+        return value
+
+
 class TraversalStep(BaseModel):
     """A single step in a named query's traversal path.
 
     Each step follows one or more relationships in a direction, optionally
-    filtering on edge and/or target entity properties and applying constraints.
-    When multiple relationships are listed, the engine traverses all of them
-    from the current entities and merges results (fan-out).
+    filtering on edge and/or target entity properties, applying constraints,
+    and excluding candidates when related edges already exist. When multiple
+    relationships are listed, the engine traverses all of them from the
+    current entities and merges results (fan-out).
     """
 
     relationship: str | list[str]
@@ -171,6 +186,7 @@ class TraversalStep(BaseModel):
     filter: dict[str, Any] | None = None
     target_filter: dict[str, Any] | None = None
     constraint: str | None = None
+    exclude_if_related: list[RelatedExclusionSpec] = Field(default_factory=list)
     max_depth: int = Field(default=1, ge=1)
 
     @field_validator("relationship")
@@ -1051,6 +1067,22 @@ class CoreConfig(BaseModel):
                     f"which is not defined in contracts"
                 )
                 raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_query_related_exclusions(self) -> CoreConfig:
+        """Check that related-edge exclusion specs use declared canonical relationships."""
+        declared_relationships = {rel.name for rel in self.relationships}
+        for query_name, query in self.named_queries.items():
+            for step_index, step in enumerate(query.traversal):
+                for exclusion in step.exclude_if_related:
+                    if exclusion.relationship not in declared_relationships:
+                        msg = (
+                            f"Named query '{query_name}' traversal step {step_index} "
+                            f"references unknown relationship '{exclusion.relationship}' "
+                            "in exclude_if_related"
+                        )
+                        raise ValueError(msg)
         return self
 
     def get_relationship(self, name: str) -> RelationshipSchema | None:

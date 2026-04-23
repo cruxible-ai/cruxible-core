@@ -67,6 +67,21 @@ def config() -> CoreConfig:
                     "confidence": PropertySchema(type="float"),
                 },
             ),
+            RelationshipSchema(
+                name="suppressed_fit",
+                from_entity="Part",
+                to_entity="Vehicle",
+            ),
+            RelationshipSchema(
+                name="vehicle_blocks_part",
+                from_entity="Vehicle",
+                to_entity="Part",
+            ),
+            RelationshipSchema(
+                name="blocked",
+                from_entity="Part",
+                to_entity="Part",
+            ),
         ],
         named_queries={
             "parts_for_vehicle": NamedQuerySchema(
@@ -120,6 +135,56 @@ def config() -> CoreConfig:
                     ),
                 ],
                 returns="list[Vehicle]",
+            ),
+            "parts_for_vehicle_without_suppressed": NamedQuerySchema(
+                description="Find verified parts excluding suppressed fitments",
+                entry_point="Vehicle",
+                traversal=[
+                    TraversalStep(
+                        relationship="fits",
+                        direction="incoming",
+                        filter={"verified": True},
+                        exclude_if_related=[
+                            {
+                                "relationship": "suppressed_fit",
+                                "direction": "incoming",
+                            }
+                        ],
+                    )
+                ],
+                returns="list[Part]",
+            ),
+            "parts_for_vehicle_without_vehicle_blocks": NamedQuerySchema(
+                description="Find verified parts excluding vehicle-side blocks",
+                entry_point="Vehicle",
+                traversal=[
+                    TraversalStep(
+                        relationship="fits",
+                        direction="incoming",
+                        filter={"verified": True},
+                        exclude_if_related=[
+                            {
+                                "relationship": "vehicle_blocks_part",
+                                "direction": "outgoing",
+                            }
+                        ],
+                    )
+                ],
+                returns="list[Part]",
+            ),
+            "replacements_excluding_blocked": NamedQuerySchema(
+                description="Find replacements excluding blocked part pairs",
+                entry_point="Part",
+                traversal=[
+                    TraversalStep(
+                        relationship="replaces",
+                        direction="incoming",
+                        exclude_if_related=[
+                            {"relationship": "blocked", "direction": "both"}
+                        ],
+                    )
+                ],
+                returns="list[Part]",
             ),
         },
     )
@@ -373,6 +438,220 @@ class TestMultiStepQuery:
         assert parent.entity_type == "Vehicle"
         assert parent.entity_id == "V-CIVIC"
         assert parent.detail["from_entity_id"] == "BP-5678"
+
+
+class TestRelatedEdgeExclusions:
+    def test_candidate_kept_when_related_edge_does_not_exist(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_without_suppressed",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+
+    def test_outgoing_related_edge_excludes_candidate(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="vehicle_blocks_part",
+                from_type="Vehicle",
+                from_id="V-CIVIC",
+                to_type="Part",
+                to_id="BP-5678",
+                properties={},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_without_vehicle_blocks",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-1234"}
+
+    def test_incoming_related_edge_excludes_candidate(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_without_suppressed",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-5678"}
+
+    def test_both_direction_excludes_when_outgoing_related_edge_exists(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="blocked",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Part",
+                to_id="BP-5678",
+                properties={},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "replacements_excluding_blocked",
+            {"part_number": "BP-1234"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-9999"}
+
+    def test_both_direction_excludes_when_incoming_related_edge_exists(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="blocked",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Part",
+                to_id="BP-1234",
+                properties={},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "replacements_excluding_blocked",
+            {"part_number": "BP-1234"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-9999"}
+
+    def test_related_edge_pending_review_does_not_exclude(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"review_status": "pending_review"},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_without_suppressed",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+
+    def test_related_edge_rejected_does_not_exclude(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"review_status": "human_rejected"},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_without_suppressed",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+
+    def test_related_edge_without_review_status_excludes(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_without_suppressed",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-1234"}
+
+    def test_related_exclusion_is_recorded_as_filter_event(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="vehicle_blocks_part",
+                from_type="Vehicle",
+                from_id="V-CIVIC",
+                to_type="Part",
+                to_id="BP-5678",
+                properties={},
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_without_vehicle_blocks",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.receipt is not None
+        filters = [
+            node
+            for node in result.receipt.nodes
+            if node.node_type == "filter_applied"
+            and "exclude_if_related" in node.detail.get("filter", {})
+        ]
+        assert filters
+        assert {
+            "filter": {
+                "exclude_if_related": {
+                    "relationship": "vehicle_blocks_part",
+                    "direction": "outgoing",
+                }
+            },
+            "passed": False,
+        } in [node.detail for node in filters]
 
 
 # ---------------------------------------------------------------------------

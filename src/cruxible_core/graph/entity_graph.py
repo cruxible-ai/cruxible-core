@@ -18,6 +18,7 @@ from typing import Any
 import networkx as nx
 
 from cruxible_core.graph.types import (
+    REJECTED_STATUSES,
     EntityInstance,
     RelationshipInstance,
     make_node_id,
@@ -228,6 +229,31 @@ class EntityGraph:
         if not edge_dict:
             return False
         return any(e.get("relationship_type") == relationship_type for e in edge_dict.values())
+
+    def has_live_relationship(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+    ) -> bool:
+        """Check whether a non-rejected, non-pending relationship exists."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return False
+        for edge_data in edge_dict.values():
+            if edge_data.get("relationship_type") != relationship_type:
+                continue
+            review_status = edge_data.get("properties", {}).get("review_status")
+            if review_status == "pending_review":
+                continue
+            if review_status in REJECTED_STATUSES:
+                continue
+            return True
+        return False
 
     def update_edge_properties(
         self,

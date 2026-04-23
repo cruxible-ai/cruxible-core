@@ -288,6 +288,33 @@ def _execute_step(
                     if not passed:
                         continue
 
+                if step.exclude_if_related:
+                    excluded = False
+                    for exclusion in step.exclude_if_related:
+                        passed = not _related_edge_exists(
+                            graph,
+                            current_entity=entity,
+                            candidate_entity=neighbor,
+                            relationship_type=exclusion.relationship,
+                            direction=exclusion.direction,
+                        )
+                        if builder is not None and traversal_id is not None:
+                            builder.record_filter(
+                                filter_spec={
+                                    "exclude_if_related": {
+                                        "relationship": exclusion.relationship,
+                                        "direction": exclusion.direction,
+                                    }
+                                },
+                                passed=passed,
+                                parent_id=traversal_id,
+                            )
+                        if not passed:
+                            excluded = True
+                            break
+                    if excluded:
+                        continue
+
                 if direction == "outgoing":
                     policy_from_entity = entity
                     policy_to_entity = neighbor
@@ -324,6 +351,46 @@ def _execute_step(
                     queue.append((neighbor, depth + 1, traversal_id))
 
     return next_entities, next_parent_ids or None
+
+
+def _related_edge_exists(
+    graph: EntityGraph,
+    *,
+    current_entity: EntityInstance,
+    candidate_entity: EntityInstance,
+    relationship_type: str,
+    direction: str,
+) -> bool:
+    """Check whether a live related edge exists for a current/candidate pair."""
+    if direction == "outgoing":
+        return graph.has_live_relationship(
+            current_entity.entity_type,
+            current_entity.entity_id,
+            candidate_entity.entity_type,
+            candidate_entity.entity_id,
+            relationship_type,
+        )
+    if direction == "incoming":
+        return graph.has_live_relationship(
+            candidate_entity.entity_type,
+            candidate_entity.entity_id,
+            current_entity.entity_type,
+            current_entity.entity_id,
+            relationship_type,
+        )
+    return graph.has_live_relationship(
+        current_entity.entity_type,
+        current_entity.entity_id,
+        candidate_entity.entity_type,
+        candidate_entity.entity_id,
+        relationship_type,
+    ) or graph.has_live_relationship(
+        candidate_entity.entity_type,
+        candidate_entity.entity_id,
+        current_entity.entity_type,
+        current_entity.entity_id,
+        relationship_type,
+    )
 
 
 def _flip_relationship_direction(
