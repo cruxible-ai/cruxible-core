@@ -29,8 +29,8 @@ This skill covers five agent tasks against a KEV triage instance:
 All five routes share one rule: **the agent proposes, a reviewer resolves.**
 Nothing gets written to the graph as an accepted edge without going through
 `group propose` → reviewer → `group resolve`. The reviewer may be a human or
-another agent operating in review mode; the recorded attribution comes from the
-`group resolve --source ...` value.
+another agent that has been given responsibility for resolving groups; the
+recorded attribution comes from the `group resolve --source ...` value.
 
 ## Orient before acting
 
@@ -100,10 +100,19 @@ does not approve or resolve governed proposals directly.
    cruxible propose --workflow propose_asset_exposure
    cruxible propose --workflow propose_service_impact
    ```
-   Each produces governed groups that enter the review queue.
+   These are the standard workflow names in the stock `kev-triage` kit. If
+   this instance uses a documented local variant, run the equivalent chain for
+   that variant instead. Each stage produces governed groups that enter the
+   review queue.
 
-3. For each new `asset_exposed_to_vulnerability` candidate, query prior
-   exploitation and remediation context:
+3. For each new `asset_exposed_to_vulnerability` candidate, query the
+   relevant context surfaces for:
+   - prior exploitation history on the product
+   - open findings on the asset
+   - prior post-mortem context for the CVE
+   - explicit remediation state on the asset
+
+   In the stock `kev-triage` kit, the default queries are:
    ```
    cruxible query --query incident_history_for_product --param product_id=<product>
    cruxible query --query open_findings_for_asset --param asset_id=<asset>
@@ -111,7 +120,18 @@ does not approve or resolve governed proposals directly.
    cruxible query --query asset_remediation_context --param asset_id=<asset>
    ```
 
-4. Produce a summary that distinguishes:
+4. Before treating any query output as complete or final, check whether the
+   same governed surface still has pending work:
+   ```
+   cruxible group list --status pending_review --json
+   ```
+   If relevant pending groups exist, tell the user that accepted query results
+   may lag reviewable proposals and call out which relationships still need a
+   reviewer. Use `group get` / `group status` for the specific bucket when you
+   need to confirm whether a pending group explains an empty or incomplete
+   query result.
+
+5. Produce a summary that distinguishes:
    - **Elevated priority**: exposures on products with prior exploitation
      history, or assets with open findings that match the new CVE class.
    - **Standard priority**: exposures with no prior history.
@@ -121,12 +141,12 @@ does not approve or resolve governed proposals directly.
      asset-vulnerability pair, but current triage still needs explanation
      (for example, remediation looks stale, evidence is weak, or exposure
      appears to have returned).
-   - **Incident candidate**: a small number of clusters where the combined
-     evidence suggests this should be opened or updated as an `Incident`
-     rather than treated as routine triage only.
+  - **Incident candidate**: clusters where the combined evidence suggests
+    this should be opened or updated as an `Incident` rather than treated as
+    routine triage only.
 
-5. If the summary produces `0-2` incident candidates, pause and work those
-   directly with the user:
+6. If the summary produces incident candidates, pause and work them directly
+   with the user:
    - explain why each candidate looks incident-worthy
    - ask whether to open a new `Incident`, update an existing one, or keep it
      as elevated triage only
@@ -134,9 +154,9 @@ does not approve or resolve governed proposals directly.
      the `Incident` with `status=investigating` unless they provide a stronger
      status
 
-6. Unless you are explicitly operating in reviewer mode, do not resolve the
-   groups you just created. Hand the summary to the next reviewer step
-   (human, ticket queue, or agent reviewer).
+7. Unless you have been explicitly asked to resolve groups in this run, do not
+   resolve the groups you just created. Hand the summary to the next reviewer
+   step (human, ticket queue, or another agent responsible for resolution).
 
 **Idempotence.** Re-running the same proposal chain rewrites one pending
 bucket per signature instead of compounding the queue. Once a signature has
@@ -149,12 +169,11 @@ remain reviewable.
 
 - an incident report, post-mortem, or SIEM investigation references a
   vulnerability and asset(s) that are already tracked, or
-- the daily triage pass surfaces a small number of incident-worthy candidates
+- the daily triage pass surfaces incident-worthy candidates
   and the user wants to open or update an incident directly from that triage
   evidence.
 
-In practice, expect `0-2` incident candidates from a normal triage pass. Work
-those directly with the user instead of assuming a fully formed external
+Work those directly with the user instead of assuming a fully formed external
 report already exists.
 
 **Inputs you need from the user and available evidence:**
@@ -373,7 +392,7 @@ reviewers have two different follow-up tools:
   receipt:
   `cruxible outcome --receipt <receipt_id> --outcome correct|incorrect|partial|unknown --detail '{"reason":"..."}'`
 
-Agents do not drive this loop — but should be aware that:
+This loop matters to agents too:
 
 - Rejected proposals are signal that the thesis or evidence was insufficient.
   Before re-proposing a rejected relationship, read the resolution rationale
@@ -382,9 +401,13 @@ Agents do not drive this loop — but should be aware that:
 - `watch` or `invalidated` trust on a resolution means the reviewer wants a
   second look. Treat those as "unconfirmed" when summarizing.
 
-## Common queries for context
+## Common read surfaces for context
 
-| When you need... | Run |
+These are the default query names shipped with the stock `kev-triage` kit. If
+your instance has a documented local variant, use the equivalent read surfaces
+there.
+
+| When you need... | Default query |
 |---|---|
 | Everything affected by a CVE | `query --query kev_assets --param cve_id=<cve>` |
 | Patch queue for an owner | `query --query owner_patch_queue --param owner_id=<owner>` |
@@ -411,14 +434,18 @@ Stop and ask the user (don't guess) when:
   evidence is ambiguous. Confirm the closure scope with the user before
   proposing `asset_remediated_vulnerability`.
 - A proposal needs a relationship or integration not already used by this
-  skill's documented flows. Stop and ask rather than guessing a new write
-  surface.
+  skill's documented default flows, and the instance does not have a
+  documented local variant covering it. Stop and ask rather than guessing a
+  new write surface.
 - Review material conflicts with graph state (e.g., the report says an
   exception exists but no `Exception` entity is found).
 - You hit `PermissionDeniedError` in agent mode. Retrying won't help.
 - A workflow `propose` produces no reviewable group when you expected one.
   Either the upstream layer didn't populate, prerequisite approved edges are
   missing, or the matching config rejected everything — either way, surface it.
+- A query result looks empty, complete, or final, but there are relevant
+  `pending_review` groups on the same governed surface. Surface the accepted
+  vs pending distinction instead of implying the query sees proposed state.
 
 ## Troubleshooting
 
