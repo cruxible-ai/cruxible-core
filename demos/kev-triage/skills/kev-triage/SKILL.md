@@ -86,12 +86,19 @@ does not approve or resolve governed proposals directly.
    ```
    cruxible world status
    cruxible world pull-preview
-   cruxible world pull-apply --apply-digest <digest>
    ```
    Use `world pull-*` for the KEV daily refresh path. KEV reference releases
    are data-safe/additive, so the agent may pull them directly. If this
    instance is not tracking a published upstream KEV reference, stop and fix
    that first instead of rebuilding the reference layer locally.
+
+   Inspect the pull preview before applying. If it reports "Already at latest
+   pulled release", continue without applying. If it reports conflicts,
+   breaking compatibility, or an unexpected delta, stop and ask. Otherwise
+   apply the returned digest:
+   ```
+   cruxible world pull-apply --apply-digest <digest>
+   ```
 
 2. Run the fork proposal chain:
    ```
@@ -201,10 +208,12 @@ confirmed compromise.
 2. Create or update the `Incident` entity:
    ```
    cruxible add-entity --type Incident --id INC-2025-003 \
-     --props '{"incident_id":"INC-2025-003","title":"WebLogic admin console RCE",
-               "severity":"critical","status":"investigating",
-               "occurred_at":"2025-11-08","source":"siem",
-               "summary":"Attacker reached the WebLogic admin console on partner-api-01..."}'
+     --props '{"incident_id":"INC-2025-003",
+               "title":"WebLogic admin console compromise on partner-api-01",
+               "severity":"high","status":"resolved",
+               "occurred_at":"2026-01-11","resolved_at":"2026-01-12",
+               "source":"pagerduty",
+               "summary":"Partner routing change widened source access to the WebLogic admin path on partner-api-01; response restored the allowlist, rotated credentials, and rebuilt the middleware image."}'
    ```
 
 3. Propose `incident_owned_by`:
@@ -252,7 +261,36 @@ confirmed compromise.
    ```
 
 6. Create `Finding` entities for each root cause identified in the
-   post-mortem, then propose `finding_from_incident` linking them back.
+   post-mortem, then propose `finding_from_incident` linking them back:
+   ```
+   cruxible add-entity --type Finding --id FIND-2025-020 \
+     --props '{"finding_id":"FIND-2025-020",
+               "title":"Temporary partner route expansion exposed WebLogic admin path to a broader source range",
+               "category":"exposure_gap","status":"remediated",
+               "remediation_action":"Require security approval and automatic rollback timers for partner allowlist expansions"}'
+
+   cruxible add-entity --type Finding --id FIND-2025-021 \
+     --props '{"finding_id":"FIND-2025-021",
+               "title":"Credential rotation for middleware administrators was not automated after emergency network changes",
+               "category":"process_gap","status":"open",
+               "remediation_action":"Automate post-change credential rotation for externally reachable administrative services"}'
+
+   cruxible group propose \
+     --relationship finding_from_incident \
+     --members '[{"from_type":"Finding","from_id":"FIND-2025-020",
+                   "to_type":"Incident","to_id":"INC-2025-003",
+                   "relationship_type":"finding_from_incident",
+                   "signals":[{"integration":"incident_attribution","signal":"support",
+                                "evidence":"Post-mortem lists FIND-2025-020 as a root cause for INC-2025-003"}]},
+                  {"from_type":"Finding","from_id":"FIND-2025-021",
+                   "to_type":"Incident","to_id":"INC-2025-003",
+                   "relationship_type":"finding_from_incident",
+                   "signals":[{"integration":"incident_attribution","signal":"support",
+                                "evidence":"Post-mortem lists FIND-2025-021 as a root cause for INC-2025-003"}]}]' \
+     --thesis "The INC-2025-003 post-mortem identifies FIND-2025-020 and FIND-2025-021 as root-cause findings" \
+     --thesis-facts '{"incident_id":"INC-2025-003","finding_ids":["FIND-2025-020","FIND-2025-021"]}' \
+     --integration incident_attribution
+   ```
 
 **Thesis quality.** Every proposal must include a thesis that names the
 evidence — the specific report line, triage clue, SIEM rule, or interview
@@ -279,8 +317,8 @@ asset, with an approver, rationale, and review date.
    ```
    cruxible add-entity --type Exception --id EXC-2026-001 \
      --props '{"exception_id":"EXC-2026-001",
-               "reason":"Billing core freeze for Q1 close; patch window reopens 2026-04-15",
-               "status":"approved","review_due_at":"2026-04-15"}'
+               "reason":"Billing month-end freeze delays Apache remediation on batch-worker-01",
+               "status":"approved","review_due_at":"2026-05-03"}'
    ```
 
 2. Propose `asset_patch_exception_for` linking the asset to the CVE being
@@ -294,7 +332,7 @@ asset, with an approver, rationale, and review date.
                    "properties":{"exception_id":"EXC-2026-001"},
                    "signals":[{"integration":"policy_review","signal":"support",
                                 "evidence":"Approved by CFO per change ticket CHG-40123"}]}]' \
-     --thesis "Billing asset ASSET-5 has an approved Q1 freeze for CVE-2024-38475; review 2026-04-15" \
+     --thesis "Billing asset ASSET-5 has an approved month-end freeze for CVE-2024-38475; review 2026-05-03" \
      --thesis-facts '{"exception_id":"EXC-2026-001","cve_id":"CVE-2024-38475"}' \
      --integration policy_review
    ```
