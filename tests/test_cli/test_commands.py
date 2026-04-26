@@ -420,8 +420,13 @@ class TestCanonicalViews:
             ["inspect", "ontology", "--format", "mermaid"],
         )
         assert result.exit_code == 0
+        assert "classDef canonicalEntity" in result.output
+        assert "classDef governedEntity" in result.output
+        assert "class entity_Campaign,entity_Product governedEntity" in result.output
         assert "Campaign" in result.output
-        assert "recommended_for [governed]" in result.output
+        assert "Recommended For" in result.output
+        assert 'entity_Campaign -. "Recommended For" .-> entity_Product' in result.output
+        assert "stroke:#e74c3c" in result.output
 
     def test_inspect_workflows_json_summarizes_workflow_shape(
         self,
@@ -488,6 +493,21 @@ class TestCanonicalViews:
         assert query["name"] == "get_campaign_context"
         assert query["entry_point"] == "Campaign"
         assert query["required_params"] == ["campaign_id"]
+
+    def test_inspect_queries_mermaid_is_human_readable(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "queries", "--format", "mermaid"],
+        )
+        assert result.exit_code == 0
+        assert "Get Campaign Context" in result.output
+        assert "Entry: Campaign" in result.output
+        assert "Returns: List[Campaign]" in result.output
 
     def test_inspect_governance_tracks_pending_and_approved_state(
         self,
@@ -561,6 +581,7 @@ class TestCanonicalViews:
         assert "# Config Overview" in result.output
         assert "## Relationship Map" in result.output
         assert "```mermaid" in result.output
+        assert "Blue = canonical/deterministic state" in result.output
         assert "propose_campaign_recommendations" in result.output
 
 

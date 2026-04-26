@@ -11,7 +11,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from cruxible_core.config.schema import CoreConfig, WorkflowStepSchema
+from cruxible_core.config.schema import CoreConfig, ProviderSchema, WorkflowStepSchema
 from cruxible_core.group.types import CandidateGroup, GroupResolution
 
 
@@ -53,12 +53,24 @@ class WorkflowStepSummaryView:
 
 
 @dataclass(frozen=True)
+class WorkflowProviderSummaryView:
+    name: str
+    kind: str
+    runtime: str
+    ref: str
+    version: str
+    deterministic: bool
+    artifact: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkflowSummaryView:
     name: str
     mode: str
     step_count: int
     queries: list[str] = field(default_factory=list)
     providers: list[str] = field(default_factory=list)
+    provider_details: list[WorkflowProviderSummaryView] = field(default_factory=list)
     consumes_relationships: list[str] = field(default_factory=list)
     proposes_relationships: list[str] = field(default_factory=list)
     applies_relationships: list[str] = field(default_factory=list)
@@ -138,7 +150,7 @@ class OverviewView:
     governance: GovernanceView
 
 
-def canonical_view_payload(view: object) -> dict[str, Any]:
+def canonical_view_payload(view: Any) -> dict[str, Any]:
     """Serialize a canonical view dataclass tree into JSON-safe dictionaries."""
     return asdict(view)
 
@@ -224,10 +236,10 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
                 if relationship_type:
                     applies.add(relationship_type)
 
-        produced = sorted(proposes | applies)
-        consumed = sorted(consumes)
-        produced_by_workflow[workflow_name] = set(produced)
-        consumed_by_workflow[workflow_name] = set(consumed)
+        produced_relationships = sorted(proposes | applies)
+        consumed_relationships = sorted(consumes)
+        produced_by_workflow[workflow_name] = set(produced_relationships)
+        consumed_by_workflow[workflow_name] = set(consumed_relationships)
         workflows.append(
             WorkflowSummaryView(
                 name=workflow_name,
@@ -235,7 +247,11 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
                 step_count=len(workflow.steps),
                 queries=sorted(set(queries)),
                 providers=sorted(set(providers)),
-                consumes_relationships=consumed,
+                provider_details=_workflow_provider_summaries(
+                    sorted(set(providers)),
+                    config,
+                ),
+                consumes_relationships=consumed_relationships,
                 proposes_relationships=sorted(proposes),
                 applies_relationships=sorted(applies),
                 steps=steps,
@@ -243,13 +259,13 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
         )
 
     dependencies: list[WorkflowDependencyView] = []
-    for source_name, produced in produced_by_workflow.items():
-        if not produced:
+    for source_name, source_relationships in produced_by_workflow.items():
+        if not source_relationships:
             continue
-        for target_name, consumed in consumed_by_workflow.items():
+        for target_name, target_relationships in consumed_by_workflow.items():
             if source_name == target_name:
                 continue
-            overlap = sorted(produced & consumed)
+            overlap = sorted(source_relationships & target_relationships)
             if overlap:
                 dependencies.append(
                     WorkflowDependencyView(
@@ -427,24 +443,68 @@ def render_ontology_markdown(view: OntologyView) -> str:
 
 def render_ontology_mermaid(view: OntologyView) -> str:
     """Render the ontology view as a Mermaid flowchart."""
-    lines = ["flowchart LR"]
+    deterministic_relationships = [
+        relationship
+        for relationship in view.relationships
+        if relationship.mode == "deterministic"
+    ]
+    governed_relationships = [
+        relationship for relationship in view.relationships if relationship.mode == "governed"
+    ]
+    deterministic_entities = _relationship_entity_names(deterministic_relationships)
+    governed_entities = _relationship_entity_names(governed_relationships)
+    canonical_nodes: list[str] = []
+    governed_nodes: list[str] = []
+    deterministic_edge_indexes: list[int] = []
+    governed_edge_indexes: list[int] = []
+    edge_index = 0
+
+    lines = [
+        "flowchart LR",
+        "  classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff",
+        "  classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff",
+        "",
+    ]
     for entity in view.entity_types:
         node_id = _mermaid_id(f"entity_{entity.name}")
-        lines.append(f'  {node_id}["{entity.name}"]')
-    for relationship in view.relationships:
+        label = _escape_mermaid_label(_humanize_label(entity.name))
+        lines.append(f'  {node_id}["{label}"]')
+        if entity.name in governed_entities and entity.name not in deterministic_entities:
+            governed_nodes.append(node_id)
+        else:
+            canonical_nodes.append(node_id)
+
+    if canonical_nodes:
+        lines.append(f"  class {','.join(canonical_nodes)} canonicalEntity")
+    if governed_nodes:
+        lines.append(f"  class {','.join(governed_nodes)} governedEntity")
+
+    if deterministic_relationships:
+        lines.extend(["", "  %% Deterministic canonical relationships"])
+    for relationship in deterministic_relationships:
         src = _mermaid_id(f"entity_{relationship.from_entity}")
         dst = _mermaid_id(f"entity_{relationship.to_entity}")
-        label = _escape_mermaid_label(
-            (
-                relationship.name
-                if relationship.mode == "deterministic"
-                else f"{relationship.name} [governed]"
-            )
-        )
-        if relationship.mode == "governed":
-            lines.append(f'  {src} -. "{label}" .-> {dst}')
-        else:
-            lines.append(f'  {src} -- "{label}" --> {dst}')
+        label = _escape_mermaid_label(_humanize_label(relationship.name))
+        lines.append(f'  {src} -- "{label}" --> {dst}')
+        deterministic_edge_indexes.append(edge_index)
+        edge_index += 1
+
+    if governed_relationships:
+        lines.extend(["", "  %% Governed proposal/review relationships"])
+    for relationship in governed_relationships:
+        src = _mermaid_id(f"entity_{relationship.from_entity}")
+        dst = _mermaid_id(f"entity_{relationship.to_entity}")
+        label = _escape_mermaid_label(_humanize_label(relationship.name))
+        lines.append(f'  {src} -. "{label}" .-> {dst}')
+        governed_edge_indexes.append(edge_index)
+        edge_index += 1
+
+    if deterministic_edge_indexes:
+        indexes = _format_mermaid_edge_indexes(deterministic_edge_indexes)
+        lines.append(f"  linkStyle {indexes} stroke:#2c5f8a,stroke-width:2px")
+    if governed_edge_indexes:
+        indexes = _format_mermaid_edge_indexes(governed_edge_indexes)
+        lines.append(f"  linkStyle {indexes} stroke:#e74c3c,stroke-width:2px")
     return "\n".join(lines)
 
 
@@ -525,6 +585,69 @@ def render_workflow_story_mermaid(view: WorkflowView) -> str:
     return "\n".join(lines)
 
 
+def render_workflow_pipeline_mermaid(view: WorkflowView) -> str:
+    """Render workflows as a compact, human-facing pipeline."""
+    lines = [
+        "flowchart LR",
+        "  classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff",
+        "  classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff",
+        "",
+    ]
+    order = _workflow_story_order(view)
+    canonical_nodes: list[str] = []
+    governed_nodes: list[str] = []
+    for index, workflow in enumerate(order, start=1):
+        node_id = _mermaid_id(f"workflow_pipeline_{workflow.name}")
+        label = _escape_mermaid_label(_workflow_pipeline_label(index, workflow))
+        lines.append(f'  {node_id}["{label}"]')
+        if workflow.mode == "canonical":
+            canonical_nodes.append(node_id)
+        else:
+            governed_nodes.append(node_id)
+
+    for source, target in zip(order, order[1:]):
+        src = _mermaid_id(f"workflow_pipeline_{source.name}")
+        dst = _mermaid_id(f"workflow_pipeline_{target.name}")
+        lines.append(f"  {src} --> {dst}")
+
+    if canonical_nodes:
+        lines.append(f"  class {','.join(canonical_nodes)} canonicalWorkflow")
+    if governed_nodes:
+        lines.append(f"  class {','.join(governed_nodes)} governedWorkflow")
+
+    return "\n".join(lines)
+
+
+def render_workflow_summary_markdown(view: WorkflowView) -> str:
+    """Render a readable workflow summary without wide Markdown tables."""
+    lines: list[str] = []
+    for index, workflow in enumerate(_workflow_story_order(view), start=1):
+        if lines:
+            lines.append("")
+        lines.extend(
+            [
+                f"### {index}. {_humanize_label(workflow.name)}",
+                "",
+                f"**Role:** {_workflow_table_role(workflow)}",
+                "",
+                "**Input context**",
+                *_markdown_bullets(_workflow_table_input_context(workflow)),
+                "",
+                "**Result**",
+                *_markdown_bullets(_workflow_table_result(workflow)),
+                "",
+                "**Provider source**",
+                *_workflow_provider_source_bullets(workflow),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_workflow_table_markdown(view: WorkflowView) -> str:
+    """Backward-compatible alias for the old workflow-table view key."""
+    return render_workflow_summary_markdown(view)
+
+
 def render_workflow_dependency_mermaid(view: WorkflowView) -> str:
     """Render the workflow view as a Mermaid dependency graph."""
     lines = ["flowchart TD"]
@@ -564,6 +687,16 @@ def render_workflow_steps_mermaid(view: WorkflowView) -> str:
     return "\n".join(lines)
 
 
+def render_workflow_steps_mermaid_blocks(
+    view: WorkflowView,
+) -> list[tuple[str, str]]:
+    """Render workflow steps as one Mermaid graph per workflow."""
+    return [
+        (_humanize_label(workflow.name), _render_single_workflow_steps_mermaid(workflow))
+        for workflow in view.workflows
+    ]
+
+
 def render_query_markdown(view: QueryView) -> str:
     """Render the query view as compact Markdown."""
     lines = [
@@ -593,20 +726,129 @@ def render_query_mermaid(view: QueryView) -> str:
     """Render the query view as a Mermaid flowchart."""
     lines = ["flowchart TD"]
     for query in view.queries:
-        query_id = _mermaid_id(f"query_{query.name}")
-        entry_id = _mermaid_id(f"query_{query.name}_entry")
-        return_id = _mermaid_id(f"query_{query.name}_return")
-        lines.append(f'  {query_id}["{_escape_mermaid_label(query.name)}"]')
-        lines.append(f'  {entry_id}["entry: {_escape_mermaid_label(query.entry_point)}"]')
-        lines.append(f'  {query_id} --> {entry_id}')
-        previous_id = entry_id
-        for index, step in enumerate(query.traversal_summary):
-            step_id = _mermaid_id(f"query_{query.name}_step_{index}")
-            lines.append(f'  {step_id}["{_escape_mermaid_label(step)}"]')
-            lines.append(f"  {previous_id} --> {step_id}")
-            previous_id = step_id
-        lines.append(f'  {return_id}["returns: {_escape_mermaid_label(query.returns)}"]')
-        lines.append(f"  {previous_id} --> {return_id}")
+        lines.extend(_query_mermaid_lines(query))
+    return "\n".join(lines)
+
+
+def render_query_mermaid_blocks(view: QueryView) -> list[tuple[str, str]]:
+    """Render named queries as one Mermaid graph per query."""
+    return [
+        (_humanize_label(query.name), "\n".join(["flowchart TD", *_query_mermaid_lines(query)]))
+        for query in view.queries
+    ]
+
+
+def render_query_map_mermaid(view: QueryView) -> str:
+    """Render a compact map of named query entry and return types."""
+    edges: set[tuple[str, str]] = set()
+    entities: set[str] = set()
+    for query in view.queries:
+        source = query.entry_point
+        target = _query_return_entity(query.returns)
+        entities.update((source, target))
+        edges.add((source, target))
+
+    lines = [
+        "flowchart LR",
+        "  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b",
+        "",
+    ]
+    for entity in sorted(entities):
+        node_id = _mermaid_id(f"query_entity_{entity}")
+        label = _escape_mermaid_label(_humanize_label(entity))
+        lines.append(f'  {node_id}["{label}"]')
+
+    if entities:
+        node_ids = ",".join(_mermaid_id(f"query_entity_{entity}") for entity in sorted(entities))
+        lines.append(f"  class {node_ids} queryEntity")
+
+    for source, target in sorted(edges):
+        src = _mermaid_id(f"query_entity_{source}")
+        dst = _mermaid_id(f"query_entity_{target}")
+        lines.append(f"  {src} --> {dst}")
+
+    return "\n".join(lines)
+
+
+def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
+    """Render governed relationship policies from config structure."""
+    governed_relationships = [
+        relationship
+        for relationship in sorted(config.relationships, key=lambda item: item.name)
+        if relationship.matching is not None
+    ]
+    rows: list[tuple[str, ...]] = []
+    for relationship in governed_relationships:
+        matching = relationship.matching
+        if matching is None:
+            continue
+        policies = [
+            policy
+            for policy in config.decision_policies
+            if policy.relationship_type == relationship.name
+        ]
+        outcomes = [
+            name
+            for name, profile in sorted(config.outcome_profiles.items())
+            if profile.relationship_type == relationship.name
+        ]
+        feedback_profile = config.feedback_profiles.get(relationship.name)
+        rows.append(
+            (
+                _humanize_label(relationship.name),
+                f"{_humanize_label(relationship.from_entity)} -> "
+                f"{_humanize_label(relationship.to_entity)}",
+                _humanize_list_or_dash(sorted(matching.integrations)),
+                _matching_policy_label(
+                    matching.auto_resolve_when,
+                    matching.auto_resolve_requires_prior_trust,
+                ),
+                _decision_policy_label(policies),
+                _feedback_profile_label(feedback_profile),
+                _humanize_list_or_dash(outcomes),
+            )
+        )
+    return _markdown_table(
+        (
+            "Relationship",
+            "Scope",
+            "Signals",
+            "Auto-resolve Gate",
+            "Review Policy",
+            "Feedback",
+            "Outcomes",
+        ),
+        rows,
+    )
+
+
+def render_query_catalog_markdown(view: QueryView) -> str:
+    """Render named queries as grouped, human-readable catalog tables."""
+    lines: list[str] = []
+    for entry_point, queries in _group_queries_by_entry(view.queries):
+        if lines:
+            lines.append("")
+        lines.extend(
+            [
+                f"### {_humanize_label(entry_point)}",
+                "",
+                _markdown_table(
+                    ("Query", "Returns", "Traversal", "Purpose"),
+                    [
+                        (
+                            _humanize_label(query.name),
+                            _humanize_label(query.returns),
+                            " -> ".join(
+                                _humanize_traversal_summary(step)
+                                for step in query.traversal_summary
+                            ),
+                            query.description.strip() if query.description else "",
+                        )
+                        for query in queries
+                    ],
+                ),
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -723,6 +965,12 @@ def render_overview_markdown(view: OverviewView) -> str:
         "```mermaid",
         render_ontology_mermaid(view.ontology),
         "```",
+        "",
+        (
+            "**Legend:** Blue = canonical/deterministic state | Orange = "
+            "governed-only trigger/judgment entity | Solid blue lines = "
+            "deterministic | Dashed red lines = governed proposal/review"
+        ),
         "",
         "### Deterministic Relationships",
         "",
@@ -927,6 +1175,34 @@ def _workflow_step_summary(
     )
 
 
+def _workflow_provider_summaries(
+    provider_names: list[str],
+    config: CoreConfig,
+) -> list[WorkflowProviderSummaryView]:
+    summaries: list[WorkflowProviderSummaryView] = []
+    for provider_name in provider_names:
+        provider = config.providers.get(provider_name)
+        if provider is None:
+            continue
+        summaries.append(_workflow_provider_summary(provider_name, provider))
+    return summaries
+
+
+def _workflow_provider_summary(
+    name: str,
+    provider: ProviderSchema,
+) -> WorkflowProviderSummaryView:
+    return WorkflowProviderSummaryView(
+        name=name,
+        kind=provider.kind,
+        runtime=provider.runtime,
+        ref=provider.ref,
+        version=provider.version,
+        deterministic=provider.deterministic,
+        artifact=provider.artifact,
+    )
+
+
 def _workflow_story_order(view: WorkflowView) -> list[WorkflowSummaryView]:
     workflows_by_name = {workflow.name: workflow for workflow in view.workflows}
     adjacency: dict[str, set[str]] = {workflow.name: set() for workflow in view.workflows}
@@ -986,6 +1262,171 @@ def _workflow_story_label(workflow: WorkflowSummaryView) -> str:
     return f"{_humanize_label(workflow.name)}\n{detail}"
 
 
+def _workflow_pipeline_label(index: int, workflow: WorkflowSummaryView) -> str:
+    summary = _workflow_pipeline_summary(workflow)
+    if workflow.mode == "canonical":
+        detail = "Canonical"
+    else:
+        detail = "Governed proposal"
+    return f"{index}. {summary}\n{detail}"
+
+
+def _workflow_pipeline_summary(workflow: WorkflowSummaryView) -> str:
+    writes = workflow.proposes_relationships + workflow.applies_relationships
+    if workflow.mode == "canonical":
+        return "Seed base world"
+    if not writes:
+        return _humanize_label(workflow.name)
+
+    relationship = writes[0]
+    if relationship == "incident_impacts_supplier":
+        return "Assess supplier impact"
+    if relationship.startswith("incident_impacts_"):
+        entity = _humanize_label(relationship.removeprefix("incident_impacts_"))
+        return f"Cascade to {_pluralize_label(entity).lower()}"
+    if relationship == "shipment_at_risk":
+        return "Flag at-risk shipments"
+    return _humanize_label(relationship)
+
+
+def _pluralize_label(value: str) -> str:
+    if value.endswith("y"):
+        return f"{value[:-1]}ies"
+    if value.endswith("s"):
+        return value
+    return f"{value}s"
+
+
+def _workflow_table_role(workflow: WorkflowSummaryView) -> str:
+    if workflow.mode == "canonical":
+        return "Canonical seed"
+    if workflow.mode == "governed":
+        return "Governed proposal"
+    return _humanize_label(workflow.mode)
+
+
+def _workflow_table_input_context(workflow: WorkflowSummaryView) -> str:
+    queries = _workflow_step_details(workflow, {"query"})
+    entities = _workflow_step_details(workflow, {"list_entities"})
+    relationships = _workflow_step_details(workflow, {"list_relationships"})
+    context = _format_surface_groups(
+        (
+            ("Entity context", entities),
+            ("Relationship context", relationships),
+            ("Named queries", queries),
+        )
+    )
+    if context == "-":
+        return "None (seeds the base world)"
+    return context
+
+
+def _workflow_table_result(workflow: WorkflowSummaryView) -> str:
+    entities = _workflow_step_details(workflow, {"make_entities"})
+    if workflow.mode == "canonical":
+        relationships = sorted(
+            set(workflow.proposes_relationships + workflow.applies_relationships)
+        )
+        if not relationships:
+            relationships = _workflow_step_details(workflow, {"make_relationships"})
+        return _format_surface_groups(
+            (
+                ("Canonical entities", entities),
+                ("Canonical relationships", relationships),
+            )
+        )
+
+    proposed_relationships = sorted(workflow.proposes_relationships)
+    applied_relationships = sorted(workflow.applies_relationships)
+    fallback_relationships: list[str] = []
+    if not proposed_relationships and not applied_relationships:
+        fallback_relationships = _workflow_step_details(workflow, {"make_relationships"})
+    return _format_surface_groups(
+        (
+            ("Created entities", entities),
+            ("Proposed relationships", proposed_relationships),
+            ("Applied relationships", applied_relationships),
+            ("Relationships", fallback_relationships),
+        )
+    )
+
+
+def _workflow_table_providers(workflow: WorkflowSummaryView) -> str:
+    if not workflow.provider_details:
+        return _humanize_list_or_dash(workflow.providers)
+    return "\n".join(_workflow_provider_label(provider) for provider in workflow.provider_details)
+
+
+def _workflow_provider_source_bullets(workflow: WorkflowSummaryView) -> list[str]:
+    if not workflow.provider_details:
+        return _markdown_bullets(_humanize_list_or_dash(workflow.providers))
+
+    lines: list[str] = []
+    for provider in workflow.provider_details:
+        labels = [
+            _workflow_provider_descriptor(provider),
+            f"source: `{_provider_source_label(provider)}`",
+        ]
+        if provider.artifact is not None:
+            labels.append(f"artifact: {_humanize_label(provider.artifact)}")
+        elif not provider.deterministic:
+            labels.append("non-deterministic")
+        lines.append(f"- {'; '.join(labels)}")
+    return lines
+
+
+def _workflow_provider_label(provider: WorkflowProviderSummaryView) -> str:
+    descriptor = _workflow_provider_descriptor(provider)
+    source = _provider_source_label(provider)
+    labels = [descriptor, source]
+    if provider.artifact is not None:
+        labels.append(f"Artifact: {_humanize_label(provider.artifact)}")
+    elif not provider.deterministic:
+        labels.append("Non-deterministic")
+    return "\n".join(labels)
+
+
+def _workflow_provider_descriptor(provider: WorkflowProviderSummaryView) -> str:
+    return (
+        f"{_humanize_label(provider.name)} "
+        f"({_humanize_label(provider.runtime)} {_humanize_label(provider.kind)}, "
+        f"v{provider.version})"
+    )
+
+
+def _provider_source_label(provider: WorkflowProviderSummaryView) -> str:
+    if provider.runtime == "python":
+        module_name, separator, attr_name = provider.ref.rpartition(".")
+        if separator:
+            path = module_name.replace(".", "/")
+            if module_name.startswith("cruxible_core."):
+                path = f"src/{path}"
+            return f"{path}.py::{attr_name}"
+    return provider.ref
+
+
+def _workflow_step_details(
+    workflow: WorkflowSummaryView,
+    kinds: set[str],
+) -> list[str]:
+    return sorted({step.detail for step in workflow.steps if step.kind in kinds and step.detail})
+
+
+def _format_surface_groups(groups: tuple[tuple[str, list[str]], ...]) -> str:
+    lines = [
+        f"{label}: {_humanize_list(values)}"
+        for label, values in groups
+        if values
+    ]
+    if not lines:
+        return "-"
+    return "\n".join(lines)
+
+
+def _markdown_bullets(value: str) -> list[str]:
+    return [f"- {line}" for line in value.splitlines()]
+
+
 def _workflow_step_label(index: int, step: WorkflowStepSummaryView) -> str:
     prefix = f"{index}. {_humanize_label(step.id)}"
     detail = (
@@ -996,6 +1437,43 @@ def _workflow_step_label(index: int, step: WorkflowStepSummaryView) -> str:
     if step.output:
         detail = f"{detail}\nAs: {_humanize_label(step.output)}"
     return f"{prefix}\n{detail}"
+
+
+def _render_single_workflow_steps_mermaid(workflow: WorkflowSummaryView) -> str:
+    lines = ["flowchart TD"]
+    previous_id: str | None = None
+    for index, step in enumerate(workflow.steps, start=1):
+        node_id = _mermaid_id(f"{workflow.name}_{index}_{step.id}")
+        label = _escape_mermaid_label(_workflow_step_label(index, step))
+        lines.append(f'  {node_id}["{label}"]')
+        if previous_id is not None:
+            lines.append(f"  {previous_id} --> {node_id}")
+        previous_id = node_id
+    return "\n".join(lines)
+
+
+def _query_mermaid_lines(query: QuerySummaryView) -> list[str]:
+    query_id = _mermaid_id(f"query_{query.name}")
+    entry_id = _mermaid_id(f"query_{query.name}_entry")
+    return_id = _mermaid_id(f"query_{query.name}_return")
+    query_label = _escape_mermaid_label(_humanize_label(query.name))
+    entry_label = _escape_mermaid_label(_humanize_label(query.entry_point))
+    return_label = _escape_mermaid_label(_humanize_label(query.returns))
+    lines = [
+        f'  {query_id}["{query_label}"]',
+        f'  {entry_id}["Entry: {entry_label}"]',
+        f"  {query_id} --> {entry_id}",
+    ]
+    previous_id = entry_id
+    for index, step in enumerate(query.traversal_summary):
+        step_id = _mermaid_id(f"query_{query.name}_step_{index}")
+        step_label = _escape_mermaid_label(_humanize_traversal_summary(step))
+        lines.append(f'  {step_id}["{step_label}"]')
+        lines.append(f"  {previous_id} --> {step_id}")
+        previous_id = step_id
+    lines.append(f'  {return_id}["Returns: {return_label}"]')
+    lines.append(f"  {previous_id} --> {return_id}")
+    return lines
 
 
 def _format_traversal_summary(
@@ -1013,10 +1491,80 @@ def _humanize_list(values: list[str]) -> str:
     return ", ".join(_humanize_label(value) for value in values)
 
 
+def _humanize_list_or_dash(values: list[str]) -> str:
+    if not values:
+        return "-"
+    return _humanize_list(values)
+
+
+def _matching_policy_label(auto_resolve_when: str, prior_trust_policy: str) -> str:
+    return (
+        f"{_humanize_label(auto_resolve_when)}; "
+        f"prior trust: {_humanize_label(prior_trust_policy)}"
+    )
+
+
+def _decision_policy_label(policies: list[Any]) -> str:
+    if not policies:
+        return "Trust-gated auto-resolve"
+    return "; ".join(
+        f"{_humanize_label(policy.effect)}: {_humanize_label(policy.name)}"
+        for policy in sorted(policies, key=lambda item: item.name)
+    )
+
+
+def _feedback_profile_label(profile: Any | None) -> str:
+    if profile is None:
+        return "-"
+    count = len(profile.reason_codes)
+    if count == 1:
+        return "1 reason code"
+    return f"{count} reason codes"
+
+
+def _query_return_entity(value: str) -> str:
+    stripped = value.strip().strip('"')
+    match = re.fullmatch(r"list\[(.+)\]", stripped, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return stripped
+
+
+def _relationship_entity_names(
+    relationships: list[OntologyRelationshipView],
+) -> set[str]:
+    entity_names: set[str] = set()
+    for relationship in relationships:
+        entity_names.add(relationship.from_entity)
+        entity_names.add(relationship.to_entity)
+    return entity_names
+
+
+def _format_mermaid_edge_indexes(indexes: list[int]) -> str:
+    return ",".join(str(index) for index in indexes)
+
+
 def _humanize_label(value: str) -> str:
     value = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value)
     value = value.replace("_", " ").replace("-", " ").strip()
     return value.title()
+
+
+def _humanize_traversal_summary(value: str) -> str:
+    relationships, separator, suffix = value.partition(" (")
+    relationship_label = " | ".join(
+        _humanize_label(relationship) for relationship in relationships.split("|")
+    )
+    if not separator:
+        return relationship_label
+
+    suffix = suffix.rstrip(")")
+    parts = suffix.split(", ")
+    direction = _humanize_label(parts[0]) if parts else ""
+    details = ", ".join(parts[1:])
+    if details:
+        return f"{relationship_label} ({direction}, {details})"
+    return f"{relationship_label} ({direction})"
 
 
 def _markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
