@@ -177,7 +177,7 @@ artifacts:
   public_kev_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:04e89452ec132188b58250725528a61cb6b2ecfa99c53fcaa3927a36ea8e617e
+    sha256: sha256:15c4b0f4ae649a073fc198d086390231e1c6e9e383018c25b56c436f464b04c7
 
 providers:
   load_public_kev_rows:

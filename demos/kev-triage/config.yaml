@@ -151,7 +151,6 @@ entity_types:
       category:
         type: string
         optional: true
-        enum: [misconfiguration, missing_control, stale_data, access_violation, process_gap]
       detail:
         type: string
         optional: true
@@ -940,7 +939,7 @@ artifacts:
   fork_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:cae4e889c474cf2191be22f3023f2bfe4975ee2ab9d7f034fb583a9c876df8d9
+    sha256: sha256:7e15e3ae2af80ceea604e2a54755b7d12f4650392a9c837048aa026765226670
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 

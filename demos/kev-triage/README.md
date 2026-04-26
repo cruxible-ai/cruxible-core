@@ -264,7 +264,7 @@ informed by organizational history.
 | Entity | Properties | Source |
 |---|---|---|
 | `Incident` | incident_id (PK), title, severity, status (open/investigating/resolved/closed), occurred_at, resolved_at, source, summary | PagerDuty export, SIEM, manual |
-| `Finding` | finding_id (PK), title, category (misconfiguration/missing_control/stale_data/access_violation/process_gap), detail, status (open/remediated/accepted_risk), remediation_action, remediated_at | Post-mortem extraction (agent or manual) |
+| `Finding` | finding_id (PK), title, category, detail, status (open/remediated/accepted_risk), remediation_action, remediated_at | Post-mortem extraction (agent or manual) |
 
 ### Proposed relationships
 

@@ -41,9 +41,11 @@ Produce a working KEV fork in one pass:
 
 ## Preconditions
 
-- Run from `demos/kev-triage/` (or a fork of it)
+- Run from `demos/kev-triage/` or a fork of it
 - Cruxible daemon reachable (`cruxible server info --json` succeeds)
-- The local seed or source files have been replaced with the user's own data
+- For custom onboarding, replace local seed or source files after
+  `world fork --kit` materializes the local overlay, unless you are already
+  working in a fork where the kit has been applied
 - `CRUXIBLE_AGENT_MODE` may be set; that's fine — this skill does not use
   blocked commands
 
@@ -193,6 +195,12 @@ If no instance exists:
 cruxible world fork --world-ref kev-reference --kit kev-triage
 ```
 
+This materializes the local fork overlay into the workspace root, including
+`config.yaml`, `providers.py`, and `data/seed/`. That is the fork-side kit
+overlay, not the published reference config. Do not replace `data/seed/` before
+this command unless you are prepared for the kit materialization to overwrite
+those local files.
+
 Capture the returned `instance_id` and persist it with `cruxible context use
 <instance_id>` so subsequent commands target it.
 
@@ -252,8 +260,13 @@ Skip this step if `cruxible stats` from Step 1 shows fork entities
 Run the canonical fork build directly:
 
 ```
+cruxible lock --force
 cruxible run --workflow build_fork_state --apply
 ```
+
+`lock --force` is required if you replaced local seed files after the fork was
+created. It accepts the current on-disk artifact hash into the workflow lock.
+For the checked-in demo seed data it is safe but not normally necessary.
 
 Narrate: "Fork state loaded — X assets, Y owners, Z services, plus whichever
 optional surfaces (controls, exceptions, patch windows, incidents, findings)

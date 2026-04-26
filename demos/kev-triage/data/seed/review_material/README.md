@@ -27,3 +27,6 @@ they are not loaded by `build_fork_state`. The intended use is:
 - `controls/CTRL-3-partner-allowlist-review.md`
   Evidence supporting a proposal that `CTRL-3` reduces exposure to WebLogic
   admin-console attacks on the partner API edge.
+- `remediations/ASSET-8-CVE-2020-14882-closure.md`
+  Closure evidence for recording explicit remediation of the WebLogic partner
+  API exposure after the incident response and rebuild.
