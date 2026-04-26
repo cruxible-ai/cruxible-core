@@ -21,3 +21,4 @@ htmlcov/
 venv/
 docs/dev/
 demos/**/wiki/
+smoke-test-bundles/
