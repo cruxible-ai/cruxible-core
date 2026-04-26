@@ -442,6 +442,35 @@ class TestCanonicalViews:
         assert workflow["providers"] == ["campaign_recommendations"]
         assert workflow["proposes_relationships"] == ["recommended_for"]
 
+    def test_inspect_workflows_mermaid_formats(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        story = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "mermaid"],
+        )
+        assert story.exit_code == 0
+        assert "Proposes: Recommended For" in story.output
+
+        steps = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "mermaid-steps"],
+        )
+        assert steps.exit_code == 0
+        assert "Provider: Campaign Recommendations" in steps.output
+
+        dependencies = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "mermaid-dependencies"],
+        )
+        assert dependencies.exit_code == 0
+        assert "Governed" in dependencies.output
+
     def test_inspect_queries_json_surfaces_traversal_and_params(
         self,
         runner: CliRunner,

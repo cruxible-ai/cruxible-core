@@ -23,8 +23,10 @@ from cruxible_core.canonical_views import (
     render_overview_markdown,
     render_query_markdown,
     render_query_mermaid,
+    render_workflow_dependency_mermaid,
     render_workflow_markdown,
     render_workflow_mermaid,
+    render_workflow_steps_mermaid,
 )
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
@@ -794,7 +796,9 @@ def inspect_ontology_cmd(fmt: str) -> None:
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["json", "markdown", "mermaid"]),
+    type=click.Choice(
+        ["json", "markdown", "mermaid", "mermaid-dependencies", "mermaid-steps"]
+    ),
     default="markdown",
     show_default=True,
     help="Output format.",
@@ -809,6 +813,12 @@ def inspect_workflows_cmd(fmt: str) -> None:
         return
     if fmt == "mermaid":
         click.echo(render_workflow_mermaid(view))
+        return
+    if fmt == "mermaid-dependencies":
+        click.echo(render_workflow_dependency_mermaid(view))
+        return
+    if fmt == "mermaid-steps":
+        click.echo(render_workflow_steps_mermaid(view))
         return
     click.echo(render_workflow_markdown(view))
 

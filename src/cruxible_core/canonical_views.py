@@ -45,6 +45,14 @@ class OntologyView:
 
 
 @dataclass(frozen=True)
+class WorkflowStepSummaryView:
+    id: str
+    kind: str
+    detail: str
+    output: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkflowSummaryView:
     name: str
     mode: str
@@ -54,6 +62,7 @@ class WorkflowSummaryView:
     consumes_relationships: list[str] = field(default_factory=list)
     proposes_relationships: list[str] = field(default_factory=list)
     applies_relationships: list[str] = field(default_factory=list)
+    steps: list[WorkflowStepSummaryView] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -182,12 +191,14 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
         alias_to_relationship: dict[str, str] = {}
         queries: list[str] = []
         providers: list[str] = []
+        steps: list[WorkflowStepSummaryView] = []
         consumes: set[str] = set()
         proposes: set[str] = set()
         applies: set[str] = set()
 
         for step in workflow.steps:
             step_kind = _workflow_step_kind(step)
+            steps.append(_workflow_step_summary(step, step_kind))
             if step_kind == "query" and step.query is not None:
                 queries.append(step.query)
                 query = config.named_queries.get(step.query)
@@ -227,6 +238,7 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
                 consumes_relationships=consumed,
                 proposes_relationships=sorted(proposes),
                 applies_relationships=sorted(applies),
+                steps=steps,
             )
         )
 
@@ -492,18 +504,63 @@ def render_workflow_markdown(view: WorkflowView) -> str:
 
 
 def render_workflow_mermaid(view: WorkflowView) -> str:
+    """Render the workflow view as a human-facing Mermaid stage story."""
+    return render_workflow_story_mermaid(view)
+
+
+def render_workflow_story_mermaid(view: WorkflowView) -> str:
+    """Render workflows as a linear Mermaid stage story."""
+    lines = ["flowchart TD"]
+    order = _workflow_story_order(view)
+    for workflow in order:
+        node_id = _mermaid_id(f"workflow_{workflow.name}")
+        label = _escape_mermaid_label(_workflow_story_label(workflow))
+        lines.append(f'  {node_id}["{label}"]')
+
+    for source, target in zip(order, order[1:]):
+        src = _mermaid_id(f"workflow_{source.name}")
+        dst = _mermaid_id(f"workflow_{target.name}")
+        lines.append(f"  {src} --> {dst}")
+
+    return "\n".join(lines)
+
+
+def render_workflow_dependency_mermaid(view: WorkflowView) -> str:
     """Render the workflow view as a Mermaid dependency graph."""
     lines = ["flowchart TD"]
     for workflow in view.workflows:
         node_id = _mermaid_id(f"workflow_{workflow.name}")
-        label = _escape_mermaid_label(f"{workflow.name}\\n{workflow.mode}")
+        label = _escape_mermaid_label(
+            f"{_humanize_label(workflow.name)}\n{_humanize_label(workflow.mode)}"
+        )
         lines.append(f'  {node_id}["{label}"]')
     if view.dependencies:
         for dependency in view.dependencies:
             src = _mermaid_id(f"workflow_{dependency.source_workflow}")
             dst = _mermaid_id(f"workflow_{dependency.target_workflow}")
-            label = _escape_mermaid_label(", ".join(dependency.via_relationships))
+            label = _escape_mermaid_label(_humanize_list(dependency.via_relationships))
             lines.append(f'  {src} -- "{label}" --> {dst}')
+    return "\n".join(lines)
+
+
+def render_workflow_steps_mermaid(view: WorkflowView) -> str:
+    """Render each workflow as a linear sequence of its declared steps."""
+    lines = ["flowchart TD"]
+    for workflow in view.workflows:
+        subgraph_id = _mermaid_id(f"workflow_steps_{workflow.name}")
+        subgraph_label = _escape_mermaid_label(
+            f"{_humanize_label(workflow.name)} ({_humanize_label(workflow.mode)})"
+        )
+        lines.append(f'  subgraph {subgraph_id}["{subgraph_label}"]')
+        previous_id: str | None = None
+        for index, step in enumerate(workflow.steps, start=1):
+            node_id = _mermaid_id(f"{workflow.name}_{index}_{step.id}")
+            label = _escape_mermaid_label(_workflow_step_label(index, step))
+            lines.append(f'    {node_id}["{label}"]')
+            if previous_id is not None:
+                lines.append(f"    {previous_id} --> {node_id}")
+            previous_id = node_id
+        lines.append("  end")
     return "\n".join(lines)
 
 
@@ -829,6 +886,118 @@ def _workflow_step_kind(step: WorkflowStepSchema) -> str:
     return "unknown"
 
 
+def _workflow_step_summary(
+    step: WorkflowStepSchema,
+    step_kind: str,
+) -> WorkflowStepSummaryView:
+    detail = ""
+    if step_kind == "query" and step.query is not None:
+        detail = step.query
+    elif step_kind == "provider" and step.provider is not None:
+        detail = step.provider
+    elif step_kind == "list_entities" and step.list_entities is not None:
+        detail = step.list_entities.entity_type
+    elif step_kind == "list_relationships" and step.list_relationships is not None:
+        detail = step.list_relationships.relationship_type
+    elif step_kind == "make_candidates" and step.make_candidates is not None:
+        detail = step.make_candidates.relationship_type
+    elif step_kind == "map_signals" and step.map_signals is not None:
+        detail = step.map_signals.integration
+    elif (
+        step_kind == "propose_relationship_group"
+        and step.propose_relationship_group is not None
+    ):
+        detail = step.propose_relationship_group.relationship_type
+    elif step_kind == "make_entities" and step.make_entities is not None:
+        detail = step.make_entities.entity_type
+    elif step_kind == "make_relationships" and step.make_relationships is not None:
+        detail = step.make_relationships.relationship_type
+    elif step_kind == "apply_entities" and step.apply_entities is not None:
+        detail = step.apply_entities.entities_from
+    elif step_kind == "apply_relationships" and step.apply_relationships is not None:
+        detail = step.apply_relationships.relationships_from
+    elif step_kind == "assert" and step.assert_spec is not None:
+        detail = f"{step.assert_spec.left} {step.assert_spec.op} {step.assert_spec.right}"
+
+    return WorkflowStepSummaryView(
+        id=step.id,
+        kind=step_kind,
+        detail=detail,
+        output=step.as_,
+    )
+
+
+def _workflow_story_order(view: WorkflowView) -> list[WorkflowSummaryView]:
+    workflows_by_name = {workflow.name: workflow for workflow in view.workflows}
+    adjacency: dict[str, set[str]] = {workflow.name: set() for workflow in view.workflows}
+    indegree: dict[str, int] = {workflow.name: 0 for workflow in view.workflows}
+    for dependency in view.dependencies:
+        if (
+            dependency.source_workflow not in workflows_by_name
+            or dependency.target_workflow not in workflows_by_name
+        ):
+            continue
+        if dependency.target_workflow in adjacency[dependency.source_workflow]:
+            continue
+        adjacency[dependency.source_workflow].add(dependency.target_workflow)
+        indegree[dependency.target_workflow] += 1
+
+    ready = sorted(
+        (name for name, count in indegree.items() if count == 0),
+        key=lambda name: _workflow_story_sort_key(workflows_by_name[name]),
+    )
+    ordered_names: list[str] = []
+    while ready:
+        name = ready.pop(0)
+        ordered_names.append(name)
+        for target in sorted(
+            adjacency[name],
+            key=lambda item: _workflow_story_sort_key(workflows_by_name[item]),
+        ):
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                ready.append(target)
+                ready.sort(key=lambda item: _workflow_story_sort_key(workflows_by_name[item]))
+
+    if len(ordered_names) != len(view.workflows):
+        ordered = set(ordered_names)
+        ordered_names.extend(
+            workflow.name
+            for workflow in sorted(view.workflows, key=_workflow_story_sort_key)
+            if workflow.name not in ordered
+        )
+
+    return [workflows_by_name[name] for name in ordered_names]
+
+
+def _workflow_story_sort_key(workflow: WorkflowSummaryView) -> tuple[int, str]:
+    return (0 if workflow.mode == "canonical" else 1, workflow.name)
+
+
+def _workflow_story_label(workflow: WorkflowSummaryView) -> str:
+    if workflow.applies_relationships:
+        detail = "Loads: " + _humanize_list(workflow.applies_relationships)
+    elif workflow.proposes_relationships:
+        detail = "Proposes: " + _humanize_list(workflow.proposes_relationships)
+    elif workflow.providers:
+        detail = "Providers: " + _humanize_list(workflow.providers)
+    else:
+        detail = _humanize_label(workflow.mode)
+    return f"{_humanize_label(workflow.name)}\n{detail}"
+
+
+def _workflow_step_label(index: int, step: WorkflowStepSummaryView) -> str:
+    prefix = f"{index}. {_humanize_label(step.id)}"
+    detail = (
+        f"{_humanize_label(step.kind)}: {_humanize_label(step.detail)}"
+        if step.detail
+        else _humanize_label(step.kind)
+    )
+    if step.output:
+        detail = f"{detail}\nAs: {_humanize_label(step.output)}"
+    return f"{prefix}\n{detail}"
+
+
 def _format_traversal_summary(
     relationships: list[str],
     direction: str,
@@ -838,6 +1007,16 @@ def _format_traversal_summary(
     if max_depth > 1:
         return f"{rels} ({direction}, depth={max_depth})"
     return f"{rels} ({direction})"
+
+
+def _humanize_list(values: list[str]) -> str:
+    return ", ".join(_humanize_label(value) for value in values)
+
+
+def _humanize_label(value: str) -> str:
+    value = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value)
+    value = value.replace("_", " ").replace("-", " ").strip()
+    return value.title()
 
 
 def _markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
@@ -855,7 +1034,7 @@ def _escape_markdown_cell(value: str) -> str:
 
 
 def _escape_mermaid_label(value: str) -> str:
-    return value.replace('"', '\\"')
+    return value.replace('"', '\\"').replace("\n", "<br/>")
 
 
 def _mermaid_id(raw: str) -> str:
