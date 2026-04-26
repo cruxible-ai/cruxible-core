@@ -3,19 +3,23 @@ name: supply_chain_blast_radius
 kind: world_model
 description: >
   Supply chain incident blast-radius kit. Deterministic base world of
-  suppliers, components (with recursive BOM), products, facilities, and
-  shipments. Incidents arrive as new entities and cascade through four
-  staged governed-relationship workflows: incident → supplier →
-  component → product → at-risk shipment. Each governed edge is rule-
-  centric (the bucket signature carries rule_id + rule_version, not
-  incident_id), so trust accumulates on rules across many incidents
-  rather than starting fresh per incident.
+  suppliers, components, assemblies (with recursive BOM hierarchy),
+  products, and shipments. Incidents arrive as new entities
+  and cascade through four staged governed-relationship workflows:
+  incident → supplier → component → product → at-risk shipment.
+  Assembly impact is derived from accepted supplier/component impacts
+  plus the deterministic BOM hierarchy, rather than stored as a governed
+  claim.
+  Each governed edge is rule-centric (the bucket signature
+  carries rule_id + rule_version, not incident_id), so trust
+  accumulates on rules across many incidents rather than starting fresh
+  per incident.
 
 # ─── Entity types ────────────────────────────────────────────────────
 
 entity_types:
   Supplier:
-    description: External supplier of components or sub-assemblies.
+    description: External supplier of raw materials or discrete components.
     properties:
       supplier_id:
         type: string
@@ -32,7 +36,7 @@ entity_types:
         description: Operator-supplied hint (tier-1, tier-2, tier-3); not authoritative — true tier is computed via BOM traversal.
 
   Component:
-    description: A part, sub-assembly, or raw input. Recursion via component_part_of_component captures BOM depth.
+    description: A raw material or discrete part that rolls up into assemblies.
     properties:
       component_id:
         type: string
@@ -40,6 +44,43 @@ entity_types:
       name:
         type: string
         indexed: true
+      component_kind:
+        type: string
+        enum: [raw_material, part]
+        description: Explicit BOM role for non-assembly components.
+      revision:
+        type: string
+        optional: true
+        description: Component revision used by the seed BOM.
+      lifecycle_status:
+        type: string
+        optional: true
+        enum: [active, deprecated, obsolete]
+      criticality:
+        type: string
+        optional: true
+        enum: [critical, standard, low]
+      category:
+        type: string
+        optional: true
+
+  Assembly:
+    description: A buildable subassembly or assembly composed of Components and/or lower-level Assemblies.
+    properties:
+      assembly_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      revision:
+        type: string
+        optional: true
+        description: Assembly revision used by the seed BOM.
+      lifecycle_status:
+        type: string
+        optional: true
+        enum: [active, deprecated, obsolete]
       criticality:
         type: string
         optional: true
@@ -63,23 +104,6 @@ entity_types:
         type: bool
         optional: true
 
-  Facility:
-    description: Physical site (factory, warehouse, port, distribution center).
-    properties:
-      facility_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      geography:
-        type: string
-        optional: true
-      facility_type:
-        type: string
-        optional: true
-        enum: [factory, warehouse, port, distribution_center]
-
   Shipment:
     description: A specific outbound shipment of products to a customer.
     properties:
@@ -101,7 +125,7 @@ entity_types:
         optional: true
 
   Incident:
-    description: A supplier-side disruption (factory fire, port closure, recall, geography event).
+    description: A supplier-side disruption or geography-level supply event.
     properties:
       incident_id:
         type: string
@@ -116,11 +140,11 @@ entity_types:
       scope_type:
         type: string
         optional: true
-        enum: [facility, supplier, geography]
+        enum: [supplier, geography]
       scope_id:
         type: string
         optional: true
-        description: Identifier of the in-scope facility, supplier, or geography string.
+        description: Identifier of the in-scope supplier or geography string.
       reported_at:
         type: date
         optional: true
@@ -143,33 +167,49 @@ relationships:
         type: bool
         optional: true
 
-  - name: component_part_of_component
-    description: Recursive BOM edge. A sub-component is part of a parent component.
-    from: Component
-    to: Component
-    properties:
-      quantity:
-        type: int
-        optional: true
-
-  - name: component_part_of_product
-    description: Top-level BOM edge linking a component into a finished product.
-    from: Component
-    to: Product
-    properties:
-      quantity:
-        type: int
-        optional: true
-
-  - name: supplier_operates_facility
-    description: Supplier owns or operates a physical facility.
+  - name: supplier_supplies_assembly
+    description: A supplier provides a buildable assembly directly.
     from: Supplier
-    to: Facility
+    to: Assembly
+    properties:
+      lead_time_days:
+        type: int
+        optional: true
+      active:
+        type: bool
+        optional: true
 
-  - name: shipment_contains_product
-    description: A shipment contains one or more units of a product.
-    from: Shipment
+  - name: component_part_of_assembly
+    description: BOM edge linking a raw material or part into an assembly.
+    from: Component
+    to: Assembly
+    properties:
+      quantity:
+        type: int
+        optional: true
+
+  - name: assembly_part_of_assembly
+    description: Recursive BOM edge linking a child assembly into a parent assembly.
+    from: Assembly
+    to: Assembly
+    properties:
+      quantity:
+        type: int
+        optional: true
+
+  - name: assembly_part_of_product
+    description: Top-level BOM edge linking an assembly into a finished product.
+    from: Assembly
     to: Product
+    properties:
+      quantity:
+        type: int
+        optional: true
+
+  - name: product_in_shipment
+    description: Fulfillment edge linking a product to shipments that contain it.
+    from: Product
+    to: Shipment
     properties:
       qty:
         type: int
@@ -194,7 +234,7 @@ relationships:
       match_basis:
         type: string
         optional: true
-        enum: [direct, facility, geography]
+        enum: [direct, geography]
         description: How the incident scope matched this supplier.
       rationale:
         type: string
@@ -227,7 +267,7 @@ relationships:
       auto_resolve_when: all_support
 
   - name: incident_impacts_product
-    description: Governed judgment that an incident impacts a finished product through BOM cascade.
+    description: Governed judgment that an incident impacts a finished product through accepted component impacts, directly supplied assembly impacts, and the deterministic assembly BOM hierarchy.
     from: Incident
     to: Product
     properties:
@@ -235,7 +275,7 @@ relationships:
         type: string
         optional: true
         enum: [direct, tier_2, tier_3_plus]
-        description: Discretized BOM traversal depth from impacted component to product.
+        description: Discretized BOM traversal depth from impacted component or assembly through the assembly hierarchy to product.
       rationale:
         type: string
         optional: true
@@ -322,9 +362,24 @@ named_queries:
       - relationship: incident_impacts_component
         direction: outgoing
 
+  incident_impacted_assemblies:
+    description: >
+      Starting from an incident, derive assemblies exposed to accepted supplier
+      or component impacts by walking supplier_supplies_assembly,
+      component_part_of_assembly, and assembly_part_of_assembly.
+      This is a named query/view, not a governed relationship.
+    entry_point: Incident
+    returns: Assembly
+    traversal:
+      - relationship: [incident_impacts_supplier, incident_impacts_component]
+        direction: outgoing
+      - relationship: [supplier_supplies_assembly, component_part_of_assembly, assembly_part_of_assembly]
+        direction: outgoing
+        max_depth: 8
+
   incident_impacted_products:
     description: >
-      Starting from an incident, find finished products judged impacted via BOM cascade.
+      Starting from an incident, find finished products judged impacted via component and assembly BOM cascade.
       The bom_depth_bucket edge property lets the skill filter for tier_2 / tier_3_plus.
     entry_point: Incident
     returns: Product
@@ -350,8 +405,99 @@ named_queries:
     traversal:
       - relationship: incident_impacts_component
         direction: outgoing
-        target_filter:
+        filter:
           alternate_state: no_alternate
+
+  supplier_supplied_components:
+    description: Starting from a supplier, find directly supplied components.
+    entry_point: Supplier
+    returns: Component
+    traversal:
+      - relationship: supplier_supplies_component
+        direction: outgoing
+
+  supplier_supplied_assemblies:
+    description: Starting from a supplier, find directly supplied assemblies.
+    entry_point: Supplier
+    returns: Assembly
+    traversal:
+      - relationship: supplier_supplies_assembly
+        direction: outgoing
+
+  component_parent_assemblies:
+    description: >
+      Starting from a component, find direct and higher-level parent assemblies
+      in the BOM hierarchy.
+    entry_point: Component
+    returns: Assembly
+    traversal:
+      - relationship: [component_part_of_assembly, assembly_part_of_assembly]
+        direction: outgoing
+        max_depth: 8
+
+  assembly_child_components:
+    description: Starting from an assembly, find direct child components.
+    entry_point: Assembly
+    returns: Component
+    traversal:
+      - relationship: component_part_of_assembly
+        direction: incoming
+
+  assembly_child_assemblies:
+    description: Starting from an assembly, find direct child assemblies.
+    entry_point: Assembly
+    returns: Assembly
+    traversal:
+      - relationship: assembly_part_of_assembly
+        direction: incoming
+
+  product_top_level_assemblies:
+    description: Starting from a product, find top-level assemblies in its BOM.
+    entry_point: Product
+    returns: Assembly
+    traversal:
+      - relationship: assembly_part_of_product
+        direction: incoming
+
+  product_shipments:
+    description: Starting from a product, find shipments containing it.
+    entry_point: Product
+    returns: Shipment
+    traversal:
+      - relationship: product_in_shipment
+        direction: outgoing
+
+  shipment_products:
+    description: Starting from a shipment, find products contained in it.
+    entry_point: Shipment
+    returns: Product
+    traversal:
+      - relationship: product_in_shipment
+        direction: incoming
+
+  supplier_impacting_incidents:
+    description: Starting from a supplier, find incidents judged to impact it.
+    entry_point: Supplier
+    returns: Incident
+    traversal:
+      - relationship: incident_impacts_supplier
+        direction: incoming
+
+  product_impacting_incidents:
+    description: Starting from a product, find incidents judged to impact it.
+    entry_point: Product
+    returns: Incident
+    traversal:
+      - relationship: incident_impacts_product
+        direction: incoming
+
+  shipment_risk_incidents:
+    description: Starting from a shipment, find incidents judged to put it at risk.
+    entry_point: Shipment
+    returns: Incident
+    traversal:
+      - relationship: shipment_at_risk
+        direction: incoming
 
 # ─── Quality checks ──────────────────────────────────────────────────
 
@@ -374,11 +520,20 @@ quality_checks:
     min_count: 2
     severity: warning
 
-  - name: products_have_bom
+  - name: components_have_kind
+    kind: property
+    description: Every component should declare whether it is a raw material or part.
+    target: entity
+    entity_type: Component
+    property: component_kind
+    rule: required
+    severity: error
+
+  - name: products_have_assembly_bom
     kind: cardinality
-    description: Products should have at least one component in their BOM.
+    description: Products should have at least one top-level assembly in their BOM.
     entity_type: Product
-    relationship_type: component_part_of_product
+    relationship_type: assembly_part_of_product
     direction: incoming
     min_count: 1
     severity: error
@@ -387,7 +542,7 @@ quality_checks:
 #
 # One integration per governed relationship in v1. Each integration is
 # the named "voice" that emits tri-state signals through map_signals.
-# Adding a second voice per relationship (e.g. separating facility-
+# Adding a second voice per relationship (e.g. separating direct supplier
 # match from geography-match for incident_impacts_supplier) is a v1.5
 # enrichment that does not require schema changes.
 
@@ -396,8 +551,8 @@ integrations:
     kind: incident_scope_match
     contract: null
     notes: >
-      Matches incident scope (facility|supplier|geography) to suppliers
-      via supplier_operates_facility and supplier.primary_geography.
+      Matches incident scope (supplier|geography) to suppliers via
+      supplier_id or supplier.primary_geography.
 
   incident_component_cascade:
     kind: supplier_to_component_cascade
@@ -408,12 +563,13 @@ integrations:
       supplier exists outside incident scope.
 
   incident_product_cascade:
-    kind: bom_recursive_cascade
+    kind: bom_to_product_cascade
     contract: null
     notes: >
-      Recursive BOM traversal from impacted components up through
-      component_part_of_component and component_part_of_product to
-      finished goods. Records discretized depth in bom_depth_bucket.
+      Rolls resolved impacted components and directly supplied assemblies
+      through supplier_supplies_assembly, component_part_of_assembly,
+      assembly_part_of_assembly, and assembly_part_of_product to finished
+      goods. Records discretized BOM depth in bom_depth_bucket.
 
   shipment_risk_assessment:
     kind: shipment_state_assessment
@@ -451,6 +607,28 @@ contracts:
             properties:
               component_id: {type: string}
               name: {type: string}
+              component_kind:
+                type: string
+                enum: [raw_material, part]
+              revision: {type: string}
+              lifecycle_status:
+                type: string
+                enum: [active, deprecated, obsolete]
+              criticality: {type: string}
+              category: {type: string}
+      assemblies:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              assembly_id: {type: string}
+              name: {type: string}
+              revision: {type: string}
+              lifecycle_status:
+                type: string
+                enum: [active, deprecated, obsolete]
               criticality: {type: string}
               category: {type: string}
       products:
@@ -464,17 +642,6 @@ contracts:
               sku: {type: string}
               name: {type: string}
               active: {type: boolean}
-      facilities:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              facility_id: {type: string}
-              name: {type: string}
-              geography: {type: string}
-              facility_type: {type: string}
       shipments:
         type: json
         json_schema:
@@ -498,27 +665,7 @@ contracts:
               component_id: {type: string}
               lead_time_days: {type: integer}
               active: {type: boolean}
-      component_part_of_component:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              parent_component_id: {type: string}
-              child_component_id: {type: string}
-              quantity: {type: integer}
-      component_part_of_product:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              component_id: {type: string}
-              product_id: {type: string}
-              quantity: {type: integer}
-      supplier_operates_facility:
+      supplier_supplies_assembly:
         type: json
         json_schema:
           type: array
@@ -526,8 +673,40 @@ contracts:
             type: object
             properties:
               supplier_id: {type: string}
-              facility_id: {type: string}
-      shipment_contains_product:
+              assembly_id: {type: string}
+              lead_time_days: {type: integer}
+              active: {type: boolean}
+      component_part_of_assembly:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              component_id: {type: string}
+              assembly_id: {type: string}
+              quantity: {type: integer}
+      assembly_part_of_assembly:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              parent_assembly_id: {type: string}
+              child_assembly_id: {type: string}
+              quantity: {type: integer}
+      assembly_part_of_product:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              assembly_id: {type: string}
+              product_id: {type: string}
+              quantity: {type: integer}
+      product_in_shipment:
         type: json
         json_schema:
           type: array
@@ -539,15 +718,11 @@ contracts:
               qty: {type: integer}
 
   IncidentScopeAssessmentInput:
-    description: Open incidents plus suppliers, facilities, and supplier_operates_facility edges for scope matching.
+    description: Open incidents plus suppliers for direct supplier and geography scope matching.
     fields:
       incidents:
         type: json
       suppliers:
-        type: json
-      facilities:
-        type: json
-      supplier_operates_facility_edges:
         type: json
 
   IncidentScopeAssessmentResults:
@@ -593,13 +768,21 @@ contracts:
               verdict: {type: string}
 
   IncidentProductCascadeInput:
-    description: Resolved component impacts plus full BOM edges for recursive product cascade.
+    description: Resolved component and supplier impacts plus assembly-aware BOM edges for product cascade.
     fields:
       impacted_component_edges:
         type: json
-      component_part_of_component_edges:
+      impacted_supplier_edges:
         type: json
-      component_part_of_product_edges:
+      supplier_supplies_assembly_edges:
+        type: json
+      component_part_of_assembly_edges:
+        type: json
+      assembly_part_of_assembly_edges:
+        type: json
+      assembly_part_of_product_edges:
+        type: json
+      assemblies:
         type: json
       products:
         type: json
@@ -621,13 +804,13 @@ contracts:
               verdict: {type: string}
 
   ShipmentRiskAssessmentInput:
-    description: Resolved product impacts plus shipments and shipment_contains_product edges.
+    description: Resolved product impacts plus shipments and product_in_shipment edges.
     fields:
       impacted_product_edges:
         type: json
       shipments:
         type: json
-      shipment_contains_product_edges:
+      product_in_shipment_edges:
         type: json
       incidents:
         type: json
@@ -679,7 +862,7 @@ providers:
 
   assess_incident_supplier_scope:
     kind: function
-    description: Match each open incident's scope to suppliers via direct, facility, or geography basis.
+    description: Match each open incident's scope to suppliers via direct supplier or geography basis.
     contract_in: IncidentScopeAssessmentInput
     contract_out: IncidentScopeAssessmentResults
     ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_supplier_scope
@@ -699,7 +882,7 @@ providers:
 
   assess_incident_product_cascade:
     kind: function
-    description: Recursive BOM cascade from impacted components up to finished products; records bom_depth_bucket.
+    description: Roll impacted components and directly supplied assemblies through assembly BOM hierarchy to finished products; records bom_depth_bucket.
     contract_in: IncidentProductCascadeInput
     contract_out: IncidentProductCascadeResults
     ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_product_cascade
@@ -736,7 +919,7 @@ workflows:
     # queries, feedback profiles, decision policies, quality checks) validates
     # cleanly.
     canonical: true
-    description: Load base-world suppliers, components, products, facilities, shipments, and deterministic edges.
+    description: Load base-world suppliers, components, assemblies, products, shipments, and deterministic edges.
     contract_in: EmptyInput
     steps:
       - id: seed
@@ -764,9 +947,25 @@ workflows:
           properties:
             component_id: $item.component_id
             name: $item.name
+            component_kind: $item.component_kind
+            revision: $item.revision
+            lifecycle_status: $item.lifecycle_status
             criticality: $item.criticality
             category: $item.category
         as: components
+      - id: assemblies
+        make_entities:
+          entity_type: Assembly
+          items: $steps.seed.assemblies
+          entity_id: $item.assembly_id
+          properties:
+            assembly_id: $item.assembly_id
+            name: $item.name
+            revision: $item.revision
+            lifecycle_status: $item.lifecycle_status
+            criticality: $item.criticality
+            category: $item.category
+        as: assemblies
       - id: products
         make_entities:
           entity_type: Product
@@ -778,17 +977,6 @@ workflows:
             name: $item.name
             active: $item.active
         as: products
-      - id: facilities
-        make_entities:
-          entity_type: Facility
-          items: $steps.seed.facilities
-          entity_id: $item.facility_id
-          properties:
-            facility_id: $item.facility_id
-            name: $item.name
-            geography: $item.geography
-            facility_type: $item.facility_type
-        as: facilities
       - id: shipments
         make_entities:
           entity_type: Shipment
@@ -815,45 +1003,59 @@ workflows:
             lead_time_days: $item.lead_time_days
             active: $item.active
         as: supplies_edges
-      - id: bom_recursive_edges
+      - id: assembly_supply_edges
         make_relationships:
-          relationship_type: component_part_of_component
-          items: $steps.seed.component_part_of_component
-          from_type: Component
-          from_id: $item.child_component_id
-          to_type: Component
-          to_id: $item.parent_component_id
-          properties:
-            quantity: $item.quantity
-        as: bom_recursive_edges
-      - id: bom_product_edges
-        make_relationships:
-          relationship_type: component_part_of_product
-          items: $steps.seed.component_part_of_product
-          from_type: Component
-          from_id: $item.component_id
-          to_type: Product
-          to_id: $item.product_id
-          properties:
-            quantity: $item.quantity
-        as: bom_product_edges
-      - id: facility_edges
-        make_relationships:
-          relationship_type: supplier_operates_facility
-          items: $steps.seed.supplier_operates_facility
+          relationship_type: supplier_supplies_assembly
+          items: $steps.seed.supplier_supplies_assembly
           from_type: Supplier
           from_id: $item.supplier_id
-          to_type: Facility
-          to_id: $item.facility_id
-        as: facility_edges
-      - id: shipment_edges
+          to_type: Assembly
+          to_id: $item.assembly_id
+          properties:
+            lead_time_days: $item.lead_time_days
+            active: $item.active
+        as: assembly_supply_edges
+      - id: component_assembly_edges
         make_relationships:
-          relationship_type: shipment_contains_product
-          items: $steps.seed.shipment_contains_product
-          from_type: Shipment
-          from_id: $item.shipment_id
+          relationship_type: component_part_of_assembly
+          items: $steps.seed.component_part_of_assembly
+          from_type: Component
+          from_id: $item.component_id
+          to_type: Assembly
+          to_id: $item.assembly_id
+          properties:
+            quantity: $item.quantity
+        as: component_assembly_edges
+      - id: assembly_recursive_edges
+        make_relationships:
+          relationship_type: assembly_part_of_assembly
+          items: $steps.seed.assembly_part_of_assembly
+          from_type: Assembly
+          from_id: $item.child_assembly_id
+          to_type: Assembly
+          to_id: $item.parent_assembly_id
+          properties:
+            quantity: $item.quantity
+        as: assembly_recursive_edges
+      - id: assembly_product_edges
+        make_relationships:
+          relationship_type: assembly_part_of_product
+          items: $steps.seed.assembly_part_of_product
+          from_type: Assembly
+          from_id: $item.assembly_id
           to_type: Product
           to_id: $item.product_id
+          properties:
+            quantity: $item.quantity
+        as: assembly_product_edges
+      - id: shipment_edges
+        make_relationships:
+          relationship_type: product_in_shipment
+          items: $steps.seed.product_in_shipment
+          from_type: Product
+          from_id: $item.product_id
+          to_type: Shipment
+          to_id: $item.shipment_id
           properties:
             qty: $item.qty
         as: shipment_edges
@@ -867,14 +1069,14 @@ workflows:
         apply_entities:
           entities_from: components
         as: apply_components
+      - id: apply_assemblies
+        apply_entities:
+          entities_from: assemblies
+        as: apply_assemblies
       - id: apply_products
         apply_entities:
           entities_from: products
         as: apply_products
-      - id: apply_facilities
-        apply_entities:
-          entities_from: facilities
-        as: apply_facilities
       - id: apply_shipments
         apply_entities:
           entities_from: shipments
@@ -883,18 +1085,22 @@ workflows:
         apply_relationships:
           relationships_from: supplies_edges
         as: apply_supplies
-      - id: apply_bom_recursive
+      - id: apply_assembly_supply
         apply_relationships:
-          relationships_from: bom_recursive_edges
-        as: apply_bom_recursive
-      - id: apply_bom_product
+          relationships_from: assembly_supply_edges
+        as: apply_assembly_supply
+      - id: apply_component_assembly
         apply_relationships:
-          relationships_from: bom_product_edges
-        as: apply_bom_product
-      - id: apply_facility_edges
+          relationships_from: component_assembly_edges
+        as: apply_component_assembly
+      - id: apply_assembly_recursive
         apply_relationships:
-          relationships_from: facility_edges
-        as: apply_facility_edges
+          relationships_from: assembly_recursive_edges
+        as: apply_assembly_recursive
+      - id: apply_assembly_product
+        apply_relationships:
+          relationships_from: assembly_product_edges
+        as: apply_assembly_product
       - id: apply_shipment_edges
         apply_relationships:
           relationships_from: shipment_edges
@@ -906,8 +1112,8 @@ workflows:
   propose_incident_impacts_supplier:
     canonical: false
     description: >
-      Match every open incident's scope to suppliers via direct,
-      facility, or geography basis. Bucket signature is rule-centric
+      Match every open incident's scope to suppliers via direct supplier
+      or geography basis. Bucket signature is rule-centric
       (rule_id=incident_scope_match_to_supplier), so trust accumulates
       across many incidents.
     contract_in: EmptyInput
@@ -920,21 +1126,11 @@ workflows:
         list_entities:
           entity_type: Supplier
         as: suppliers
-      - id: facilities
-        list_entities:
-          entity_type: Facility
-        as: facilities
-      - id: facility_edges
-        list_relationships:
-          relationship_type: supplier_operates_facility
-        as: facility_edges
       - id: assessments
         provider: assess_incident_supplier_scope
         input:
           incidents: $steps.incidents.items
           suppliers: $steps.suppliers.items
-          facilities: $steps.facilities.items
-          supplier_operates_facility_edges: $steps.facility_edges.items
         as: assessments
       - id: candidates
         make_candidates:
@@ -968,12 +1164,12 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: >
-            Open incidents match suppliers via direct, facility, or
+            Open incidents match suppliers via direct supplier or
             geography scope.
           thesis_facts:
             rule_id: incident_scope_match_to_supplier
             rule_version: 1
-            source: incident_scope_and_supplier_facility_geography
+            source: incident_scope_and_supplier_geography
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1050,29 +1246,45 @@ workflows:
         as: proposal
     returns: proposal
 
-  # ── Stage 3: component → product (recursive BOM) ───────────────────
+  # ── Stage 3: component/supplier → assembly BOM → product ───────────
 
   propose_incident_impacts_product:
     canonical: false
     description: >
-      Recursive BOM cascade from impacted components up through
-      component_part_of_component and component_part_of_product to
-      finished goods. Records bom_depth_bucket to surface tier-2+
-      exposure.
+      Roll resolved impacted components and directly supplied assemblies
+      through the assembly BOM hierarchy to finished products. Assemblies
+      are part of the deterministic BOM structure, but assembly impact
+      remains a derived view rather than a governed edge.
     contract_in: EmptyInput
     steps:
       - id: impacted_component_edges
         list_relationships:
           relationship_type: incident_impacts_component
         as: impacted_component_edges
-      - id: bom_recursive
+      - id: impacted_supplier_edges
         list_relationships:
-          relationship_type: component_part_of_component
-        as: bom_recursive
-      - id: bom_product
+          relationship_type: incident_impacts_supplier
+        as: impacted_supplier_edges
+      - id: assembly_supply
         list_relationships:
-          relationship_type: component_part_of_product
-        as: bom_product
+          relationship_type: supplier_supplies_assembly
+        as: assembly_supply
+      - id: component_assembly
+        list_relationships:
+          relationship_type: component_part_of_assembly
+        as: component_assembly
+      - id: assembly_recursive
+        list_relationships:
+          relationship_type: assembly_part_of_assembly
+        as: assembly_recursive
+      - id: assembly_product
+        list_relationships:
+          relationship_type: assembly_part_of_product
+        as: assembly_product
+      - id: assemblies
+        list_entities:
+          entity_type: Assembly
+        as: assemblies
       - id: products
         list_entities:
           entity_type: Product
@@ -1081,8 +1293,12 @@ workflows:
         provider: assess_incident_product_cascade
         input:
           impacted_component_edges: $steps.impacted_component_edges.items
-          component_part_of_component_edges: $steps.bom_recursive.items
-          component_part_of_product_edges: $steps.bom_product.items
+          impacted_supplier_edges: $steps.impacted_supplier_edges.items
+          supplier_supplies_assembly_edges: $steps.assembly_supply.items
+          component_part_of_assembly_edges: $steps.component_assembly.items
+          assembly_part_of_assembly_edges: $steps.assembly_recursive.items
+          assembly_part_of_product_edges: $steps.assembly_product.items
+          assemblies: $steps.assemblies.items
           products: $steps.products.items
         as: assessments
       - id: candidates
@@ -1117,12 +1333,12 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: >
-            Products are impacted via recursive BOM cascade from
-            impacted components.
+            Products are impacted via component-to-assembly or
+            supplier-to-assembly BOM rollup.
           thesis_facts:
-            rule_id: cascade_through_bom_to_product
+            rule_id: cascade_from_impacted_supplier_or_component_to_product
             rule_version: 1
-            source: bill_of_materials_traversal
+            source: assembly_bom_traversal
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1144,10 +1360,10 @@ workflows:
         list_entities:
           entity_type: Shipment
         as: shipments
-      - id: contains_edges
+      - id: product_shipment_edges
         list_relationships:
-          relationship_type: shipment_contains_product
-        as: contains_edges
+          relationship_type: product_in_shipment
+        as: product_shipment_edges
       - id: incidents
         list_entities:
           entity_type: Incident
@@ -1157,7 +1373,7 @@ workflows:
         input:
           impacted_product_edges: $steps.impacted_product_edges.items
           shipments: $steps.shipments.items
-          shipment_contains_product_edges: $steps.contains_edges.items
+          product_in_shipment_edges: $steps.product_shipment_edges.items
           incidents: $steps.incidents.items
         as: assessments
       - id: candidates
@@ -1213,8 +1429,8 @@ feedback_profiles:
   incident_impacts_supplier:
     version: 1
     reason_codes:
-      wrong_facility_match:
-        description: Rule said this supplier matched via facility but the facility was not actually in scope.
+      wrong_supplier_scope_match:
+        description: Rule matched the wrong supplier for the incident scope.
         remediation_hint: provider_fix
         required_scope_keys: [supplier, match_basis]
       geography_stale:
@@ -1258,7 +1474,7 @@ feedback_profiles:
         remediation_hint: quality_check
         required_scope_keys: [product]
       bom_variant_mismatch:
-        description: Product uses a BOM variant that does not include the impacted component.
+        description: Product uses a BOM variant that does not include the impacted component path.
         remediation_hint: provider_fix
         required_scope_keys: [product]
       bom_depth_overstated:
@@ -1289,3 +1505,142 @@ feedback_profiles:
       incident: FROM.incident_id
       shipment: TO.shipment_id
       shipment_state: EDGE.shipment_state
+
+# ─── Outcome profiles (Loop 2) ───────────────────────────────────────
+#
+# Feedback profiles capture reviewer corrections before/at resolution.
+# Outcome profiles capture whether accepted judgments worked downstream
+# once actual supplier recovery, production, shipment, or customer impact
+# is known. These are the trust-calibration inputs for the next incident.
+
+outcome_profiles:
+  incident_supplier_resolution:
+    anchor_type: resolution
+    relationship_type: incident_impacts_supplier
+    version: 1
+    outcome_codes:
+      confirmed_supplier_disruption:
+        description: Later operations data confirmed the supplier was materially disrupted.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      supplier_unaffected:
+        description: Later operations data showed the supplier was not materially disrupted.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      scope_data_stale:
+        description: Supplier or geography scope data was stale at resolution time.
+        remediation_hint: provider_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  incident_component_resolution:
+    anchor_type: resolution
+    relationship_type: incident_impacts_component
+    version: 1
+    outcome_codes:
+      confirmed_component_shortage:
+        description: Later operations data confirmed component supply was constrained.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      alternate_covered_need:
+        description: Alternate sourcing prevented the predicted component impact.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      missed_component_impact:
+        description: A component impact was discovered after the proposal chain ran.
+        remediation_hint: workflow_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  incident_product_resolution:
+    anchor_type: resolution
+    relationship_type: incident_impacts_product
+    version: 1
+    outcome_codes:
+      confirmed_product_impact:
+        description: Later planning, production, or customer data confirmed product impact.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      product_unaffected:
+        description: The product remained unaffected despite the accepted impact judgment.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      missed_product_impact:
+        description: A product impact was discovered after the proposal chain ran.
+        remediation_hint: workflow_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  shipment_risk_resolution:
+    anchor_type: resolution
+    relationship_type: shipment_at_risk
+    version: 1
+    outcome_codes:
+      confirmed_shipment_delay:
+        description: Shipment was delayed, held, shorted, or customer-impacting as predicted.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      shipment_unaffected:
+        description: Shipment completed normally despite the accepted risk judgment.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      missed_at_risk_shipment:
+        description: A shipment became customer-impacting but was not flagged by the chain.
+        remediation_hint: workflow_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  impacted_assemblies_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: incident_impacted_assemblies
+    version: 1
+    outcome_codes:
+      missing_impacted_assembly:
+        description: Query omitted an assembly later confirmed to be exposed through the BOM.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      false_positive_assembly:
+        description: Query returned an assembly later confirmed not to be exposed through the active BOM.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  impacted_products_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: incident_impacted_products
+    version: 1
+    outcome_codes:
+      missing_impacted_product:
+        description: Query omitted a product later confirmed to be impacted.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      false_positive_product:
+        description: Query returned a product later confirmed to be unaffected.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  at_risk_shipments_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: incident_at_risk_shipments
+    version: 1
+    outcome_codes:
+      missing_at_risk_shipment:
+        description: Query omitted a shipment later confirmed at risk.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      false_positive_shipment:
+        description: Query returned a shipment later confirmed unaffected.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
