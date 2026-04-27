@@ -11,6 +11,47 @@ If the source files are messy, run `prepare-data` first.
 
 Work in stages. Do not try to design the graph, workflows, queries, and review loop all at once.
 
+## Generated config views
+
+Do not rely on YAML alone when drafting or reviewing a world. At each major
+config checkpoint, generate canonical views from the config and use those
+views as the review surface.
+
+Use inline output for fast review when the agent harness can render Mermaid:
+
+```bash
+uv run python scripts/render_config_views.py config.yaml --view all
+```
+
+Also update durable README marker blocks so CLI and non-GUI harnesses can
+inspect the same generated views:
+
+```bash
+uv run python scripts/render_config_views.py config.yaml --update-readme README.md
+```
+
+If the config uses `extends`, render the runtime composed view for
+onboarding/review surfaces:
+
+```bash
+uv run python scripts/render_config_views.py config.yaml --runtime --view all
+uv run python scripts/render_config_views.py config.yaml --runtime --update-readme README.md
+```
+
+Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is code-owned
+structural output from the config. Authored prose may explain intent,
+tradeoffs, open questions, and operating guidance, but it must not replace or
+contradict the generated structural view. Do not hand-author alternate Mermaid
+diagrams when a generated view exists.
+
+When iterating the config toward its final shape, explicitly direct the user to
+the generated README views as the primary way to understand the current system.
+The YAML remains the execution source of truth, but the README's generated
+ontology, workflow, governed relationship, and query sections are the review
+surface for human decisions. Before asking the user to approve graph shape,
+workflow sequencing, governed boundaries, or query surfaces, update the README
+marker blocks and point them to the relevant generated section.
+
 ## Phase 1: Understand the domain shape
 
 Before writing config:
@@ -53,6 +94,10 @@ Write only the minimum needed for the base graph:
 - minimal `contracts` only if clearly required
 
 Do not spend time on named queries, review loops, or advanced workflows yet.
+
+After writing the base graph config, render at least the ontology view inline.
+If the world has a README, add or update the ontology marker block there too.
+Use this as the graph-shape checkpoint before moving on.
 
 ## Phase 2: Validate the base graph config
 
@@ -127,6 +172,12 @@ For judgment-based tasks that will need model judgment, matching, ranking, or re
 
 Do not introduce Cruxible workflow machinery just because the schema allows it.
 
+After adding workflow machinery, render the workflow pipeline and workflow
+summary inline. If the world has a README, update the generated workflow marker
+blocks there too. The user should be able to review the sequence, each stage's
+input context, the produced state or proposal, and provider provenance without
+mentally parsing the YAML.
+
 ## Phase 4: Build and inspect the world for the first time
 
 After workflow config changes:
@@ -166,3 +217,9 @@ After Phase 4, read and follow:
 That shared reference is the source of truth for the remaining flow after the canonical layer is in place. Some phases inside it are conditional, but the reference itself is not optional once you move past Phase 4.
 
 When following it from `create-world`, use Phases 1-4 of this skill as the earlier loopback points for graph shape, canonical workflow design, and canonical world build questions.
+
+After adding governed relationships, named queries, feedback profiles, outcome
+profiles, or decision policies, rerender the full default config view bundle
+inline and update README marker blocks if present. Use the ontology, workflow
+summary, governed relationship table, query map, and query catalog together as
+the final structural review surface before hand-off.

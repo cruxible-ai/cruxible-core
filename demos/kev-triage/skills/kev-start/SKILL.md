@@ -53,6 +53,56 @@ If the daemon isn't reachable, stop and tell the user to start the project's
 configured Cruxible daemon before continuing. Do not try to initialize
 without a daemon.
 
+## Generated config views
+
+Use generated config views as the structural review surface during onboarding.
+The KEV kit uses `extends`, so render the runtime composed view: inherited
+reference ontology and query surfaces are visible, while upstream build-only
+workflows are hidden from the onboarding workflow summary.
+
+For fast review in GUI harnesses that can render Mermaid, show the generated
+views inline. From the repository root:
+
+```
+uv run python scripts/render_config_views.py demos/kev-triage/config.yaml --runtime --view all
+```
+
+If you are already inside `demos/kev-triage/`, use the same script through the
+relative repo path:
+
+```
+uv run python ../../scripts/render_config_views.py config.yaml --runtime --view all
+```
+
+Also keep the README marker blocks updated so CLI and non-GUI harnesses can
+inspect the same generated views. From the repository root:
+
+```
+uv run python scripts/render_config_views.py demos/kev-triage/config.yaml --runtime --update-readme demos/kev-triage/README.md
+```
+
+From inside `demos/kev-triage/`:
+
+```
+uv run python ../../scripts/render_config_views.py config.yaml --runtime --update-readme README.md
+```
+
+Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is code-owned
+structural output from `config.yaml`. Authored README prose may explain the KEV
+story, operating assumptions, and hand-off notes, but it must not replace or
+contradict the generated ontology, workflow, governed relationship, or query
+views. Do not hand-author alternate Mermaid diagrams when a generated view
+exists.
+
+When iterating the KEV fork toward its final supported surface, explicitly
+direct the user to the generated README views as the primary way to understand
+the current configuration. The YAML remains the execution source of truth, but
+the README's generated ontology, workflow, governed relationship, and query
+sections are the review surface for human decisions. Before asking the user to
+approve kept workflows, governed boundaries, query surfaces, or local
+adaptations, update the README marker blocks and point them to the relevant
+generated section.
+
 ## Flow
 
 ### 1. Check current state
@@ -123,6 +173,10 @@ state into the KEV fork.
 The exit condition for onboarding is that the final supported KEV surface is
 validated against the user's fork. Walk through the relevant parts of
 `config.yaml` with the user and decide what survives this onboarding pass.
+Before making those keep/modify/remove decisions, render the runtime config
+views inline and update the README marker blocks. Use the generated ontology,
+workflow summary, governed relationship table, query map, and query catalog as
+the surface-selection aid instead of asking the user to reason over YAML alone.
 
 Treat the surfaces in three buckets:
 
@@ -168,6 +222,11 @@ required inputs for the kept queries and workflows are actually present. This
 is where optional inputs such as exceptions, controls, patch windows,
 incidents, and findings become required if the user chooses to keep the
 queries or workflows that depend on them.
+
+After modifying the final supported surface, rerender the runtime config views
+inline and update the README marker blocks again. Do this before initializing
+or running the fork so the durable README matches the config the agent is about
+to execute.
 
 Confirm the final supported surface with the user before initializing. The
 remaining steps verify that:

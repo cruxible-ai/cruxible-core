@@ -71,7 +71,7 @@ flowchart LR
   classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
 
-  workflow_pipeline_build_seed_state["1. Seed base world<br/>Canonical"]
+  workflow_pipeline_build_seed_state["1. Seed canonical state<br/>Canonical"]
   workflow_pipeline_propose_incident_impacts_supplier["2. Assess supplier impact<br/>Governed proposal"]
   workflow_pipeline_propose_incident_impacts_component["3. Cascade to components<br/>Governed proposal"]
   workflow_pipeline_propose_incident_impacts_product["4. Cascade to products<br/>Governed proposal"]
@@ -91,7 +91,7 @@ flowchart LR
 **Role:** Canonical seed
 
 **Input context**
-- None (seeds the base world)
+- None (seeds canonical state)
 
 **Result**
 - Canonical entities: Assembly, Component, Product, Shipment, Supplier
