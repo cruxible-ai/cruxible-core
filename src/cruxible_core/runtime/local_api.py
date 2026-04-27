@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import yaml
 
@@ -79,7 +79,7 @@ from cruxible_core.service import (
     service_world_status,
 )
 from cruxible_core.wiki import WikiOptions, build_wiki_pages
-from cruxible_core.wiki.generator import parse_subject_ref
+from cruxible_core.wiki.generator import WikiScope, parse_subject_ref
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
@@ -570,6 +570,8 @@ def _handle_render_wiki_local(
     *,
     focus: list[str] | None = None,
     include_types: list[str] | None = None,
+    scope: str | None = None,
+    max_per_type: int = 50,
     all_subjects: bool = False,
 ) -> contracts.WikiRenderResult:
     """Build wiki pages for a governed instance and return them as payloads."""
@@ -583,6 +585,8 @@ def _handle_render_wiki_local(
         output_dir=Path("."),
         focus=tuple(parse_subject_ref(raw) for raw in (focus or [])),
         include_types=tuple(include_types or []),
+        scope=cast(WikiScope, scope or ("all" if all_subjects else "evidence")),
+        max_per_type=max_per_type,
         all_subjects=all_subjects,
     )
     pages = build_wiki_pages(instance, options)

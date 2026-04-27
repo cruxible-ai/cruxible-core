@@ -55,6 +55,8 @@ async def render_wiki(
         instance_id=resolved_instance_id,
         focus=req.focus,
         include_types=req.include_types,
+        scope=req.scope,
+        max_per_type=req.max_per_type,
         all_subjects=req.all_subjects,
     )
 

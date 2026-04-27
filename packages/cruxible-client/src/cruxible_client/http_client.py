@@ -183,6 +183,8 @@ class CruxibleClient:
         *,
         focus: list[str] | None = None,
         include_types: list[str] | None = None,
+        scope: str | None = None,
+        max_per_type: int = 50,
         all_subjects: bool = False,
     ) -> contracts.WikiRenderResult:
         response = self._client.post(
@@ -190,6 +192,8 @@ class CruxibleClient:
             json={
                 "focus": focus or [],
                 "include_types": include_types or [],
+                "scope": scope,
+                "max_per_type": max_per_type,
                 "all_subjects": all_subjects,
             },
         )

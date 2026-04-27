@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -30,7 +30,15 @@ class QueryRequest(BaseModel):
 class RenderWikiRequest(BaseModel):
     focus: list[str] = Field(default_factory=list)
     include_types: list[str] = Field(default_factory=list)
+    scope: Literal["local", "evidence", "all"] | None = None
+    max_per_type: int = Field(default=50, ge=1)
     all_subjects: bool = False
+
+    @model_validator(mode="after")
+    def validate_scope_compatibility(self) -> RenderWikiRequest:
+        if self.all_subjects and self.scope not in (None, "all"):
+            raise ValueError("all_subjects=true can only be combined with scope=all")
+        return self
 
 
 class IngestRequest(BaseModel):

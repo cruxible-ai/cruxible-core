@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 import yaml
 from click.testing import CliRunner
+from pydantic import ValidationError
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
+from cruxible_core.server.request_models import RenderWikiRequest
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -716,11 +718,15 @@ def test_render_wiki_delegates_to_client_and_writes_files(
             *,
             focus=None,
             include_types=None,
+            scope=None,
+            max_per_type=50,
             all_subjects=False,
         ):
             captured["instance_id"] = instance_id
             captured["focus"] = focus
             captured["include_types"] = include_types
+            captured["scope"] = scope
+            captured["max_per_type"] = max_per_type
             captured["all_subjects"] = all_subjects
             return contracts.WikiRenderResult(
                 pages=[
@@ -757,11 +763,68 @@ def test_render_wiki_delegates_to_client_and_writes_files(
         "instance_id": "inst_123",
         "focus": ["Asset:A1"],
         "include_types": ["Asset"],
+        "scope": "local",
+        "max_per_type": 50,
         "all_subjects": False,
     }
     assert "Rendered" in result.output
     assert (output_dir / "index.md").read_text() == "# Demo Wiki\n"
     assert (output_dir / "subjects" / "asset" / "a1.md").read_text() == "# Asset A1\n"
+
+
+def test_render_wiki_all_subjects_alias_delegates_as_all_scope(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def render_wiki(
+            self,
+            instance_id,
+            *,
+            focus=None,
+            include_types=None,
+            scope=None,
+            max_per_type=50,
+            all_subjects=False,
+        ):
+            captured["instance_id"] = instance_id
+            captured["focus"] = focus
+            captured["include_types"] = include_types
+            captured["scope"] = scope
+            captured["max_per_type"] = max_per_type
+            captured["all_subjects"] = all_subjects
+            return contracts.WikiRenderResult(
+                pages=[contracts.WikiPageResult(path="index.md", content="# Demo Wiki\n")],
+                page_count=1,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "render-wiki",
+            "--output",
+            str(tmp_path / "wiki"),
+            "--all-subjects",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["scope"] == "all"
+    assert captured["all_subjects"] is True
+    assert "deprecated" in result.output
+
+
+def test_render_wiki_request_rejects_conflicting_scope_and_all_subjects() -> None:
+    with pytest.raises(ValidationError, match="all_subjects=true"):
+        RenderWikiRequest(scope="local", all_subjects=True)
 
 
 def test_workflow_commands_delegate_to_client_in_server_mode(
