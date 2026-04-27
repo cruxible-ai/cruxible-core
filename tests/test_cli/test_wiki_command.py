@@ -154,6 +154,132 @@ workflows:
         as: exposure
 """
 
+LAYERED_REFERENCE_CONFIG = """\
+version: "1.0"
+name: reference_catalog
+description: Upstream reference catalog.
+kind: world_model
+
+contracts:
+  empty_input:
+    fields: {}
+  empty_output:
+    fields: {}
+
+entity_types:
+  ReferenceItem:
+    description: Reference item from the upstream catalog.
+    properties:
+      item_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+  ReferenceParent:
+    description: Parent reference object.
+    properties:
+      parent_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+
+relationships:
+  - name: reference_parent
+    from: ReferenceItem
+    to: ReferenceParent
+    description: Known parent relationship.
+
+named_queries:
+  reference_lookup:
+    description: Upstream query used by local workflows.
+    entry_point: ReferenceItem
+    traversal:
+      - relationship: reference_parent
+        direction: outgoing
+    returns: list[ReferenceParent]
+
+providers:
+  upstream_provider:
+    kind: function
+    description: Upstream provider that should stay out of local scope unless used.
+    contract_in: empty_input
+    contract_out: empty_output
+    ref: tests.providers:upstream_provider
+    version: "1.0.0"
+
+workflows:
+  upstream_workflow:
+    description: Upstream workflow that should stay out of local scope unless used.
+    canonical: false
+    contract_in: empty_input
+    returns: empty_output
+    steps:
+      - id: call_upstream
+        provider: upstream_provider
+        input: {}
+        as: upstream
+"""
+
+LAYERED_LOCAL_CONFIG_TEMPLATE = """\
+version: "1.0"
+name: local_projection
+description: Local world model overlay.
+kind: world_model
+extends: __BASE_PATH__
+
+entity_types:
+  LocalSubject:
+    description: Locally owned subject.
+    properties:
+      local_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+
+relationships:
+  - name: local_subject_references_item
+    from: LocalSubject
+    to: ReferenceItem
+    description: Local subject points at an upstream reference item.
+    matching: {}
+
+named_queries:
+  local_review:
+    description: Local query surface.
+    entry_point: LocalSubject
+    traversal:
+      - relationship: local_subject_references_item
+        direction: outgoing
+    returns: list[ReferenceItem]
+
+providers:
+  local_provider:
+    kind: function
+    description: Local provider surface.
+    contract_in: empty_input
+    contract_out: empty_output
+    ref: tests.providers:local_provider
+    version: "1.0.0"
+
+workflows:
+  local_workflow:
+    description: Local workflow surface.
+    canonical: false
+    contract_in: empty_input
+    returns: empty_output
+    steps:
+      - id: run_reference_query
+        query: reference_lookup
+        params: {}
+        as: reference
+      - id: call_local
+        provider: local_provider
+        input: {}
+        as: local
+"""
+
 
 def _trace_timing() -> dict[str, object]:
     now = datetime.now(timezone.utc)
@@ -250,6 +376,90 @@ def _build_test_graph() -> EntityGraph:
         )
     )
     return graph
+
+
+def _write_layered_wiki_project(project: Path) -> CruxibleInstance:
+    project.mkdir()
+    base = project / "reference.yaml"
+    overlay = project / "config.yaml"
+    base.write_text(LAYERED_REFERENCE_CONFIG)
+    overlay.write_text(LAYERED_LOCAL_CONFIG_TEMPLATE.replace("__BASE_PATH__", str(base)))
+    return CruxibleInstance.init(project, "config.yaml")
+
+
+def _build_layered_graph() -> EntityGraph:
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="LocalSubject",
+            entity_id="local-1",
+            properties={"local_id": "local-1", "name": "Local One"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="ReferenceItem",
+            entity_id="ref-1",
+            properties={"item_id": "ref-1", "name": "Reference One"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="ReferenceItem",
+            entity_id="ref-2",
+            properties={"item_id": "ref-2", "name": "Reference Two"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="ReferenceParent",
+            entity_id="parent-1",
+            properties={"parent_id": "parent-1", "name": "Parent One"},
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="local_subject_references_item",
+            from_type="LocalSubject",
+            from_id="local-1",
+            to_type="ReferenceItem",
+            to_id="ref-1",
+            properties={"basis": "local-review"},
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="reference_parent",
+            from_type="ReferenceItem",
+            from_id="ref-1",
+            to_type="ReferenceParent",
+            to_id="parent-1",
+            properties={"source": "reference-catalog"},
+        )
+    )
+    return graph
+
+
+def _seed_reference_only_receipt(instance: CruxibleInstance) -> str:
+    builder = ReceiptBuilder(
+        query_name="reference_lookup",
+        parameters={"item_id": "ref-2"},
+    )
+    lookup = builder.record_entity_lookup("ReferenceItem", "ref-2")
+    builder.record_results(
+        [{"entity_type": "ReferenceItem", "entity_id": "ref-2"}],
+        parent_ids=[lookup],
+    )
+    receipt = builder.build(
+        results=[{"entity_type": "ReferenceItem", "entity_id": "ref-2"}]
+    )
+
+    receipt_store = instance.get_receipt_store()
+    try:
+        receipt_store.save_receipt(receipt)
+    finally:
+        receipt_store.close()
+    return receipt.receipt_id
 
 
 def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str]:
@@ -639,6 +849,86 @@ def test_humanize_splits_camel_case_entity_names() -> None:
     assert _humanize("already_snake") == "Already Snake"
     assert _humanize("kebab-case") == "Kebab Case"
     assert _humanize("") == ""
+
+
+def test_render_wiki_local_scope_projects_layered_world(tmp_path: Path) -> None:
+    project = tmp_path / "layered-wiki-project"
+    instance = _write_layered_wiki_project(project)
+    instance.save_graph(_build_layered_graph())
+    _seed_reference_only_receipt(instance)
+
+    written = render_wiki(
+        instance,
+        WikiOptions(output_dir=project / "wiki", scope="local"),
+    )
+
+    assert written
+    local_page = project / "wiki" / "subjects" / "localsubject" / "local-1.md"
+    reference_page = project / "wiki" / "subjects" / "referenceitem" / "ref-1.md"
+    receipt_only_reference = project / "wiki" / "subjects" / "referenceitem" / "ref-2.md"
+    parent_page = project / "wiki" / "subjects" / "referenceparent" / "parent-1.md"
+
+    assert local_page.exists()
+    assert reference_page.exists()
+    assert not receipt_only_reference.exists()
+    assert not parent_page.exists()
+
+    index_text = (project / "wiki" / "index.md").read_text()
+    assert "- Wiki scope: local" in index_text
+    assert "- Rendered local subjects: 1" in index_text
+    assert "- Rendered upstream subjects: 1" in index_text
+    assert "- Omitted upstream subjects: 2" in index_text
+
+    local_text = local_page.read_text()
+    assert "## Graph Position" in local_text
+    assert "-. \"Local Subject References Item\" .->" in local_text
+    assert "Reference item from the upstream catalog." in reference_page.read_text()
+
+    reference_text = reference_page.read_text()
+    assert "Parent One" in reference_text
+    assert "referenceparent/parent-1.md" not in reference_text
+
+    assert (project / "wiki" / "reference" / "queries" / "local-review.md").exists()
+    assert (project / "wiki" / "reference" / "queries" / "reference-lookup.md").exists()
+    assert (project / "wiki" / "reference" / "workflows" / "local-workflow.md").exists()
+    assert (project / "wiki" / "reference" / "providers" / "local-provider.md").exists()
+    assert not (project / "wiki" / "reference" / "workflows" / "upstream-workflow.md").exists()
+    assert not (project / "wiki" / "reference" / "providers" / "upstream-provider.md").exists()
+
+
+def test_render_wiki_evidence_scope_preserves_receipt_seed_behavior(tmp_path: Path) -> None:
+    project = tmp_path / "layered-wiki-project"
+    instance = _write_layered_wiki_project(project)
+    instance.save_graph(_build_layered_graph())
+    _seed_reference_only_receipt(instance)
+
+    render_wiki(
+        instance,
+        WikiOptions(output_dir=project / "wiki", scope="evidence"),
+    )
+
+    assert (project / "wiki" / "subjects" / "referenceitem" / "ref-2.md").exists()
+
+
+def test_render_wiki_focus_does_not_emit_scope_wide_reference_pages(tmp_path: Path) -> None:
+    project = tmp_path / "layered-wiki-project"
+    instance = _write_layered_wiki_project(project)
+    instance.save_graph(_build_layered_graph())
+
+    render_wiki(
+        instance,
+        WikiOptions(
+            output_dir=project / "wiki",
+            focus=(SubjectRef("LocalSubject", "local-1"),),
+            scope="all",
+        ),
+    )
+
+    assert (project / "wiki" / "subjects" / "localsubject" / "local-1.md").exists()
+    assert (project / "wiki" / "subjects" / "referenceitem" / "ref-1.md").exists()
+    assert not (project / "wiki" / "reference" / "queries" / "local-review.md").exists()
+    assert not (project / "wiki" / "reference" / "workflows" / "local-workflow.md").exists()
+    assert not (project / "wiki" / "reference" / "workflows" / "upstream-workflow.md").exists()
 
 
 def test_render_wiki_pending_review_filters_members_for_current_subject(tmp_path: Path) -> None:

@@ -8,8 +8,11 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from cruxible_core.composition_ownership import (
+    resolve_composition_for_instance,
+)
 from cruxible_core.config.schema import (
     CoreConfig,
     EntityTypeSchema,
@@ -22,11 +25,14 @@ from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.mermaid import escape_mermaid_label, mermaid_id
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 
 MAX_STORE_SCAN = 10_000
 MANIFEST_NAME = ".cruxible-manifest.json"
+DEFAULT_MAX_PER_TYPE = 50
+WikiScope = Literal["local", "evidence", "all"]
 DISPLAY_PROPERTY_PREFERENCE = (
     "name",
     "title",
@@ -63,6 +69,8 @@ class WikiOptions:
     focus: tuple[SubjectRef, ...] = ()
     include_types: tuple[str, ...] = ()
     all_subjects: bool = False
+    scope: WikiScope = "evidence"
+    max_per_type: int = DEFAULT_MAX_PER_TYPE
 
 
 def render_wiki(instance: InstanceProtocol, options: WikiOptions) -> list[Path]:
@@ -87,9 +95,12 @@ class _WikiGenerator:
 
     def __init__(self, instance: InstanceProtocol) -> None:
         self.instance = instance
-        self.config = instance.load_config()
+        composition = resolve_composition_for_instance(instance)
+        self.config = composition.config
+        self.ownership = composition.ownership
         self.graph = instance.load_graph()
         self.head_snapshot_id = instance.get_head_snapshot_id()
+        self.max_per_type = DEFAULT_MAX_PER_TYPE
         self.subject_entities = {
             SubjectRef(entity.entity_type, entity.entity_id): entity
             for entity in self.graph.iter_all_entities()
@@ -114,16 +125,22 @@ class _WikiGenerator:
         self.traces = self._load_traces()
 
     def build_pages(self, options: WikiOptions) -> dict[Path, str]:
+        self.max_per_type = max(1, options.max_per_type)
+        scope = _effective_scope(options)
         subjects = self._select_subjects(options)
         rendered_subjects = set(subjects)
         receipt_ids = self._collect_receipt_ids(subjects)
-        query_names = self._collect_query_names(receipt_ids)
-        workflow_names = self._collect_workflow_names(receipt_ids, subjects)
-        provider_names = self._collect_provider_names(receipt_ids)
+        reference_scope: WikiScope = "evidence" if options.focus else scope
+        query_names, workflow_names, provider_names = self._collect_reference_names(
+            receipt_ids,
+            subjects,
+            scope=reference_scope,
+        )
 
         pages: dict[Path, str] = {}
         pages[Path("index.md")] = self._render_index_page(
             subjects,
+            scope=scope,
             query_names=query_names,
             workflow_names=workflow_names,
             provider_names=provider_names,
@@ -154,27 +171,30 @@ class _WikiGenerator:
             )
 
         for query_name in sorted(query_names):
-            schema = self.config.named_queries.get(query_name)
-            if schema is None:
+            query_schema = self.config.named_queries.get(query_name)
+            if query_schema is None:
                 continue
-            pages[self._query_path(query_name)] = self._render_query_page(query_name, schema)
+            pages[self._query_path(query_name)] = self._render_query_page(
+                query_name,
+                query_schema,
+            )
 
         for workflow_name in sorted(workflow_names):
-            schema = self.config.workflows.get(workflow_name)
-            if schema is None:
+            workflow_schema = self.config.workflows.get(workflow_name)
+            if workflow_schema is None:
                 continue
             pages[self._workflow_path(workflow_name)] = self._render_workflow_page(
                 workflow_name,
-                schema,
+                workflow_schema,
             )
 
         for provider_name in sorted(provider_names):
-            schema = self.config.providers.get(provider_name)
-            if schema is None:
+            provider_schema = self.config.providers.get(provider_name)
+            if provider_schema is None:
                 continue
             pages[self._provider_path(provider_name)] = self._render_provider_page(
                 provider_name,
-                schema,
+                provider_schema,
             )
 
         return pages
@@ -299,6 +319,7 @@ class _WikiGenerator:
     def _select_subjects(self, options: WikiOptions) -> list[SubjectRef]:
         include_types = set(options.include_types)
         subjects: set[SubjectRef] = set()
+        scope = _effective_scope(options)
 
         if options.focus:
             for focus in options.focus:
@@ -314,22 +335,67 @@ class _WikiGenerator:
                     neighbor = row.get("entity")
                     if isinstance(neighbor, EntityInstance):
                         subjects.add(SubjectRef(neighbor.entity_type, neighbor.entity_id))
-        elif options.all_subjects:
+        elif scope == "all":
             subjects = set(self.subject_entities)
+        elif scope == "local":
+            if self.ownership.ownership_available:
+                subjects = self._select_local_subjects()
+            else:
+                subjects = self._select_evidence_subjects()
         else:
-            for key in self.receipt_index:
-                subjects.add(_subject_ref_from_key(key))
-            for key in self.feedback_by_subject:
-                subjects.add(_subject_ref_from_key(key))
-            for key in self.groups_by_subject:
-                subjects.add(_subject_ref_from_key(key))
-            if not subjects:
-                subjects = set(self.subject_entities)
+            subjects = self._select_evidence_subjects()
 
         subjects = {subject for subject in subjects if subject in self.subject_entities}
         if include_types:
             subjects = {subject for subject in subjects if subject.entity_type in include_types}
         return sorted(subjects)
+
+    def _select_evidence_subjects(self) -> set[SubjectRef]:
+        subjects: set[SubjectRef] = set()
+        for key in self.receipt_index:
+            subjects.add(_subject_ref_from_key(key))
+        for key in self.feedback_by_subject:
+            subjects.add(_subject_ref_from_key(key))
+        for key in self.groups_by_subject:
+            subjects.add(_subject_ref_from_key(key))
+        if not subjects:
+            subjects = set(self.subject_entities)
+        return subjects
+
+    def _select_local_subjects(self) -> set[SubjectRef]:
+        subjects = {
+            subject
+            for subject in self.subject_entities
+            if self.ownership.is_local_entity_type(subject.entity_type)
+        }
+        local_subjects = set(subjects)
+        local_relationship_types = set(self.ownership.local_relationship_types)
+
+        for edge in self.graph.iter_edges():
+            relationship_type = str(edge.get("relationship_type", ""))
+            if relationship_type not in local_relationship_types:
+                continue
+            from_ref = SubjectRef(str(edge["from_type"]), str(edge["from_id"]))
+            to_ref = SubjectRef(str(edge["to_type"]), str(edge["to_id"]))
+            if from_ref in local_subjects or to_ref in local_subjects:
+                subjects.add(from_ref)
+                subjects.add(to_ref)
+
+        for record in self.feedback_records:
+            target = record.target
+            if target.relationship_type not in local_relationship_types:
+                continue
+            subjects.add(SubjectRef(target.from_type, target.from_id))
+            subjects.add(SubjectRef(target.to_type, target.to_id))
+
+        for group in self.groups:
+            if group.relationship_type not in local_relationship_types:
+                continue
+            for member in self.members_by_group.get(group.group_id, []):
+                subjects.add(SubjectRef(member.from_type, member.from_id))
+                subjects.add(SubjectRef(member.to_type, member.to_id))
+
+        return subjects
 
     def _collect_receipt_ids(self, subjects: list[SubjectRef]) -> set[str]:
         receipt_ids: set[str] = set()
@@ -379,6 +445,67 @@ class _WikiGenerator:
                     provider_names.add(provider_name)
         return provider_names
 
+    def _collect_reference_names(
+        self,
+        receipt_ids: set[str],
+        subjects: list[SubjectRef],
+        *,
+        scope: WikiScope,
+    ) -> tuple[set[str], set[str], set[str]]:
+        if scope == "all":
+            return (
+                set(self.config.named_queries),
+                set(self.config.workflows),
+                set(self.config.providers),
+            )
+
+        query_names = self._collect_query_names(receipt_ids)
+        workflow_names = self._collect_workflow_names(receipt_ids, subjects)
+        provider_names = self._collect_provider_names(receipt_ids)
+
+        if scope == "local" and self.ownership.ownership_available:
+            if self.ownership.surface_ownership_available:
+                query_names.update(self.ownership.local_named_queries)
+                workflow_names.update(self.ownership.local_workflows)
+                provider_names.update(self.ownership.local_providers)
+            workflow_names.update(self._local_group_workflows())
+
+        query_names, workflow_names, provider_names = self._expand_reference_dependencies(
+            query_names,
+            workflow_names,
+            provider_names,
+        )
+        return query_names, workflow_names, provider_names
+
+    def _local_group_workflows(self) -> set[str]:
+        local_workflows: set[str] = set()
+        for group in self.groups:
+            if not self.ownership.is_local_relationship_type(group.relationship_type):
+                continue
+            if group.source_workflow_name:
+                local_workflows.add(group.source_workflow_name)
+        return local_workflows
+
+    def _expand_reference_dependencies(
+        self,
+        query_names: set[str],
+        workflow_names: set[str],
+        provider_names: set[str],
+    ) -> tuple[set[str], set[str], set[str]]:
+        expanded_queries = set(query_names)
+        expanded_workflows = set(workflow_names)
+        expanded_providers = set(provider_names)
+        for workflow_name in sorted(expanded_workflows):
+            workflow = self.config.workflows.get(workflow_name)
+            if workflow is None:
+                continue
+            for step in workflow.steps:
+                if step.query is not None:
+                    expanded_queries.add(step.query)
+                if step.provider is not None:
+                    expanded_providers.add(step.provider)
+        return expanded_queries, expanded_workflows, expanded_providers
+
     def _subject_receipts(self, subject: SubjectRef) -> list[Receipt]:
         receipt_ids = sorted(self.receipt_index.get(subject.key, set()))
         receipts = [
@@ -421,6 +548,7 @@ class _WikiGenerator:
         self,
         subjects: list[SubjectRef],
         *,
+        scope: WikiScope,
         query_names: set[str],
         workflow_names: set[str],
         provider_names: set[str],
@@ -433,6 +561,30 @@ class _WikiGenerator:
         if self.head_snapshot_id:
             lines.append(f"- Head snapshot: {self.head_snapshot_id}")
         lines.append(f"- Rendered subjects: {len(subjects)}")
+        lines.append(f"- Wiki scope: {scope}")
+        if self.ownership.ownership_available:
+            subject_set = set(subjects)
+            local_count = sum(
+                1
+                for subject in subjects
+                if self.ownership.is_local_entity_type(subject.entity_type)
+            )
+            upstream_count = sum(
+                1
+                for subject in subjects
+                if self.ownership.is_upstream_entity_type(subject.entity_type)
+            )
+            omitted_upstream_count = sum(
+                1
+                for subject in self.subject_entities
+                if (
+                    subject not in subject_set
+                    and self.ownership.is_upstream_entity_type(subject.entity_type)
+                )
+            )
+            lines.append(f"- Rendered local subjects: {local_count}")
+            lines.append(f"- Rendered upstream subjects: {upstream_count}")
+            lines.append(f"- Omitted upstream subjects: {omitted_upstream_count}")
         lines.append("")
 
         lines.append("## Subject Index")
@@ -441,10 +593,13 @@ class _WikiGenerator:
             grouped[subject.entity_type].append(subject)
         for entity_type in sorted(grouped):
             lines.append(f"### {_humanize(entity_type)}")
-            for subject in sorted(grouped[entity_type]):
+            type_subjects = sorted(grouped[entity_type])
+            for subject in type_subjects[: self.max_per_type]:
                 entity = self.subject_entities[subject]
                 subject_link = _relpath(Path("index.md"), self._subject_path(subject))
                 lines.append(f"- [{_display_label(entity, self.config)}]({subject_link})")
+            if len(type_subjects) > self.max_per_type:
+                lines.append(f"- +{len(type_subjects) - self.max_per_type} more")
             lines.append("")
 
         lines.append("## Governance")
@@ -490,6 +645,7 @@ class _WikiGenerator:
         outcomes = self._subject_outcomes(subject)
 
         lines = [f"# {_display_label(entity, self.config)}", ""]
+        lines.extend(self._render_ego_graph_section(subject))
         lines.extend(self._render_record_section(subject, entity, entity_schema))
         lines.extend(self._render_world_state_section(subject, rendered_subjects))
         lines.extend(self._render_production_section(subject, receipts, rendered_subjects))
@@ -554,20 +710,11 @@ class _WikiGenerator:
             items = sorted(
                 groups[entity_type], key=lambda item: _display_label(item[0], self.config)
             )
-            rendered_items = [
-                item for item in items
-                if SubjectRef(item[0].entity_type, item[0].entity_id) in rendered_subjects
-            ]
-            other_count = len(items) - len(rendered_items)
-
-            if not rendered_items and other_count:
-                lines.append(f"### {_humanize(entity_type)}")
-                lines.append(f"- {other_count} linked record(s) outside current scope")
-                lines.append("")
-                continue
+            visible_items = items[: self.max_per_type]
+            other_count = len(items) - len(visible_items)
 
             lines.append(f"### {_humanize(entity_type)}")
-            for neighbor, relationship_schema, properties in rendered_items:
+            for neighbor, relationship_schema, properties in visible_items:
                 link = self._subject_markdown_link(
                     SubjectRef(neighbor.entity_type, neighbor.entity_id),
                     current_path=self._subject_path(subject),
@@ -584,9 +731,82 @@ class _WikiGenerator:
                 lines.append(line)
                 lines.extend(_render_property_bullets(properties))
             if other_count:
-                lines.append(f"- +{other_count} more outside current scope")
+                lines.append(f"- +{other_count} more linked record(s)")
             lines.append("")
         return lines
+
+    def _render_ego_graph_section(self, subject: SubjectRef) -> list[str]:
+        diagram = self._render_ego_graph_mermaid(subject)
+        if not diagram:
+            return []
+        return ["## Graph Position", "```mermaid", diagram, "```", ""]
+
+    def _render_ego_graph_mermaid(self, subject: SubjectRef) -> str:
+        inspect_rows = self.graph.get_neighbor_relationships(
+            subject.entity_type,
+            subject.entity_id,
+            direction="both",
+        )
+        if not inspect_rows:
+            return ""
+
+        subject_entity = self.subject_entities.get(subject)
+        subject_node = _subject_mermaid_id(subject)
+        lines = [
+            "flowchart LR",
+            "  classDef focus fill:#1f6feb,stroke:#0b3d91,color:#fff",
+            "  classDef neighbor fill:#f6f8fa,stroke:#8c959f,color:#24292f",
+            (
+                f'  {subject_node}["'
+                f'{escape_mermaid_label(_display_label(subject_entity, self.config))}"]'
+            ),
+        ]
+        neighbor_nodes: list[str] = []
+        deterministic_edge_indexes: list[int] = []
+        governed_edge_indexes: list[int] = []
+        edge_index = 0
+
+        for row in inspect_rows[: self.max_per_type]:
+            neighbor = row.get("entity")
+            if not isinstance(neighbor, EntityInstance):
+                continue
+            neighbor_ref = SubjectRef(neighbor.entity_type, neighbor.entity_id)
+            neighbor_node = _subject_mermaid_id(neighbor_ref)
+            neighbor_nodes.append(neighbor_node)
+            neighbor_label = escape_mermaid_label(_display_label(neighbor, self.config))
+            lines.append(
+                f'  {neighbor_node}["{neighbor_label}"]'
+            )
+            relationship_type = str(row.get("relationship_type"))
+            relationship_schema = self.relationships_by_name.get(relationship_type)
+            label = escape_mermaid_label(_humanize(relationship_type))
+            governed = relationship_schema is not None and relationship_schema.matching is not None
+            if row.get("direction") == "outgoing":
+                source_node, target_node = subject_node, neighbor_node
+            else:
+                source_node, target_node = neighbor_node, subject_node
+            if governed:
+                lines.append(f'  {source_node} -. "{label}" .-> {target_node}')
+                governed_edge_indexes.append(edge_index)
+            else:
+                lines.append(f'  {source_node} -- "{label}" --> {target_node}')
+                deterministic_edge_indexes.append(edge_index)
+            edge_index += 1
+
+        lines.append(f"  class {subject_node} focus")
+        if neighbor_nodes:
+            lines.append(f"  class {','.join(sorted(set(neighbor_nodes)))} neighbor")
+        if deterministic_edge_indexes:
+            lines.append(
+                f"  linkStyle {_format_mermaid_edge_indexes(deterministic_edge_indexes)} "
+                "stroke:#2c5f8a,stroke-width:2px"
+            )
+        if governed_edge_indexes:
+            lines.append(
+                f"  linkStyle {_format_mermaid_edge_indexes(governed_edge_indexes)} "
+                "stroke:#e74c3c,stroke-width:2px,stroke-dasharray:4 3"
+            )
+        return "\n".join(lines)
 
     def _render_production_section(
         self,
@@ -1392,6 +1612,10 @@ def parse_subject_ref(raw: str) -> SubjectRef:
     return SubjectRef(entity_type.strip(), entity_id.strip())
 
 
+def _effective_scope(options: WikiOptions) -> WikiScope:
+    return "all" if options.all_subjects else options.scope
+
+
 def _sorted_properties(properties: dict[str, Any]) -> dict[str, Any]:
     return {
         key: properties[key]
@@ -1568,6 +1792,14 @@ def _slugify(value: str) -> str:
 def _relpath(current_path: Path, target_path: Path) -> str:
     current_dir = current_path.parent if current_path.suffix else current_path
     return os.path.relpath(target_path, start=current_dir).replace(os.sep, "/")
+
+
+def _subject_mermaid_id(subject: SubjectRef) -> str:
+    return mermaid_id(f"subject_{subject.entity_type}_{subject.entity_id}")
+
+
+def _format_mermaid_edge_indexes(indexes: list[int]) -> str:
+    return ",".join(str(index) for index in indexes)
 
 
 def _write_pages(output_dir: Path, pages: dict[Path, str]) -> list[Path]:

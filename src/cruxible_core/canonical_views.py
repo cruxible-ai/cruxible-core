@@ -13,6 +13,12 @@ from typing import Any
 
 from cruxible_core.config.schema import CoreConfig, ProviderSchema, WorkflowStepSchema
 from cruxible_core.group.types import CandidateGroup, GroupResolution
+from cruxible_core.mermaid import (
+    escape_mermaid_label as _shared_escape_mermaid_label,
+)
+from cruxible_core.mermaid import (
+    mermaid_id as _shared_mermaid_id,
+)
 
 
 @dataclass(frozen=True)
@@ -1582,11 +1588,11 @@ def _escape_markdown_cell(value: str) -> str:
 
 
 def _escape_mermaid_label(value: str) -> str:
-    return value.replace('"', '\\"').replace("\n", "<br/>")
+    return _shared_escape_mermaid_label(value)
 
 
 def _mermaid_id(raw: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_]", "_", raw)
+    return _shared_mermaid_id(raw)
 
 
 def _group_queries_by_entry(
