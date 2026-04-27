@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.render_config_views import DEFAULT_VIEW_ORDER, _update_readme
+from scripts.render_config_views import (
+    DEFAULT_VIEW_ORDER,
+    _load_config_for_rendering,
+    _update_readme,
+)
 
 from cruxible_core.config.loader import load_config_from_string
 
@@ -93,3 +97,138 @@ def test_update_readme_default_sections_are_comprehension_views(
     ) in updated
     assert "query_entity_Campaign" in updated
     assert "### Campaign" in updated
+
+
+def test_load_config_for_rendering_composes_extends(tmp_path: Path) -> None:
+    base = tmp_path / "base.yaml"
+    overlay = tmp_path / "overlay.yaml"
+    base.write_text(
+        """\
+version: "1.0"
+name: base
+kind: world_model
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+relationships: []
+workflows:
+  build_reference:
+    canonical: true
+    contract_in: EmptyInput
+    returns: EmptyOutput
+    steps: []
+contracts:
+  EmptyInput:
+    fields: {}
+  EmptyOutput:
+    fields: {}
+"""
+    )
+    overlay.write_text(
+        """\
+version: "1.0"
+name: fork
+extends: base.yaml
+entity_types:
+  Asset:
+    properties:
+      asset_id:
+        type: string
+        primary_key: true
+relationships:
+  - name: asset_runs_product
+    from_entity: Asset
+    to_entity: Product
+    properties: {}
+    matching:
+      integrations: {}
+contracts:
+  AssetProductOutput:
+    fields: {}
+workflows:
+  propose_asset_products:
+    canonical: false
+    contract_in: EmptyInput
+    returns: AssetProductOutput
+    steps: []
+"""
+    )
+
+    composed = _load_config_for_rendering(overlay)
+
+    assert sorted(composed.entity_types) == ["Asset", "Product"]
+    assert sorted(composed.workflows) == ["build_reference", "propose_asset_products"]
+
+
+def test_load_config_for_rendering_runtime_strips_upstream_workflows(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "base.yaml"
+    overlay = tmp_path / "overlay.yaml"
+    base.write_text(
+        """\
+version: "1.0"
+name: base
+kind: world_model
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+relationships: []
+contracts:
+  EmptyInput:
+    fields: {}
+  EmptyOutput:
+    fields: {}
+providers:
+  load_reference:
+    kind: function
+    runtime: python
+    ref: tests.support.workflow_test_providers.reference_bundle_loader
+    contract_in: EmptyInput
+    contract_out: EmptyOutput
+    deterministic: true
+    version: 1.0.0
+workflows:
+  build_reference:
+    canonical: true
+    contract_in: EmptyInput
+    returns: EmptyOutput
+    steps:
+      - id: load
+        provider: load_reference
+        input: {}
+        as: loaded
+"""
+    )
+    overlay.write_text(
+        """\
+version: "1.0"
+name: fork
+extends: base.yaml
+entity_types:
+  Asset:
+    properties:
+      asset_id:
+        type: string
+        primary_key: true
+relationships: []
+workflows:
+  build_fork:
+    canonical: true
+    contract_in: EmptyInput
+    returns: EmptyOutput
+    steps: []
+"""
+    )
+
+    composed = _load_config_for_rendering(overlay, runtime=True)
+
+    assert sorted(composed.entity_types) == ["Asset", "Product"]
+    assert sorted(composed.workflows) == ["build_fork"]
+    assert "load_reference" not in composed.providers

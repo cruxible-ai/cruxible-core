@@ -33,6 +33,7 @@ from cruxible_core.canonical_views import (
     render_workflow_summary_markdown,
     render_workflow_table_markdown,
 )
+from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
 
@@ -210,9 +211,17 @@ def main() -> None:
         type=Path,
         help="Replace matching CRUXIBLE marker blocks in a README.",
     )
+    parser.add_argument(
+        "--runtime",
+        action="store_true",
+        help=(
+            "Compose extends overlays as a runtime composed view. This includes inherited "
+            "ontology/query surfaces but strips upstream build-only workflows."
+        ),
+    )
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    config = _load_config_for_rendering(args.config, runtime=args.runtime)
     selected_keys = DEFAULT_VIEW_ORDER if args.view == "all" else (args.view,)
     if args.update_readme is not None:
         _update_readme(args.update_readme, config, selected_keys)
@@ -233,6 +242,14 @@ def main() -> None:
         sections.insert(0, header)
 
     print("\n\n".join(sections))
+
+
+def _load_config_for_rendering(config_path: Path, *, runtime: bool = False) -> CoreConfig:
+    config = load_config(config_path)
+    return compose_config_sequence(
+        resolve_config_layers(config, config_path=config_path.resolve()),
+        runtime=runtime,
+    )
 
 
 def _update_readme(

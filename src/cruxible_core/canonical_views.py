@@ -1274,7 +1274,7 @@ def _workflow_pipeline_label(index: int, workflow: WorkflowSummaryView) -> str:
 def _workflow_pipeline_summary(workflow: WorkflowSummaryView) -> str:
     writes = workflow.proposes_relationships + workflow.applies_relationships
     if workflow.mode == "canonical":
-        return "Seed base world"
+        return "Seed canonical state"
     if not writes:
         return _humanize_label(workflow.name)
 
@@ -1317,7 +1317,7 @@ def _workflow_table_input_context(workflow: WorkflowSummaryView) -> str:
         )
     )
     if context == "-":
-        return "None (seeds the base world)"
+        return "None (seeds canonical state)"
     return context
 
 
