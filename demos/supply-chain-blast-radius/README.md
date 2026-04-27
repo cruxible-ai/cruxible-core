@@ -277,6 +277,39 @@ harness, not by turning every useful traversal into a governed relationship.
 - Product impact and shipment risk are governed and review-gated because they
   drive customer-facing action.
 
+## Compounding Knowledge Procedure
+
+1. Register canonical supply-chain anchors: suppliers, components, assemblies,
+   products, shipments, and deterministic BOM edges.
+2. Register supplier-side incidents as governed trigger state with known scope
+   such as supplier, geography, disruption type, severity, and timing.
+3. Propose incident-to-supplier impact using direct supplier and geography
+   matches.
+4. Cascade accepted supplier impacts to components and assemblies, accounting
+   for active alternates and criticality.
+5. Cascade accepted component and assembly impacts through the BOM to finished
+   products, preserving depth and route of impact.
+6. Cascade accepted product impacts to in-flight or committed shipments.
+7. Use named queries to give the agent reviewed context for supplier exposure,
+   assembly/product blast radius, and shipment/customer action.
+8. Feed review feedback and later operational outcomes back into provider fixes,
+   decision policies, constraints, and trust calibration for future incidents.
+
+## Usage Stories
+
+- **Supplier disruption triage:** start from a fire, strike, cyber incident, or
+  regulatory event and identify suppliers that require review.
+- **BOM blast-radius analysis:** move from accepted supplier/component impact to
+  assemblies and products without flattening away the assembly hierarchy.
+- **Alternate-source review:** distinguish real product risk from component
+  impact that is buffered by active alternate suppliers.
+- **Shipment risk review:** identify shipments containing impacted products so
+  operations can hold, reroute, expedite, or notify customers.
+- **Customer escalation context:** give an agent a reviewed path from incident
+  to affected product and shipment, rather than a generic incident summary.
+- **Operational memory:** preserve accepted and rejected cascade decisions so
+  future incidents reuse the organization's learned supply-chain judgment.
+
 ## Debug Views
 
 Detailed mechanical Mermaid renderings are still available when needed:
