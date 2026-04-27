@@ -1,16 +1,13 @@
-"""Render canonical Cruxible config diagrams from a YAML config.
-
-This is intentionally a thin wrapper around cruxible_core.canonical_views so
-README drafts and agent harnesses exercise the same renderers as the CLI.
-"""
+"""Canonical rendered views for Cruxible config review surfaces."""
 
 from __future__ import annotations
 
-import argparse
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
+from typing import cast
 
 from cruxible_core.canonical_views import (
     build_governance_view,
@@ -33,8 +30,6 @@ from cruxible_core.canonical_views import (
     render_workflow_summary_markdown,
     render_workflow_table_markdown,
 )
-from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
-from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
 
 
@@ -47,32 +42,45 @@ class ViewSpec:
     render_readme: Callable[[CoreConfig], str] | None = None
 
 
+class MissingReadmeMarkersError(ValueError):
+    """Raised when a README is missing one or more requested marker blocks."""
+
+    def __init__(self, missing_keys: tuple[str, ...]) -> None:
+        self.missing_keys = missing_keys
+        missing = ", ".join(missing_keys)
+        super().__init__(f"Missing README marker block(s): {missing}")
+
+
+def _as_rendered_text(value: object) -> str:
+    return cast(str, value)
+
+
 def _render_ontology(config: CoreConfig) -> str:
-    return render_ontology_mermaid(build_ontology_view(config))
+    return _as_rendered_text(render_ontology_mermaid(build_ontology_view(config)))
 
 
 def _render_workflow_story(config: CoreConfig) -> str:
-    return render_workflow_mermaid(build_workflow_view(config))
+    return _as_rendered_text(render_workflow_mermaid(build_workflow_view(config)))
 
 
 def _render_workflow_pipeline(config: CoreConfig) -> str:
-    return render_workflow_pipeline_mermaid(build_workflow_view(config))
+    return _as_rendered_text(render_workflow_pipeline_mermaid(build_workflow_view(config)))
 
 
 def _render_workflow_summary(config: CoreConfig) -> str:
-    return render_workflow_summary_markdown(build_workflow_view(config))
+    return _as_rendered_text(render_workflow_summary_markdown(build_workflow_view(config)))
 
 
 def _render_workflow_table(config: CoreConfig) -> str:
-    return render_workflow_table_markdown(build_workflow_view(config))
+    return _as_rendered_text(render_workflow_table_markdown(build_workflow_view(config)))
 
 
 def _render_governance_table(config: CoreConfig) -> str:
-    return render_governed_relationship_table_markdown(config)
+    return _as_rendered_text(render_governed_relationship_table_markdown(config))
 
 
 def _render_workflow_steps(config: CoreConfig) -> str:
-    return render_workflow_steps_mermaid(build_workflow_view(config))
+    return _as_rendered_text(render_workflow_steps_mermaid(build_workflow_view(config)))
 
 
 def _render_workflow_steps_readme(config: CoreConfig) -> str:
@@ -81,19 +89,25 @@ def _render_workflow_steps_readme(config: CoreConfig) -> str:
 
 
 def _render_workflow_dependencies(config: CoreConfig) -> str:
-    return render_workflow_dependency_mermaid(build_workflow_view(config))
+    return _as_rendered_text(
+        render_workflow_dependency_mermaid(build_workflow_view(config))
+    )
 
 
 def _render_queries(config: CoreConfig) -> str:
-    return render_query_mermaid(build_query_view(config, query_infos=[]))
+    return _as_rendered_text(render_query_mermaid(build_query_view(config, query_infos=[])))
 
 
 def _render_query_map(config: CoreConfig) -> str:
-    return render_query_map_mermaid(build_query_view(config, query_infos=[]))
+    return _as_rendered_text(
+        render_query_map_mermaid(build_query_view(config, query_infos=[]))
+    )
 
 
 def _render_query_catalog(config: CoreConfig) -> str:
-    return render_query_catalog_markdown(build_query_view(config, query_infos=[]))
+    return _as_rendered_text(
+        render_query_catalog_markdown(build_query_view(config, query_infos=[]))
+    )
 
 
 def _render_queries_readme(config: CoreConfig) -> str:
@@ -112,12 +126,14 @@ def _render_overview(config: CoreConfig) -> str:
         resolutions=[],
         resolution_total=0,
     )
-    return render_overview_markdown(
-        build_overview_view(
-            ontology=ontology,
-            workflows=workflows,
-            queries=queries,
-            governance=governance,
+    return _as_rendered_text(
+        render_overview_markdown(
+            build_overview_view(
+                ontology=ontology,
+                workflows=workflows,
+                queries=queries,
+                governance=governance,
+            )
         )
     )
 
@@ -190,75 +206,69 @@ BEGIN_MARKER = "<!-- CRUXIBLE:BEGIN {key} -->"
 END_MARKER = "<!-- CRUXIBLE:END {key} -->"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Render canonical Mermaid/Markdown views for a Cruxible config."
-    )
-    parser.add_argument("config", type=Path, help="Path to config.yaml.")
-    parser.add_argument(
-        "--view",
-        choices=("all", *VIEW_SPECS),
-        default="all",
-        help="View to render. 'all' emits the standard config-drafting diagrams.",
-    )
-    parser.add_argument(
-        "--bare",
-        action="store_true",
-        help="Emit the raw selected view without Markdown wrapping.",
-    )
-    parser.add_argument(
-        "--update-readme",
-        type=Path,
-        help="Replace matching CRUXIBLE marker blocks in a README.",
-    )
-    parser.add_argument(
-        "--runtime",
-        action="store_true",
-        help=(
-            "Compose extends overlays as a runtime composed view. This includes inherited "
-            "ontology/query surfaces but strips upstream build-only workflows."
+def available_view_keys() -> tuple[str, ...]:
+    """Return supported single-view keys."""
+    return tuple(VIEW_SPECS)
+
+
+def selected_view_keys(view: str) -> tuple[str, ...]:
+    """Resolve a public view selector into concrete view keys."""
+    if view == "all":
+        return DEFAULT_VIEW_ORDER
+    if view not in VIEW_SPECS:
+        choices = ", ".join(("all", *available_view_keys()))
+        raise ValueError(f"Unknown config view '{view}'. Expected one of: {choices}")
+    return (view,)
+
+
+def load_config_for_rendering(config_path: Path, *, runtime: bool = False) -> CoreConfig:
+    """Load a config path and compose any declared layers for rendering."""
+    loader = import_module("cruxible_core.config.loader")
+    composer = import_module("cruxible_core.config.composer")
+    config = loader.load_config(config_path)
+    return cast(
+        CoreConfig,
+        composer.compose_config_sequence(
+            composer.resolve_config_layers(config, config_path=config_path.resolve()),
+            runtime=runtime,
         ),
     )
-    args = parser.parse_args()
 
-    config = _load_config_for_rendering(args.config, runtime=args.runtime)
-    selected_keys = DEFAULT_VIEW_ORDER if args.view == "all" else (args.view,)
-    if args.update_readme is not None:
-        _update_readme(args.update_readme, config, selected_keys)
-        print(f"Updated {args.update_readme}")
-        return
 
+def render_config_views(
+    config: CoreConfig,
+    *,
+    view: str = "all",
+    source: str | Path | None = None,
+    bare: bool = False,
+) -> str:
+    """Render one or more config views as Markdown/Mermaid text."""
+    selected_keys = selected_view_keys(view)
     sections = [
         _render_section(
             spec=VIEW_SPECS[key],
             config=config,
-            bare=args.bare and args.view != "all",
+            bare=bare and view != "all",
         )
         for key in selected_keys
     ]
 
-    if args.view == "all" and not args.bare:
-        header = f"# Cruxible Config Diagrams\n\nSource: `{args.config}`"
+    if view == "all" and not bare:
+        header = "# Cruxible Config Diagrams"
+        if source is not None:
+            header = f"{header}\n\nSource: `{source}`"
         sections.insert(0, header)
 
-    print("\n\n".join(sections))
+    return "\n\n".join(sections)
 
 
-def _load_config_for_rendering(config_path: Path, *, runtime: bool = False) -> CoreConfig:
-    config = load_config(config_path)
-    return compose_config_sequence(
-        resolve_config_layers(config, config_path=config_path.resolve()),
-        runtime=runtime,
-    )
-
-
-def _update_readme(
-    readme_path: Path,
+def render_readme_update(
+    readme_text: str,
     config: CoreConfig,
     selected_keys: tuple[str, ...],
-) -> None:
-    text = readme_path.read_text()
-    updated = text
+) -> str:
+    """Render updated README text by replacing existing CRUXIBLE marker blocks."""
+    updated = readme_text
     missing_keys: list[str] = []
     for key in selected_keys:
         begin = BEGIN_MARKER.format(key=key)
@@ -274,10 +284,20 @@ def _update_readme(
             missing_keys.append(key)
 
     if missing_keys:
-        missing = ", ".join(missing_keys)
-        raise SystemExit(f"Missing README marker block(s): {missing}")
+        raise MissingReadmeMarkersError(tuple(missing_keys))
 
-    readme_path.write_text(updated)
+    return updated
+
+
+def update_readme_file(
+    readme_path: Path,
+    config: CoreConfig,
+    selected_keys: tuple[str, ...],
+) -> None:
+    """Replace CRUXIBLE marker blocks in a README file."""
+    readme_path.write_text(
+        render_readme_update(readme_path.read_text(), config, selected_keys)
+    )
 
 
 def _render_readme_block(*, spec: ViewSpec, config: CoreConfig) -> str:
@@ -303,7 +323,3 @@ def _render_section(*, spec: ViewSpec, config: CoreConfig, bare: bool) -> str:
     if not spec.fenced:
         return body
     return f"## {spec.title}\n\n```mermaid\n{body}\n```"
-
-
-if __name__ == "__main__":
-    main()

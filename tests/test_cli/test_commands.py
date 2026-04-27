@@ -408,6 +408,194 @@ class TestStatsInspectReload:
         )
 
 
+class TestConfigViews:
+    def test_config_views_default_renders_standard_sections(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+
+        result = runner.invoke(cli, ["config-views", "--config", str(config_path)])
+
+        assert result.exit_code == 0
+        assert "# Cruxible Config Diagrams" in result.output
+        assert f"Source: `{config_path}`" in result.output
+        assert "Recommended For" in result.output
+        assert "Governed proposal" in result.output
+        assert "### Campaign" in result.output
+
+    def test_config_views_single_bare_view_outputs_raw_mermaid(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+
+        result = runner.invoke(
+            cli,
+            ["config-views", "--config", str(config_path), "--view", "ontology", "--bare"],
+        )
+
+        assert result.exit_code == 0
+        assert "Recommended For" in result.output
+        assert "classDef governedEntity" in result.output
+        assert "```mermaid" not in result.output
+
+    def test_config_views_updates_readme_markers(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+        readme = tmp_path / "README.md"
+        readme.write_text(
+            "# Demo\n\n"
+            "<!-- CRUXIBLE:BEGIN ontology -->\n"
+            "<!-- CRUXIBLE:END ontology -->\n"
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "config-views",
+                "--config",
+                str(config_path),
+                "--view",
+                "ontology",
+                "--update-readme",
+                str(readme),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert f"Updated {readme}" in result.output
+        updated = readme.read_text()
+        assert "Recommended For" in updated
+        assert "```mermaid" in updated
+
+    def test_config_views_missing_readme_marker_is_usage_error(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+        readme = tmp_path / "README.md"
+        readme.write_text("# Demo\n")
+
+        result = runner.invoke(
+            cli,
+            [
+                "config-views",
+                "--config",
+                str(config_path),
+                "--view",
+                "ontology",
+                "--update-readme",
+                str(readme),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "Missing README marker block(s): ontology" in result.output
+
+    def test_config_views_runtime_composes_extends_without_upstream_build_workflows(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        base = tmp_path / "base.yaml"
+        overlay = tmp_path / "overlay.yaml"
+        base.write_text(
+            """\
+version: "1.0"
+name: base
+kind: world_model
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+relationships: []
+contracts:
+  EmptyInput:
+    fields: {}
+  EmptyOutput:
+    fields: {}
+providers:
+  load_reference:
+    kind: function
+    runtime: python
+    ref: tests.support.workflow_test_providers.reference_bundle_loader
+    contract_in: EmptyInput
+    contract_out: EmptyOutput
+    deterministic: true
+    version: 1.0.0
+workflows:
+  build_reference:
+    canonical: true
+    contract_in: EmptyInput
+    returns: EmptyOutput
+    steps:
+      - id: load
+        provider: load_reference
+        input: {}
+        as: loaded
+"""
+        )
+        overlay.write_text(
+            """\
+version: "1.0"
+name: fork
+extends: base.yaml
+entity_types:
+  Asset:
+    properties:
+      asset_id:
+        type: string
+        primary_key: true
+relationships:
+  - name: asset_runs_product
+    from_entity: Asset
+    to_entity: Product
+    properties: {}
+    matching:
+      integrations: {}
+workflows:
+  build_fork:
+    canonical: true
+    contract_in: EmptyInput
+    returns: EmptyOutput
+    steps: []
+"""
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "config-views",
+                "--config",
+                str(overlay),
+                "--runtime",
+                "--view",
+                "workflow-summary",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Build Fork" in result.output
+        assert "Build Reference" not in result.output
+
+
 class TestCanonicalViews:
     def test_inspect_ontology_mermaid_outputs_governed_edge(
         self,

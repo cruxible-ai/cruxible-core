@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.render_config_views import (
-    DEFAULT_VIEW_ORDER,
-    _load_config_for_rendering,
-    _update_readme,
-)
-
 from cruxible_core.config.loader import load_config_from_string
+from cruxible_core.config_views import (
+    DEFAULT_VIEW_ORDER,
+    load_config_for_rendering,
+    update_readme_file,
+)
 
 
 def test_update_readme_replaces_empty_marker_block(
@@ -23,7 +22,7 @@ def test_update_readme_replaces_empty_marker_block(
         "<!-- CRUXIBLE:END ontology -->\n"
     )
 
-    _update_readme(readme, config, ("ontology",))
+    update_readme_file(readme, config, ("ontology",))
 
     updated = readme.read_text()
     assert "<!-- CRUXIBLE:BEGIN ontology -->" in updated
@@ -48,7 +47,7 @@ def test_update_readme_splits_large_sections_into_titled_blocks(
         "<!-- CRUXIBLE:END queries -->\n"
     )
 
-    _update_readme(readme, config, ("workflow-steps", "queries"))
+    update_readme_file(readme, config, ("workflow-steps", "queries"))
 
     updated = readme.read_text()
     assert "### Propose Campaign Recommendations" in updated
@@ -78,7 +77,7 @@ def test_update_readme_default_sections_are_comprehension_views(
         "<!-- CRUXIBLE:END query-catalog -->\n"
     )
 
-    _update_readme(readme, config, DEFAULT_VIEW_ORDER)
+    update_readme_file(readme, config, DEFAULT_VIEW_ORDER)
 
     updated = readme.read_text()
     assert "Recommended For" in updated
@@ -157,7 +156,7 @@ workflows:
 """
     )
 
-    composed = _load_config_for_rendering(overlay)
+    composed = load_config_for_rendering(overlay)
 
     assert sorted(composed.entity_types) == ["Asset", "Product"]
     assert sorted(composed.workflows) == ["build_reference", "propose_asset_products"]
@@ -227,7 +226,7 @@ workflows:
 """
     )
 
-    composed = _load_config_for_rendering(overlay, runtime=True)
+    composed = load_config_for_rendering(overlay, runtime=True)
 
     assert sorted(composed.entity_types) == ["Asset", "Product"]
     assert sorted(composed.workflows) == ["build_fork"]

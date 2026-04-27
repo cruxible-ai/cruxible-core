@@ -110,6 +110,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     analyze_feedback_cmd,
     analyze_outcomes_cmd,
     apply_cmd,
+    config_views_cmd,
     connect_group,
     evaluate,
     explain,
@@ -148,6 +149,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
 
 cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]
+cli.add_command(config_views_cmd, "config-views")  # type: ignore[has-type]
 cli.add_command(connect_group, "context")  # type: ignore[has-type]
 cli.add_command(lock_cmd)  # type: ignore[has-type]
 cli.add_command(world_group, "world")  # type: ignore[has-type]
