@@ -64,27 +64,27 @@ For fast review in GUI harnesses that can render Mermaid, show the generated
 views inline. From the repository root:
 
 ```
-uv run python scripts/render_config_views.py demos/kev-triage/config.yaml --runtime --view all
+uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --view all
 ```
 
-If you are already inside `demos/kev-triage/`, use the same script through the
-relative repo path:
+If you are already inside `demos/kev-triage/`, use the same command with the
+local config path:
 
 ```
-uv run python ../../scripts/render_config_views.py config.yaml --runtime --view all
+uv run cruxible config-views --config config.yaml --runtime --view all
 ```
 
 Also keep the README marker blocks updated so CLI and non-GUI harnesses can
 inspect the same generated views. From the repository root:
 
 ```
-uv run python scripts/render_config_views.py demos/kev-triage/config.yaml --runtime --update-readme demos/kev-triage/README.md
+uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --update-readme demos/kev-triage/README.md
 ```
 
 From inside `demos/kev-triage/`:
 
 ```
-uv run python ../../scripts/render_config_views.py config.yaml --runtime --update-readme README.md
+uv run cruxible config-views --config config.yaml --runtime --update-readme README.md
 ```
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is code-owned

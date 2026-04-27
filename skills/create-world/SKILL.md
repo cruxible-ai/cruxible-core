@@ -20,22 +20,22 @@ views as the review surface.
 Use inline output for fast review when the agent harness can render Mermaid:
 
 ```bash
-uv run python scripts/render_config_views.py config.yaml --view all
+uv run cruxible config-views --config config.yaml --view all
 ```
 
 Also update durable README marker blocks so CLI and non-GUI harnesses can
 inspect the same generated views:
 
 ```bash
-uv run python scripts/render_config_views.py config.yaml --update-readme README.md
+uv run cruxible config-views --config config.yaml --update-readme README.md
 ```
 
 If the config uses `extends`, render the runtime composed view for
 onboarding/review surfaces:
 
 ```bash
-uv run python scripts/render_config_views.py config.yaml --runtime --view all
-uv run python scripts/render_config_views.py config.yaml --runtime --update-readme README.md
+uv run cruxible config-views --config config.yaml --runtime --view all
+uv run cruxible config-views --config config.yaml --runtime --update-readme README.md
 ```
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is code-owned

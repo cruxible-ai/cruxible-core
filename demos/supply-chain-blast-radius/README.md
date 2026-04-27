@@ -12,7 +12,7 @@ Governed edges are rule-centric: proposal bucket signatures carry `rule_id` and
 across many incidents instead of starting fresh every time.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `scripts/render_config_views.py`; treat those blocks as
+from `config.yaml` by `cruxible config-views`; treat those blocks as
 code-owned structural truth. Everything outside those marker blocks is authored
 explanation for humans and agents reading the kit.
 
@@ -282,8 +282,8 @@ harness, not by turning every useful traversal into a governed relationship.
 Detailed mechanical Mermaid renderings are still available when needed:
 
 ```bash
-uv run python scripts/render_config_views.py demos/supply-chain-blast-radius/config.yaml --view workflow-steps
-uv run python scripts/render_config_views.py demos/supply-chain-blast-radius/config.yaml --view queries
+uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --view workflow-steps
+uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --view queries
 ```
 
 ## Quality Checks
@@ -302,13 +302,13 @@ Regenerate the structural sections after changing ontology, workflows, governed
 relationships, or named queries:
 
 ```bash
-uv run python scripts/render_config_views.py demos/supply-chain-blast-radius/config.yaml --update-readme demos/supply-chain-blast-radius/README.md
+uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --update-readme demos/supply-chain-blast-radius/README.md
 ```
 
 To inspect the same generated bundle without editing the README:
 
 ```bash
-uv run python scripts/render_config_views.py demos/supply-chain-blast-radius/config.yaml --view all
+uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --view all
 ```
 
 ## Status

@@ -25,7 +25,7 @@ This demo has two configs that represent the two layers:
   that traverse across both layers.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `scripts/render_config_views.py --runtime`; treat those
+from `config.yaml` by `cruxible config-views --runtime`; treat those
 blocks as code-owned structural truth. Everything outside those marker blocks
 is authored explanation for humans and agents reading the kit.
 
@@ -382,13 +382,13 @@ Regenerate the structural sections after changing ontology, workflows,
 governed relationships, or named queries:
 
 ```bash
-uv run python scripts/render_config_views.py demos/kev-triage/config.yaml --runtime --update-readme demos/kev-triage/README.md
+uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --update-readme demos/kev-triage/README.md
 ```
 
 To inspect the same generated bundle without editing the README:
 
 ```bash
-uv run python scripts/render_config_views.py demos/kev-triage/config.yaml --runtime --view all
+uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --view all
 ```
 
 ## Seed Data
