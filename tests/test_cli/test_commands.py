@@ -769,7 +769,8 @@ class TestCanonicalViews:
         assert "# Config Overview" in result.output
         assert "## Relationship Map" in result.output
         assert "```mermaid" in result.output
-        assert "Blue = canonical/deterministic state" in result.output
+        assert "**Diagram legend:**" in result.output
+        assert "Blue entity node" in result.output
         assert "propose_campaign_recommendations" in result.output
 
 

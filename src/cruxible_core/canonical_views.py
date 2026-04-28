@@ -7,12 +7,19 @@ committing the product to a heavyweight UI layer.
 
 from __future__ import annotations
 
+import importlib
+import inspect
 import re
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from cruxible_core.config.schema import CoreConfig, ProviderSchema, WorkflowStepSchema
 from cruxible_core.group.types import CandidateGroup, GroupResolution
+from cruxible_core.mermaid import (
+    MermaidLegendItem,
+    render_mermaid_legend,
+)
 from cruxible_core.mermaid import (
     escape_mermaid_label as _shared_escape_mermaid_label,
 )
@@ -972,10 +979,19 @@ def render_overview_markdown(view: OverviewView) -> str:
         render_ontology_mermaid(view.ontology),
         "```",
         "",
-        (
-            "**Legend:** Blue = canonical/deterministic state | Orange = "
-            "governed-only trigger/judgment entity | Solid blue lines = "
-            "deterministic | Dashed red lines = governed proposal/review"
+        *render_mermaid_legend(
+            (
+                MermaidLegendItem(
+                    "Blue entity node",
+                    "Entity type that participates in deterministic state.",
+                ),
+                MermaidLegendItem(
+                    "Orange entity node",
+                    "Entity type that only appears in governed relationships.",
+                ),
+                MermaidLegendItem("Solid blue edge", "Deterministic relationship."),
+                MermaidLegendItem("Dashed red edge", "Governed relationship."),
+            )
         ),
         "",
         "### Deterministic Relationships",
@@ -1404,11 +1420,29 @@ def _provider_source_label(provider: WorkflowProviderSummaryView) -> str:
     if provider.runtime == "python":
         module_name, separator, attr_name = provider.ref.rpartition(".")
         if separator:
+            source_path = _provider_source_path(provider.ref, module_name, attr_name)
+            if source_path is not None:
+                return f"{source_path}::{attr_name}"
             path = module_name.replace(".", "/")
-            if module_name.startswith("cruxible_core."):
+            if module_name.startswith(("cruxible_core.", "cruxible_kits.")):
                 path = f"src/{path}"
             return f"{path}.py::{attr_name}"
     return provider.ref
+
+
+def _provider_source_path(ref: str, module_name: str, attr_name: str) -> str | None:
+    try:
+        module = importlib.import_module(module_name)
+        candidate = getattr(module, attr_name)
+        source_path = inspect.getsourcefile(candidate) or inspect.getfile(candidate)
+    except Exception:
+        return None
+
+    try:
+        repo_root = Path(__file__).resolve().parents[2]
+        return str(Path(source_path).resolve().relative_to(repo_root))
+    except ValueError:
+        return source_path
 
 
 def _workflow_step_details(
@@ -1588,11 +1622,11 @@ def _escape_markdown_cell(value: str) -> str:
 
 
 def _escape_mermaid_label(value: str) -> str:
-    return _shared_escape_mermaid_label(value)
+    return str(_shared_escape_mermaid_label(value))
 
 
 def _mermaid_id(raw: str) -> str:
-    return _shared_mermaid_id(raw)
+    return str(_shared_mermaid_id(raw))
 
 
 def _group_queries_by_entry(
