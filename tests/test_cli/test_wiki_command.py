@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -284,6 +285,24 @@ workflows:
 def _trace_timing() -> dict[str, object]:
     now = datetime.now(timezone.utc)
     return {"started_at": now, "finished_at": now, "duration_ms": 0.0}
+
+
+def _assert_no_broken_wiki_links(wiki_root: Path) -> None:
+    missing: list[str] = []
+    for page in wiki_root.rglob("*.md"):
+        for match in re.finditer(r"\[[^\]]+\]\(([^)#]+)(?:#[^)]+)?\)", page.read_text()):
+            href = match.group(1)
+            if "://" in href or href.startswith("mailto:"):
+                continue
+            target = (page.parent / href).resolve()
+            try:
+                target.relative_to(wiki_root.resolve())
+            except ValueError:
+                continue
+            if not target.exists():
+                missing.append(f"{page.relative_to(wiki_root)} -> {href}")
+    assert not missing
+
 
 def _build_test_graph() -> EntityGraph:
     graph = EntityGraph()
@@ -802,6 +821,9 @@ def test_render_wiki_builds_subject_and_evidence_pages(tmp_path: Path) -> None:
     query_receipt_id, workflow_receipt_id, trace_id = _seed_receipts_and_traces(instance)
     resolution_id = _seed_review_history(instance, workflow_receipt_id, trace_id)
     _seed_outcomes(instance, query_receipt_id, workflow_receipt_id, resolution_id, trace_id)
+    manual_subject = project / "wiki" / "manual" / "subjects" / "asset" / "prod-web-01.md"
+    manual_subject.parent.mkdir(parents=True)
+    manual_subject.write_text("Operator-maintained runbook note.")
 
     # Avoid relying on CLI cwd resolution; render directly against the seeded instance.
     written = render_wiki(
@@ -816,6 +838,9 @@ def test_render_wiki_builds_subject_and_evidence_pages(tmp_path: Path) -> None:
 
     subject_page = project / "wiki" / "subjects" / "asset" / "prod-web-01.md"
     receipt_page = project / "wiki" / "evidence" / "receipts" / f"{query_receipt_id.lower()}.md"
+    workflow_receipt_page = (
+        project / "wiki" / "evidence" / "receipts" / f"{workflow_receipt_id.lower()}.md"
+    )
     trace_dir = project / "wiki" / "evidence" / "traces"
     workflow_reference = project / "wiki" / "reference" / "workflows" / "propose-asset-exposure.md"
     provider_reference = project / "wiki" / "reference" / "providers" / "assess-asset-exposure.md"
@@ -828,19 +853,55 @@ def test_render_wiki_builds_subject_and_evidence_pages(tmp_path: Path) -> None:
 
     subject_text = subject_page.read_text()
     receipt_text = receipt_page.read_text()
+    workflow_receipt_text = workflow_receipt_page.read_text()
+    workflow_reference_text = workflow_reference.read_text()
 
     assert "## How This Was Produced" in subject_text
+    assert "### Workflow: [propose_asset_exposure]" in subject_text
+    assert "### Query: [assets_for_vulnerability]" in subject_text
     assert "load_software_inventory" in subject_text
     assert "assess_asset_exposure" in subject_text
+    assert subject_text.startswith("# prod-web-01\n\n## Info")
+    assert "## Record" not in subject_text
+    assert subject_text.index("## Info") < subject_text.index("## Graph Position")
+    assert subject_text.index("## Graph Position") < subject_text.index("## At a Glance")
+    assert "## At a Glance" in subject_text
+    assert "## Relationship Summary" not in subject_text
+    assert "## Conclusions Recorded" not in subject_text
     assert "## Outcome History" in subject_text
+    assert "subgraph type_Vulnerability" in subject_text
+    assert (
+        'subject_Asset_prod_web_01 -. "Affected By / Requires Action For" .-> '
+        "subject_Vulnerability_CVE_2021_41773"
+    ) in subject_text
+    assert (
+        "- [Apache HTTP Server 2.4.49 path traversal]"
+        "(../vulnerability/cve-2021-41773.md)\n"
+        "  - Asset Affected By Vulnerability:"
+    ) in subject_text
+    assert "  - Asset Requires Action For Vulnerability:" in subject_text
     assert "validated_in_triage" in subject_text
     assert "scope_narrowed" in subject_text
     assert "## Full Evidence" in subject_text
     assert "../../evidence/receipts/" in subject_text
+    assert "## Maintainer Notes" in subject_text
+    assert "Operator-maintained runbook note." in subject_text
+    assert "This generated page may be overwritten" in subject_text
 
     assert "## Scope" in receipt_text
     assert "## Workflow Steps" not in receipt_text
+    assert "## Recorded Execution Steps" in workflow_receipt_text
     assert "Traversals" not in receipt_text
+    assert "# Workflow: Propose Asset Exposure" in workflow_reference_text
+    assert "## Role" in workflow_reference_text
+    assert "- Read or compute workflow" in workflow_reference_text
+    assert "## Input Context" in workflow_reference_text
+    assert "## Result" in workflow_reference_text
+    assert "- Result of step `exposure_output`" in workflow_reference_text
+    assert "## Provider Sources" in workflow_reference_text
+    assert "## Recent Executions" in workflow_reference_text
+    assert "## Configured Step Details" in workflow_reference_text
+    _assert_no_broken_wiki_links(project / "wiki")
 
 
 def test_humanize_splits_camel_case_entity_names() -> None:
@@ -849,6 +910,94 @@ def test_humanize_splits_camel_case_entity_names() -> None:
     assert _humanize("already_snake") == "Already Snake"
     assert _humanize("kebab-case") == "Kebab Case"
     assert _humanize("") == ""
+
+
+def test_subject_page_heading_uses_stable_id_not_display_label(tmp_path: Path) -> None:
+    project = tmp_path / "wiki-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(WIKI_TEST_CONFIG)
+    instance = CruxibleInstance.init(project, "config.yaml")
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Asset",
+            entity_id="ASSET-99",
+            properties={
+                "asset_id": "ASSET-99",
+                "name": "Pretty Asset Name",
+                "environment": "production",
+                "internet_exposed": False,
+                "criticality": "low",
+            },
+        )
+    )
+    instance.save_graph(graph)
+
+    render_wiki(
+        instance,
+        WikiOptions(
+            output_dir=project / "wiki",
+            focus=(SubjectRef("Asset", "ASSET-99"),),
+        ),
+    )
+
+    subject_text = (project / "wiki" / "subjects" / "asset" / "asset-99.md").read_text()
+    assert subject_text.startswith("# ASSET-99\n\n## Info")
+    assert "- name: Pretty Asset Name" in subject_text
+
+
+def test_workflow_reference_explains_apply_steps(tmp_path: Path) -> None:
+    project = tmp_path / "canonical-workflow-wiki-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(
+        """\
+version: "1.0"
+name: canonical_workflow_wiki
+kind: world_model
+
+contracts:
+  empty_input:
+    fields: {}
+
+entity_types:
+  Asset:
+    properties:
+      asset_id:
+        type: string
+        primary_key: true
+
+workflows:
+  canonical_load:
+    canonical: true
+    contract_in: empty_input
+    returns: apply_assets
+    steps:
+      - id: assets
+        make_entities:
+          entity_type: Asset
+          items: []
+          entity_id: $item.asset_id
+          properties:
+            asset_id: $item.asset_id
+        as: assets
+      - id: apply_assets
+        apply_entities:
+          entities_from: assets
+        as: apply_assets
+"""
+    )
+    instance = CruxibleInstance.init(project, "config.yaml")
+
+    render_wiki(instance, WikiOptions(output_dir=project / "wiki", scope="all"))
+
+    workflow_text = (
+        project / "wiki" / "reference" / "workflows" / "canonical-load.md"
+    ).read_text()
+    assert "Apply steps commit previously built records or links" in workflow_text
+    assert (
+        "| apply_assets | Apply records to world model | assets | apply_assets |"
+        in workflow_text
+    )
 
 
 def test_render_wiki_local_scope_projects_layered_world(tmp_path: Path) -> None:
@@ -881,6 +1030,10 @@ def test_render_wiki_local_scope_projects_layered_world(tmp_path: Path) -> None:
 
     local_text = local_page.read_text()
     assert "## Graph Position" in local_text
+    assert "**Diagram legend:**" in local_text
+    assert "Amber double rectangle = Upstream/reference neighbor" in local_text
+    assert 'subgraph type_ReferenceItem["Reference Item (1)"]' in local_text
+    assert "class subject_ReferenceItem_ref_1 upstreamNeighbor" in local_text
     assert "-. \"Local Subject References Item\" .->" in local_text
     assert "Reference item from the upstream catalog." in reference_page.read_text()
 
