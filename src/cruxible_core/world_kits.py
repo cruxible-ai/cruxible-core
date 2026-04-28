@@ -24,7 +24,7 @@ class WorldKitEntry:
 def get_world_kit_catalog() -> dict[str, WorldKitEntry]:
     """Return the checked-in fork kit catalog."""
     repo_root = Path(__file__).resolve().parents[2]
-    kev_dir = repo_root / "demos" / "kev-triage"
+    kev_dir = repo_root / "kits" / "kev-triage"
     return {
         "kev-triage": WorldKitEntry(
             kit="kev-triage",

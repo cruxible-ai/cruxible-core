@@ -13,12 +13,13 @@ build/
 htmlcov/
 *.db
 *.csv
-!demos/kev-triage/data/seed/*.csv
-!demos/kev-triage/source_data/*.csv
+!kits/kev-triage/data/seed/*.csv
+!kits/kev-triage/source_data/*.csv
 .DS_Store
 /.cruxible/
 .venv/
 venv/
 docs/dev/
 demos/**/wiki/
+kits/**/wiki/
 smoke-test-bundles/

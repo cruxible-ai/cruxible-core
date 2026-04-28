@@ -98,7 +98,7 @@ flowchart LR
 - Canonical relationships: Assembly Part Of Assembly, Assembly Part Of Product, Component Part Of Assembly, Product In Shipment, Supplier Supplies Assembly, Supplier Supplies Component
 
 **Provider source**
-- Load Supply Chain Seed Data (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/supply_chain_blast_radius.py::load_seed_data`
+- Load Supply Chain Seed Data (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::load_seed_data`; artifact: Supply Chain Seed Bundle
 
 ### 2. Propose Incident Impacts Supplier
 
@@ -111,7 +111,7 @@ flowchart LR
 - Proposed relationships: Incident Impacts Supplier
 
 **Provider source**
-- Assess Incident Supplier Scope (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/supply_chain_blast_radius.py::assess_incident_supplier_scope`
+- Assess Incident Supplier Scope (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_incident_supplier_scope`
 
 ### 3. Propose Incident Impacts Component
 
@@ -125,7 +125,7 @@ flowchart LR
 - Proposed relationships: Incident Impacts Component
 
 **Provider source**
-- Assess Incident Component Cascade (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/supply_chain_blast_radius.py::assess_incident_component_cascade`
+- Assess Incident Component Cascade (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_incident_component_cascade`
 
 ### 4. Propose Incident Impacts Product
 
@@ -139,7 +139,7 @@ flowchart LR
 - Proposed relationships: Incident Impacts Product
 
 **Provider source**
-- Assess Incident Product Cascade (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/supply_chain_blast_radius.py::assess_incident_product_cascade`
+- Assess Incident Product Cascade (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_incident_product_cascade`
 
 ### 5. Propose Shipment At Risk
 
@@ -153,7 +153,7 @@ flowchart LR
 - Proposed relationships: Shipment At Risk
 
 **Provider source**
-- Assess Shipment Risk (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/supply_chain_blast_radius.py::assess_shipment_risk`
+- Assess Shipment Risk (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_shipment_risk`
 <!-- CRUXIBLE:END workflow-summary -->
 
 ## Governed Relationships
@@ -315,8 +315,8 @@ harness, not by turning every useful traversal into a governed relationship.
 Detailed mechanical Mermaid renderings are still available when needed:
 
 ```bash
-uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --view workflow-steps
-uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --view queries
+uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --view workflow-steps
+uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --view queries
 ```
 
 ## Quality Checks
@@ -335,13 +335,13 @@ Regenerate the structural sections after changing ontology, workflows, governed
 relationships, or named queries:
 
 ```bash
-uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --update-readme demos/supply-chain-blast-radius/README.md
+uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --update-readme kits/supply-chain-blast-radius/README.md
 ```
 
 To inspect the same generated bundle without editing the README:
 
 ```bash
-uv run cruxible config-views --config demos/supply-chain-blast-radius/config.yaml --view all
+uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --view all
 ```
 
 ## Status

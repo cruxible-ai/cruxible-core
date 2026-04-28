@@ -1095,7 +1095,7 @@ providers:
     description: Extract candidate holdings from monitored legal opinions.
     contract_in: OpinionAnalysisInput
     contract_out: OpinionAnalysisOutput
-    ref: demos.case_law_monitoring.providers.extract_holdings_from_opinions
+    ref: cruxible_kits.case_law_monitoring.extract_holdings_from_opinions
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1105,7 +1105,7 @@ providers:
     description: Link holdings to interpreted statutes, rules, or regulations.
     contract_in: StatuteInterpretationInput
     contract_out: StatuteInterpretationOutput
-    ref: demos.case_law_monitoring.providers.link_holdings_to_statutes
+    ref: cruxible_kits.case_law_monitoring.link_holdings_to_statutes
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1115,7 +1115,7 @@ providers:
     description: Map holdings to firm-tracked legal issues.
     contract_in: IssueMappingInput
     contract_out: IssueMappingOutput
-    ref: demos.case_law_monitoring.providers.map_holdings_to_issues
+    ref: cruxible_kits.case_law_monitoring.map_holdings_to_issues
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1125,7 +1125,7 @@ providers:
     description: Classify treatment of cited opinions.
     contract_in: OpinionTreatmentInput
     contract_out: OpinionTreatmentOutput
-    ref: demos.case_law_monitoring.providers.classify_opinion_treatment
+    ref: cruxible_kits.case_law_monitoring.classify_opinion_treatment
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1135,7 +1135,7 @@ providers:
     description: Assess whether holdings support or undermine firm arguments.
     contract_in: ArgumentImpactInput
     contract_out: ArgumentImpactOutput
-    ref: demos.case_law_monitoring.providers.assess_argument_impact
+    ref: cruxible_kits.case_law_monitoring.assess_argument_impact
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1145,7 +1145,7 @@ providers:
     description: Extract or normalize statutory and doctrinal scope for tracked matters.
     contract_in: MatterScopeInput
     contract_out: MatterScopeOutput
-    ref: demos.case_law_monitoring.providers.scope_matters_to_statutes
+    ref: cruxible_kits.case_law_monitoring.scope_matters_to_statutes
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1155,7 +1155,7 @@ providers:
     description: Assess whether opinions affect firm matters.
     contract_in: MatterImpactInput
     contract_out: MatterImpactOutput
-    ref: demos.case_law_monitoring.providers.assess_matter_impact
+    ref: cruxible_kits.case_law_monitoring.assess_matter_impact
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1165,7 +1165,7 @@ providers:
     description: Assess whether filings require responses, deadlines, or client updates.
     contract_in: FilingResponseInput
     contract_out: FilingResponseOutput
-    ref: demos.case_law_monitoring.providers.assess_filing_response_obligations
+    ref: cruxible_kits.case_law_monitoring.assess_filing_response_obligations
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1175,7 +1175,7 @@ providers:
     description: Create candidate review obligations from impact and treatment signals.
     contract_in: ReviewItemInput
     contract_out: ReviewItemOutput
-    ref: demos.case_law_monitoring.providers.route_review_items
+    ref: cruxible_kits.case_law_monitoring.route_review_items
     version: "0.1.0"
     deterministic: false
     runtime: python

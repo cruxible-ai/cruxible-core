@@ -216,7 +216,7 @@ providers:
       affected_versions.
     contract_in: ParsedTabularBundle
     contract_out: PublicKevRows
-    ref: cruxible_core.demo_providers.kev_triage.normalize_public_kev_reference
+    ref: cruxible_kits.kev_triage.normalize_public_kev_reference
     version: "1.0.0"
     deterministic: true
     runtime: python

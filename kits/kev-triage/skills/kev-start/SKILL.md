@@ -41,7 +41,7 @@ Produce a working KEV fork in one pass:
 
 ## Preconditions
 
-- Run from `demos/kev-triage/` or a fork of it
+- Run from `kits/kev-triage/` or a fork of it
 - Cruxible daemon reachable (`cruxible server info --json` succeeds)
 - For custom onboarding, replace local seed or source files after
   `world fork --kit` materializes the local overlay, unless you are already
@@ -64,10 +64,10 @@ For fast review in GUI harnesses that can render Mermaid, show the generated
 views inline. From the repository root:
 
 ```
-uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --view all
+uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --view all
 ```
 
-If you are already inside `demos/kev-triage/`, use the same command with the
+If you are already inside `kits/kev-triage/`, use the same command with the
 local config path:
 
 ```
@@ -78,10 +78,10 @@ Also keep the README marker blocks updated so CLI and non-GUI harnesses can
 inspect the same generated views. From the repository root:
 
 ```
-uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --update-readme demos/kev-triage/README.md
+uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --update-readme kits/kev-triage/README.md
 ```
 
-From inside `demos/kev-triage/`:
+From inside `kits/kev-triage/`:
 
 ```
 uv run cruxible config-views --config config.yaml --runtime --update-readme README.md
@@ -463,7 +463,7 @@ Render the wiki and inspect at least one subject page (a user asset or
 service) to confirm the linked context renders correctly:
 
 ```
-cruxible render-wiki --output wiki
+cruxible render-wiki --output wiki --scope local
 ```
 
 Then open at least one rendered page under `wiki/subjects/`.

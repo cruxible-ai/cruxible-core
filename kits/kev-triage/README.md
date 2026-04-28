@@ -125,7 +125,7 @@ flowchart LR
 - Canonical relationships: Asset Has Control, Asset Has Exception, Asset Owned By, Asset Patch Window, Service Depends On Asset
 
 **Provider source**
-- Normalize Fork Seed Tables (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::normalize_fork_seed_tables`; artifact: Fork Seed Bundle
+- Normalize Fork Seed Tables (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/seed.py::normalize_fork_seed_tables`; artifact: Fork Seed Bundle
 - Parse Fork Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Fork Seed Bundle
 
 ### 2. Propose Asset Products
@@ -139,8 +139,8 @@ flowchart LR
 - Proposed relationships: Asset Runs Product
 
 **Provider source**
-- Load Software Inventory (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::load_software_inventory`; artifact: Fork Seed Bundle
-- Match Software To Products (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::match_software_to_products`
+- Load Software Inventory (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/seed.py::load_software_inventory`; artifact: Fork Seed Bundle
+- Match Software To Products (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/matching.py::match_software_to_products`
 
 ### 3. Propose Asset Affected
 
@@ -153,7 +153,7 @@ flowchart LR
 - Proposed relationships: Asset Affected By Vulnerability
 
 **Provider source**
-- Assess Asset Affected (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::assess_asset_affected`
+- Assess Asset Affected (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_affected`
 
 ### 4. Propose Asset Exposure
 
@@ -167,7 +167,7 @@ flowchart LR
 - Proposed relationships: Asset Exposed To Vulnerability
 
 **Provider source**
-- Assess Asset Exposure (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::assess_asset_exposure`
+- Assess Asset Exposure (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_exposure`
 
 ### 5. Propose Service Impact
 
@@ -181,7 +181,7 @@ flowchart LR
 - Proposed relationships: Service Impacted By Vulnerability
 
 **Provider source**
-- Assess Service Impact (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::assess_service_impact`
+- Assess Service Impact (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_service_impact`
 <!-- CRUXIBLE:END workflow-summary -->
 
 ## Governed Relationships
@@ -383,13 +383,13 @@ Regenerate the structural sections after changing ontology, workflows,
 governed relationships, or named queries:
 
 ```bash
-uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --update-readme demos/kev-triage/README.md
+uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --update-readme kits/kev-triage/README.md
 ```
 
 To inspect the same generated bundle without editing the README:
 
 ```bash
-uv run cruxible config-views --config demos/kev-triage/config.yaml --runtime --view all
+uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --view all
 ```
 
 ## Seed Data

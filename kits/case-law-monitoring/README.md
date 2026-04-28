@@ -154,7 +154,7 @@ flowchart LR
 - Proposed relationships: Filing Requires Response
 
 **Provider source**
-- Assess Filing Response Obligations (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::assess_filing_response_obligations`; non-deterministic
+- Assess Filing Response Obligations (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::assess_filing_response_obligations`; non-deterministic
 
 ### 2. Propose Holdings From Opinion
 
@@ -167,7 +167,7 @@ flowchart LR
 - Proposed relationships: Opinion Has Holding
 
 **Provider source**
-- Extract Holdings From Opinions (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::extract_holdings_from_opinions`; non-deterministic
+- Extract Holdings From Opinions (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::extract_holdings_from_opinions`; non-deterministic
 
 ### 3. Propose Matter Statutory Scope
 
@@ -180,7 +180,7 @@ flowchart LR
 - Proposed relationships: Matter Turns On Statute
 
 **Provider source**
-- Scope Matters To Statutes (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::scope_matters_to_statutes`; non-deterministic
+- Scope Matters To Statutes (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::scope_matters_to_statutes`; non-deterministic
 
 ### 4. Propose Opinion Treatment
 
@@ -194,7 +194,7 @@ flowchart LR
 - Proposed relationships: Opinion Treats Opinion
 
 **Provider source**
-- Classify Opinion Treatment (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::classify_opinion_treatment`; non-deterministic
+- Classify Opinion Treatment (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::classify_opinion_treatment`; non-deterministic
 
 ### 5. Propose Statute Interpretations
 
@@ -208,7 +208,7 @@ flowchart LR
 - Proposed relationships: Holding Interprets Statute
 
 **Provider source**
-- Link Holdings To Statutes (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::link_holdings_to_statutes`; non-deterministic
+- Link Holdings To Statutes (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::link_holdings_to_statutes`; non-deterministic
 
 ### 6. Propose Holding Issue Links
 
@@ -222,7 +222,7 @@ flowchart LR
 - Proposed relationships: Holding Addresses Issue
 
 **Provider source**
-- Map Holdings To Issues (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::map_holdings_to_issues`; non-deterministic
+- Map Holdings To Issues (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::map_holdings_to_issues`; non-deterministic
 
 ### 7. Propose Argument Risk
 
@@ -236,7 +236,7 @@ flowchart LR
 - Proposed relationships: Holding Undermines Argument
 
 **Provider source**
-- Assess Argument Impact (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::assess_argument_impact`; non-deterministic
+- Assess Argument Impact (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::assess_argument_impact`; non-deterministic
 
 ### 8. Propose Argument Support
 
@@ -250,7 +250,7 @@ flowchart LR
 - Proposed relationships: Holding Supports Argument
 
 **Provider source**
-- Assess Argument Impact (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::assess_argument_impact`; non-deterministic
+- Assess Argument Impact (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::assess_argument_impact`; non-deterministic
 
 ### 9. Propose Matter Impact
 
@@ -264,7 +264,7 @@ flowchart LR
 - Proposed relationships: Opinion Affects Matter
 
 **Provider source**
-- Assess Matter Impact (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::assess_matter_impact`; non-deterministic
+- Assess Matter Impact (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::assess_matter_impact`; non-deterministic
 
 ### 10. Propose Review Items
 
@@ -278,7 +278,7 @@ flowchart LR
 - Proposed relationships: Opinion Creates Review Item
 
 **Provider source**
-- Route Review Items (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::route_review_items`; non-deterministic
+- Route Review Items (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::route_review_items`; non-deterministic
 
 ### 11. Propose Review Item Matter Links
 
@@ -292,7 +292,7 @@ flowchart LR
 - Proposed relationships: Review Item For Matter
 
 **Provider source**
-- Route Review Items (Python Function, v0.1.0); source: `demos/case_law_monitoring/providers.py::route_review_items`; non-deterministic
+- Route Review Items (Python Function, v0.1.0); source: `src/cruxible_kits/case_law_monitoring.py::route_review_items`; non-deterministic
 <!-- CRUXIBLE:END workflow-summary -->
 
 ## Governed Relationships
@@ -456,13 +456,13 @@ Regenerate the structural sections after changing ontology, workflows, governed
 relationships, or named queries:
 
 ```bash
-uv run cruxible config-views --config demos/case-law-monitoring/config.yaml --update-readme demos/case-law-monitoring/README.md
+uv run cruxible config-views --config kits/case-law-monitoring/config.yaml --update-readme kits/case-law-monitoring/README.md
 ```
 
 To inspect the same generated bundle without editing the README:
 
 ```bash
-uv run cruxible config-views --config demos/case-law-monitoring/config.yaml --view all
+uv run cruxible config-views --config kits/case-law-monitoring/config.yaml --view all
 ```
 
 ## Status

@@ -5,10 +5,10 @@ hasKev filter, paginates through the full result set, and writes the raw
 response to a local JSON file for use as a hashed Cruxible artifact.
 
 Usage:
-    uv run python demos/kev-triage/scripts/fetch_nvd_kev.py
+    uv run python kits/kev-triage/scripts/fetch_nvd_kev.py
 
 Output:
-    demos/kev-triage/data/nvd_kev_cves.json
+    kits/kev-triage/data/nvd_kev_cves.json
 
 Environment:
     NVD_API_KEY  Optional. Raises rate limit from 5 req/30s to 50 req/30s.

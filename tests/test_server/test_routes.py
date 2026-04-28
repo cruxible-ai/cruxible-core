@@ -22,7 +22,7 @@ from cruxible_core.world_refs import WorldCatalogEntry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-KEV_DEMO_DIR = REPO_ROOT / "demos" / "kev-triage"
+KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
 
 
 @pytest.fixture
@@ -1081,8 +1081,8 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
 ) -> None:
     instance_id = _init_instance(
         app_client,
-        KEV_DEMO_DIR,
-        config_yaml=(KEV_DEMO_DIR / "config.yaml").read_text(),
+        KEV_KIT_DIR,
+        config_yaml=(KEV_KIT_DIR / "config.yaml").read_text(),
     )
 
     lock = app_client.post(f"/api/v1/{instance_id}/workflows/lock")

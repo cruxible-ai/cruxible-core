@@ -833,13 +833,15 @@ contracts:
 
 # ─── Artifacts ───────────────────────────────────────────────────────
 #
-# The seed bundle artifact will be added once seed data is authored.
-# Validator requires sha256 to be present on every artifact entry, so
-# we leave this section empty for v1 draft and re-attach the artifact
-# (and the load_supply_chain_seed_data provider's `artifact:` field)
-# in the seed-data PR.
+# The seed bundle is a placeholder artifact until real seed CSVs are authored.
+# It keeps the canonical seed workflow structurally valid while making the
+# missing provider/data implementation explicit.
 
-artifacts: {}
+artifacts:
+  supply_chain_seed_bundle:
+    kind: directory
+    uri: ./data/seed
+    sha256: sha256:9915f747ad2696e38c9c5047251245e4f7c2ff31c81bec8c8ac9a6f1fe41889a
 
 # ─── Providers ───────────────────────────────────────────────────────
 #
@@ -854,18 +856,18 @@ providers:
     description: Load all base-world entities and deterministic edges from the seed bundle.
     contract_in: EmptyInput
     contract_out: SupplyChainSeedData
-    ref: cruxible_core.demo_providers.supply_chain_blast_radius.load_seed_data
+    ref: cruxible_kits.supply_chain_blast_radius.load_seed_data
     version: "1.0.0"
     deterministic: true
     runtime: python
-    # artifact: supply_chain_seed_bundle  # re-attach once seed bundle authored
+    artifact: supply_chain_seed_bundle
 
   assess_incident_supplier_scope:
     kind: function
     description: Match each open incident's scope to suppliers via direct supplier or geography basis.
     contract_in: IncidentScopeAssessmentInput
     contract_out: IncidentScopeAssessmentResults
-    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_supplier_scope
+    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_supplier_scope
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -875,7 +877,7 @@ providers:
     description: Cascade impacted suppliers to components, downgrading where active alternates exist.
     contract_in: IncidentComponentCascadeInput
     contract_out: IncidentComponentCascadeResults
-    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_component_cascade
+    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_component_cascade
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -885,7 +887,7 @@ providers:
     description: Roll impacted components and directly supplied assemblies through assembly BOM hierarchy to finished products; records bom_depth_bucket.
     contract_in: IncidentProductCascadeInput
     contract_out: IncidentProductCascadeResults
-    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_incident_product_cascade
+    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_product_cascade
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -895,7 +897,7 @@ providers:
     description: Assess in-flight shipments containing impacted products against status and ship_date.
     contract_in: ShipmentRiskAssessmentInput
     contract_out: ShipmentRiskAssessmentResults
-    ref: cruxible_core.demo_providers.supply_chain_blast_radius.assess_shipment_risk
+    ref: cruxible_kits.supply_chain_blast_radius.assess_shipment_risk
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -910,14 +912,6 @@ providers:
 workflows:
 
   build_seed_state:
-    # KNOWN VALIDATE GAP: this workflow uses apply_* steps which require
-    # canonical: true, and canonical requires the load_supply_chain_seed_data
-    # provider to declare an artifact bundle with a real sha256. Both will be
-    # set once the seed CSVs are authored. Until then `cruxible validate`
-    # surfaces a cross-reference error on this single workflow; the rest of
-    # the config (entity types, relationships, four propose workflows, named
-    # queries, feedback profiles, decision policies, quality checks) validates
-    # cleanly.
     canonical: true
     description: Load base-world suppliers, components, assemblies, products, shipments, and deterministic edges.
     contract_in: EmptyInput

@@ -1,4 +1,4 @@
-"""Integration tests for the KEV demo providers and workflows."""
+"""Integration tests for the KEV kit providers and workflows."""
 
 from __future__ import annotations
 
@@ -8,15 +8,6 @@ from pathlib import Path
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.composer import compose_config_files
 from cruxible_core.config.loader import save_config
-from cruxible_core.demo_providers.kev_triage import (
-    assess_asset_affected,
-    assess_asset_exposure,
-    assess_service_impact,
-    load_fork_seed_data,
-    match_software_to_products,
-    normalize_fork_seed_tables,
-    normalize_public_kev_reference,
-)
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.providers.common.tabular import load_tabular_artifact_bundle
@@ -31,9 +22,18 @@ from cruxible_core.service import (
     service_resolve_group,
     service_run,
 )
+from cruxible_kits.kev_triage import (
+    assess_asset_affected,
+    assess_asset_exposure,
+    assess_service_impact,
+    load_fork_seed_data,
+    match_software_to_products,
+    normalize_fork_seed_tables,
+    normalize_public_kev_reference,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-KEV_DEMO_DIR = REPO_ROOT / "demos" / "kev-triage"
+KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
 
 
 def _provider_context(artifact_path: Path | None) -> ProviderContext:
@@ -62,8 +62,8 @@ def _csv_row_count(path: Path) -> int:
 
 def _composed_kev_config_path(tmp_path: Path) -> Path:
     composed = compose_config_files(
-        base_path=KEV_DEMO_DIR / "kev-reference.yaml",
-        overlay_path=KEV_DEMO_DIR / "config.yaml",
+        base_path=KEV_KIT_DIR / "kev-reference.yaml",
+        overlay_path=KEV_KIT_DIR / "config.yaml",
     )
     config_path = tmp_path / "config.yaml"
     save_config(composed, config_path)
@@ -98,7 +98,7 @@ def _approve_workflow_group(instance: CruxibleInstance, workflow_name: str) -> N
 
 
 def test_load_fork_seed_data_reads_expected_rows() -> None:
-    payload = load_fork_seed_data({}, _provider_context(KEV_DEMO_DIR / "data" / "seed"))
+    payload = load_fork_seed_data({}, _provider_context(KEV_KIT_DIR / "data" / "seed"))
     assert set(payload) == {
         "assets",
         "business_services",
@@ -118,7 +118,7 @@ def test_load_fork_seed_data_reads_expected_rows() -> None:
 def test_normalize_fork_seed_tables_accepts_common_tabular_output() -> None:
     parsed = load_tabular_artifact_bundle(
         {"expected_tables": ["assets", "asset_owned_by"]},
-        _provider_context(KEV_DEMO_DIR / "data" / "seed"),
+        _provider_context(KEV_KIT_DIR / "data" / "seed"),
     )
 
     payload = normalize_fork_seed_tables(parsed, _provider_context(None))
@@ -136,7 +136,7 @@ def test_normalize_public_kev_reference_accepts_common_tabular_output() -> None:
                 "nvd_kev_cves",
             ]
         },
-        _provider_context(KEV_DEMO_DIR / "data"),
+        _provider_context(KEV_KIT_DIR / "data"),
     )
 
     payload = normalize_public_kev_reference(parsed, _provider_context(None))
@@ -397,10 +397,10 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
 
     graph = instance.load_graph()
     assert graph.entity_count("Asset") == _csv_row_count(
-        KEV_DEMO_DIR / "data" / "seed" / "assets.csv"
+        KEV_KIT_DIR / "data" / "seed" / "assets.csv"
     )
     assert graph.edge_count("asset_owned_by") == _csv_row_count(
-        KEV_DEMO_DIR / "data" / "seed" / "asset_owned_by.csv"
+        KEV_KIT_DIR / "data" / "seed" / "asset_owned_by.csv"
     )
     assert graph.edge_count("asset_runs_product") > 0
     assert graph.edge_count("asset_affected_by_vulnerability") > 0
@@ -515,7 +515,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
 def test_release_backed_kev_fork_can_propose_asset_products(tmp_path: Path) -> None:
     reference_root = tmp_path / "reference"
     reference_root.mkdir()
-    reference = CruxibleInstance.init(reference_root, str(KEV_DEMO_DIR / "kev-reference.yaml"))
+    reference = CruxibleInstance.init(reference_root, str(KEV_KIT_DIR / "kev-reference.yaml"))
     service_lock(reference)
     _apply_canonical_workflow(reference, "build_public_kev_reference")
     product = reference.load_graph().list_entities("Product")[0]
@@ -535,7 +535,7 @@ def test_release_backed_kev_fork_can_propose_asset_products(tmp_path: Path) -> N
         transport_ref=f"file://{release_dir}",
         root_dir=fork_root,
     ).instance
-    service_reload_config(fork, str(KEV_DEMO_DIR / "config.yaml"))
+    service_reload_config(fork, str(KEV_KIT_DIR / "config.yaml"))
     service_lock(fork)
 
     proposed = service_propose_workflow(fork, "propose_asset_products", {})

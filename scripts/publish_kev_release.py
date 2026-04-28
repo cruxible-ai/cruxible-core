@@ -84,7 +84,7 @@ def publish_kev_release(
 
         populate_data_dir(data_dir, api_key=nvd_api_key)
 
-        config_src = repo_root / "demos" / "kev-triage" / "kev-reference.yaml"
+        config_src = repo_root / "kits" / "kev-triage" / "kev-reference.yaml"
         config_path = workspace / "config.yaml"
         artifact_sha256 = compute_path_sha256(data_dir)
         write_temp_kev_config(
@@ -231,11 +231,11 @@ def download_text(url: str) -> str:
 
 
 def load_nvd_fetcher() -> Callable[[str | None], list[dict[str, Any]]]:
-    """Load the demo NVD fetch helper from its file path."""
+    """Load the KEV kit NVD fetch helper from its file path."""
     repo_root = _repo_root()
     module = load_module_from_path(
         name="cruxible_kev_fetch_nvd",
-        path=repo_root / "demos" / "kev-triage" / "scripts" / "fetch_nvd_kev.py",
+        path=repo_root / "kits" / "kev-triage" / "scripts" / "fetch_nvd_kev.py",
     )
     fetcher = getattr(module, "fetch_all_kev_cves", None)
     if not callable(fetcher):

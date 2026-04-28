@@ -1,6 +1,6 @@
-"""Compatibility shim for KEV demo providers."""
+"""Compatibility shim for KEV triage kit providers."""
 
-from cruxible_core.demo_providers.kev_triage import (
+from cruxible_kits.kev_triage import (
     load_fork_seed_data,
     load_public_kev_rows,
     load_software_inventory,

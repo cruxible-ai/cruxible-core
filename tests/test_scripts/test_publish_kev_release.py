@@ -43,7 +43,7 @@ def test_build_publish_refs_rejects_tagged_oci_ref() -> None:
 
 def test_write_temp_kev_config_updates_artifact_sha(tmp_path: Path) -> None:
     module = _load_publish_script()
-    source = Path("demos/kev-triage/kev-reference.yaml")
+    source = Path("kits/kev-triage/kev-reference.yaml")
     output = tmp_path / "config.yaml"
 
     module.write_temp_kev_config(

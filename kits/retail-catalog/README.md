@@ -304,13 +304,13 @@ similarity.
 Regenerate the generated sections after changing the config:
 
 ```bash
-uv run cruxible config-views --config demos/retail-catalog/config.yaml --update-readme demos/retail-catalog/README.md
+uv run cruxible config-views --config kits/retail-catalog/config.yaml --update-readme kits/retail-catalog/README.md
 ```
 
 Validate the config:
 
 ```bash
-uv run cruxible --server-url "" --server-socket "" validate --config demos/retail-catalog/config.yaml
+uv run cruxible --server-url "" --server-socket "" validate --config kits/retail-catalog/config.yaml
 ```
 
 ## Status

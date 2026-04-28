@@ -274,7 +274,7 @@ git clone https://github.com/cruxible-ai/cruxible-core
 cd cruxible-core/demos/drug-interactions
 ```
 
-Each demo is a starter kit with a config, prebuilt graph, example queries, and receipts. If you're new, start with `drug-interactions`.
+Each demo is an exploratory workspace with a config, prebuilt graph, example queries, and receipts. If you're new, start with `drug-interactions`.
 
 Treat the demo flow as local evaluation mode. For a real process boundary, run against a separate daemon instead of relying on a same-machine local runtime boundary.
 
@@ -337,6 +337,15 @@ Cruxible is for the cases where humans and agents need to coordinate around shar
 - **Full MCP server:** complete lifecycle via [Model Context Protocol](docs/mcp-tools.md) for AI agent orchestration.
 - **CLI mirror:** core MCP tools have [CLI equivalents](docs/cli-reference.md) for terminal workflows.
 - **Permission modes:** READ_ONLY, GRAPH_WRITE, ADMIN tiers control what tools a session can access.
+
+## Kits
+
+| Kit | Domain | What it models |
+|-----|--------|----------------|
+| [kev-triage](kits/kev-triage/) | Cybersecurity | KEV reference data, asset exposure, and service impact triage. |
+| [supply-chain-blast-radius](kits/supply-chain-blast-radius/) | Supply Chain | Supplier, component, assembly, product, shipment, and incident blast radius. |
+| [case-law-monitoring](kits/case-law-monitoring/) | Legal | Matter-centered case-law monitoring and authority impact. |
+| [retail-catalog](kits/retail-catalog/) | Retail | Product catalog relationships, substitutes, complements, and retail planning surfaces. |
 
 ## Demos
 

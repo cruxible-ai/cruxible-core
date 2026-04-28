@@ -966,7 +966,7 @@ providers:
       relationship rows keyed by entity and relationship type.
     contract_in: ParsedTabularBundle
     contract_out: ForkSeedData
-    ref: cruxible_core.demo_providers.kev_triage.normalize_fork_seed_tables
+    ref: cruxible_kits.kev_triage.normalize_fork_seed_tables
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -980,7 +980,7 @@ providers:
       evidence sources.
     contract_in: EmptyInput
     contract_out: SoftwareInventory
-    ref: cruxible_core.demo_providers.kev_triage.load_software_inventory
+    ref: cruxible_kits.kev_triage.load_software_inventory
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -994,7 +994,7 @@ providers:
       match results with confidence scores and verdicts.
     contract_in: SoftwareMatchInput
     contract_out: SoftwareMatchResults
-    ref: cruxible_core.demo_providers.kev_triage.match_software_to_products
+    ref: cruxible_kits.kev_triage.match_software_to_products
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1007,7 +1007,7 @@ providers:
       installed version is within the reference-layer affected range.
     contract_in: AssetAffectedAssessmentInput
     contract_out: AssetAffectedAssessmentResults
-    ref: cruxible_core.demo_providers.kev_triage.assess_asset_affected
+    ref: cruxible_kits.kev_triage.assess_asset_affected
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1020,7 +1020,7 @@ providers:
       controls.
     contract_in: AssetExposureAssessmentInput
     contract_out: AssetExposureAssessmentResults
-    ref: cruxible_core.demo_providers.kev_triage.assess_asset_exposure
+    ref: cruxible_kits.kev_triage.assess_asset_exposure
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1032,7 +1032,7 @@ providers:
       dependency edges to propose service impact relationships.
     contract_in: ServiceImpactAssessmentInput
     contract_out: ServiceImpactAssessmentResults
-    ref: cruxible_core.demo_providers.kev_triage.assess_service_impact
+    ref: cruxible_kits.kev_triage.assess_service_impact
     version: "1.0.0"
     deterministic: true
     runtime: python

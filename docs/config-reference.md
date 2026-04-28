@@ -1029,7 +1029,7 @@ tests:
 
 ## Full Example
 
-The KEV triage fork config (`demos/kev-triage/config.yaml`) demonstrates a release-backed fork overlay that extends a reference layer with governed judgment relationships. **Note:** This config requires composition with its base (`kev-reference.yaml`) before it can be validated or loaded — `Vulnerability`, `Product`, and other reference types are defined in the base, not here:
+The KEV triage fork config (`kits/kev-triage/config.yaml`) demonstrates a release-backed fork overlay that extends a reference layer with governed judgment relationships. **Note:** This config requires composition with its base (`kev-reference.yaml`) before it can be validated or loaded — `Vulnerability`, `Product`, and other reference types are defined in the base, not here:
 
 ```yaml
 version: "1.0"
@@ -1126,4 +1126,4 @@ integrations:
       output: support|unsure|contradict
 ```
 
-See also the reference layer config (`demos/kev-triage/kev-reference.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks.
+See also the reference layer config (`kits/kev-triage/kev-reference.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks.
