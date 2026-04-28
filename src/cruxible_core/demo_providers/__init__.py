@@ -1,2 +1,0 @@
-"""Bundled demo provider implementations."""
-
