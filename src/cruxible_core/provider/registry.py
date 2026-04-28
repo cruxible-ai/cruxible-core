@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Any, Callable, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -38,7 +39,10 @@ def get_provider_entrypoint_path(provider_name: str, provider: ProviderSchema) -
         return None
 
     candidate = _resolve_python_candidate(provider_name, provider)
-    source_path = inspect.getsourcefile(candidate) or inspect.getfile(candidate)
+    if not callable(candidate):
+        raise ConfigError(f"Provider '{provider_name}' ref '{provider.ref}' is not callable")
+    callable_candidate = cast(Callable[..., Any], candidate)
+    source_path = inspect.getsourcefile(callable_candidate) or inspect.getfile(callable_candidate)
     if source_path is None:
         raise ConfigError(
             f"Provider '{provider_name}' ref '{provider.ref}' does not resolve to a source file"
@@ -50,7 +54,7 @@ def _resolve_python_provider(provider_name: str, provider: ProviderSchema) -> Pr
     candidate = _resolve_python_candidate(provider_name, provider)
     if not callable(candidate):
         raise ConfigError(f"Provider '{provider_name}' ref '{provider.ref}' is not callable")
-    return candidate
+    return cast(ProviderCallable, candidate)
 
 
 def _resolve_python_candidate(provider_name: str, provider: ProviderSchema) -> object:
@@ -93,7 +97,7 @@ def _build_http_json_provider(provider_name: str, provider: ProviderSchema) -> P
 
     timeout_s = _coerce_timeout(provider_name, provider.config.get("timeout_s", 30))
 
-    def _execute(input_payload: dict[str, object], _context: ProviderContext) -> dict[str, object]:
+    def _execute(input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
         try:
             with httpx.Client(timeout=timeout_s) as client:
                 response = client.post(provider.ref, json=input_payload, headers=headers)
@@ -123,9 +127,9 @@ def _build_http_json_provider(provider_name: str, provider: ProviderSchema) -> P
             raise QueryExecutionError(
                 f"Provider '{provider_name}' http_json response must be a JSON object"
             )
-        return payload
+        return cast(dict[str, Any], payload)
 
-    return _execute
+    return cast(ProviderCallable, _execute)
 
 
 def _build_command_provider(provider_name: str, provider: ProviderSchema) -> ProviderCallable:
@@ -145,7 +149,7 @@ def _build_command_provider(provider_name: str, provider: ProviderSchema) -> Pro
     timeout_s = _coerce_timeout(provider_name, provider.config.get("timeout_s", 30))
     command = [provider.ref, *args]
 
-    def _execute(input_payload: dict[str, object], _context: ProviderContext) -> dict[str, object]:
+    def _execute(input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
         try:
             completed = subprocess.run(
                 command,
@@ -184,12 +188,14 @@ def _build_command_provider(provider_name: str, provider: ProviderSchema) -> Pro
             raise QueryExecutionError(
                 f"Provider '{provider_name}' command output must be a JSON object"
             )
-        return payload
+        return cast(dict[str, Any], payload)
 
-    return _execute
+    return cast(ProviderCallable, _execute)
 
 
 def _coerce_timeout(provider_name: str, value: object) -> float:
+    if not isinstance(value, str | int | float):
+        raise ConfigError(f"Provider '{provider_name}' timeout_s must be numeric")
     try:
         timeout_s = float(value)
     except (TypeError, ValueError) as exc:
