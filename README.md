@@ -351,6 +351,7 @@ Cruxible is for the cases where humans and agents need to coordinate around shar
 - [Quickstart](docs/quickstart.md) — 5-minute install to first query
 - [Concepts](docs/concepts.md) — Architecture and primitives
 - [Config Reference](docs/config-reference.md) — Every YAML field explained
+- [Common Provider Catalog](docs/common-providers.md) — Placeholder for reusable provider refs and contract snippets
 - [MCP Tools Reference](docs/mcp-tools.md) — All tools with parameters and return types
 - [CLI Reference](docs/cli-reference.md) — Terminal commands
 - [AI Agent Guide](docs/for-ai-agents.md) — Orchestration workflows for Claude Code, Cursor, Codex, and other MCP clients
