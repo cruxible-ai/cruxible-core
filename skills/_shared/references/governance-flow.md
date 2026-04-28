@@ -224,6 +224,63 @@ For each concrete group you inspect, answer the per-group questions:
 5. do the signals and evidence make the group reviewable, or does the grouping rule need to change?
 6. should this group be approved, rejected, or escalated for deeper review?
 
+Use the agent's judgment to evaluate proposal quality, but make improvements
+by changing durable Cruxible surfaces rather than treating the agent's private
+reasoning as the system of record. After each proposal run, inspect the actual
+group output and summarize:
+
+- group count and member count by relationship type
+- review priority distribution
+- signal distribution by integration
+- three representative `support` members, when available
+- three representative `unsure` members, when available
+- three representative `contradict` members, when available
+- whether the emitted groups are coherent review units
+
+Classify any problem before editing:
+
+- **Too broad**: unrelated contexts are bundled into one group, so one
+  approve/reject decision would be awkward or unsafe.
+- **Too narrow**: every candidate becomes its own group, so trust and feedback
+  cannot compound across a reusable decision pattern.
+- **Weak evidence**: required signals are missing, mostly `unsure`, or based on
+  evidence a reviewer would not trust.
+- **Conflicted evidence**: required or high-value integrations disagree in a
+  way the current grouping/policy does not explain.
+- **Bad review unit**: the group is internally related, but the question it asks
+  is not the question the reviewer actually needs to answer.
+- **Unstable identity**: `thesis_facts` include run-specific or one-off details
+  that prevent repeated runs from matching the same proposal signature.
+- **Missing review context**: `analysis_state` omits information a reviewer or
+  downstream agent needs, even though that information should not define group
+  identity.
+
+When improving proposal quality, make one durable change at a time, rerun the
+workflow, and compare the before/after group output. Typical changes are:
+
+- narrow or broaden candidate generation
+- change `thesis_facts` fields
+- move context between `thesis_facts` and `analysis_state`
+- split one workflow into multiple proposal workflows
+- merge overly fragmented workflows
+- change integration roles between required and advisory
+- change `always_review_on_unsure` or auto-resolve policy
+- add or revise feedback reason codes
+- fix provider output or `map_signals` mapping
+
+Do not keep iterating just because a group is imperfect. Stop when groups are
+good enough review units:
+
+- each group asks one clear judgment question
+- the group can be approved or rejected as a unit without surprising side
+  effects
+- required signals are present for the members that should be reviewable
+- contradictory or low-confidence members are split out, escalated, or made
+  explicitly review-only
+- `thesis_facts` are stable enough for repeated runs and prior trust reuse
+- `analysis_state` carries useful context without changing group identity
+- group size is practical for the intended reviewer
+
 Use those answers to test and iterate on the current governed design:
 
 - does the emitted group follow the current `grouping_rule`, or is that rule too broad or too narrow?
