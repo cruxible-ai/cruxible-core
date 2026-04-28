@@ -939,22 +939,34 @@ artifacts:
   fork_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:7e15e3ae2af80ceea604e2a54755b7d12f4650392a9c837048aa026765226670
+    sha256: sha256:987b94595dea61fa28a3c63bfbaac17bff101583e5c721fe70deeb36b533023c
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
 # ─── Providers ────────────────────────────────────────────────────────
 
 providers:
-  load_fork_seed_data:
+  parse_fork_seed_bundle:
     kind: function
     description: >
-      Load all deterministic fork entities and relationship edges from
-      the seed data bundle. Returns structured arrays keyed by entity
-      and relationship type.
-    contract_in: EmptyInput
+      Parse the pinned fork seed artifact into generic provenance-rich
+      tabular rows. Domain normalization happens in the next workflow step.
+    contract_in: TabularParseOptions
+    contract_out: ParsedTabularBundle
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: fork_seed_bundle
+
+  normalize_fork_seed_tables:
+    kind: function
+    description: >
+      Normalize parsed fork seed tables into deterministic KEV entities and
+      relationship rows keyed by entity and relationship type.
+    contract_in: ParsedTabularBundle
     contract_out: ForkSeedData
-    ref: cruxible_core.demo_providers.kev_triage.load_fork_seed_data
+    ref: cruxible_core.demo_providers.kev_triage.normalize_fork_seed_tables
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1036,9 +1048,30 @@ workflows:
       layer's build_public_kev_reference workflow.
     contract_in: EmptyInput
     steps:
+      - id: raw_tables
+        provider: parse_fork_seed_bundle
+        input:
+          expected_tables:
+            - assets
+            - business_services
+            - owners
+            - compensating_controls
+            - exceptions
+            - patch_windows
+            - service_depends_on_asset
+            - asset_owned_by
+            - asset_has_control
+            - asset_has_exception
+            - asset_patch_window
+        as: raw_tables
+
       - id: seed
-        provider: load_fork_seed_data
-        input: {}
+        provider: normalize_fork_seed_tables
+        input:
+          artifact: $steps.raw_tables.artifact
+          tables: $steps.raw_tables.tables
+          files: $steps.raw_tables.files
+          diagnostics: $steps.raw_tables.diagnostics
         as: seed
 
       # --- Entities ---

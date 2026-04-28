@@ -14,9 +14,12 @@ from cruxible_core.demo_providers.kev_triage import (
     assess_service_impact,
     load_fork_seed_data,
     match_software_to_products,
+    normalize_fork_seed_tables,
+    normalize_public_kev_reference,
 )
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
+from cruxible_core.providers.common.tabular import load_tabular_artifact_bundle
 from cruxible_core.service import (
     service_apply_workflow,
     service_fork_world,
@@ -110,6 +113,37 @@ def test_load_fork_seed_data_reads_expected_rows() -> None:
         "asset_patch_window",
     }
     assert payload["assets"][0]["internet_exposed"] is True
+
+
+def test_normalize_fork_seed_tables_accepts_common_tabular_output() -> None:
+    parsed = load_tabular_artifact_bundle(
+        {"expected_tables": ["assets", "asset_owned_by"]},
+        _provider_context(KEV_DEMO_DIR / "data" / "seed"),
+    )
+
+    payload = normalize_fork_seed_tables(parsed, _provider_context(None))
+
+    assert payload["assets"][0]["internet_exposed"] is True
+    assert payload["asset_owned_by"][0]["asset_id"]
+
+
+def test_normalize_public_kev_reference_accepts_common_tabular_output() -> None:
+    parsed = load_tabular_artifact_bundle(
+        {
+            "expected_tables": [
+                "known_exploited_vulnerabilities",
+                "epss_kev_nvd",
+                "nvd_kev_cves",
+            ]
+        },
+        _provider_context(KEV_DEMO_DIR / "data"),
+    )
+
+    payload = normalize_public_kev_reference(parsed, _provider_context(None))
+
+    assert payload["items"]
+    assert payload["items"][0]["cve_id"].startswith("CVE-")
+    assert payload["items"][0]["product_id"]
 
 
 def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
@@ -372,6 +406,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert graph.edge_count("asset_affected_by_vulnerability") > 0
     assert graph.edge_count("asset_exposed_to_vulnerability") > 0
     assert graph.edge_count("service_impacted_by_vulnerability") > 0
+    assert graph.edge_count("asset_remediated_vulnerability") == 0
 
     affected_edge = graph.list_edges("asset_affected_by_vulnerability")[0]
     exposure_edge = graph.list_edges("asset_exposed_to_vulnerability")[0]
@@ -426,15 +461,23 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     asset_to_owner = {
         edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
     }
+    remediated_pairs = {
+        (edge["from_id"], edge["to_id"])
+        for edge in graph.list_edges("asset_remediated_vulnerability")
+    }
     owner_vuln_counts: dict[tuple[str, str], int] = {}
     unique_pair: tuple[str, str, str] | None = None
     for edge in graph.list_edges("asset_exposed_to_vulnerability"):
+        if (edge["from_id"], edge["to_id"]) in remediated_pairs:
+            continue
         owner_id = asset_to_owner.get(edge["from_id"])
         if owner_id is None:
             continue
         key = (owner_id, edge["to_id"])
         owner_vuln_counts[key] = owner_vuln_counts.get(key, 0) + 1
     for edge in graph.list_edges("asset_exposed_to_vulnerability"):
+        if (edge["from_id"], edge["to_id"]) in remediated_pairs:
+            continue
         owner_id = asset_to_owner.get(edge["from_id"])
         if owner_id is None:
             continue

@@ -8,7 +8,7 @@ import re
 from collections import defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, cast
 
 from cruxible_core.provider.types import ProviderContext
 
@@ -54,9 +54,36 @@ def load_public_kev_rows(
     }
     nvd_cpe_by_cve = _load_nvd_cpe_data(bundle_root / "nvd_kev_cves.json")
 
+    return _build_public_kev_rows(kev_rows, enriched_by_cve, nvd_cpe_by_cve)
+
+
+def normalize_public_kev_reference(
+    input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    """Normalize parsed public KEV tables into reference graph rows."""
+    kev_rows = _parsed_table_rows(input_payload, "known_exploited_vulnerabilities")
+    enriched_by_cve = {
+        str(row.get("cve", "")).strip(): row
+        for row in _parsed_table_rows(input_payload, "epss_kev_nvd")
+        if str(row.get("cve", "")).strip()
+    }
+    nvd_cpe_by_cve = _parse_nvd_cpe_rows(_parsed_table_rows(input_payload, "nvd_kev_cves"))
+    return _build_public_kev_rows(kev_rows, enriched_by_cve, nvd_cpe_by_cve)
+
+
+def _build_public_kev_rows(
+    kev_rows: list[dict[str, Any]],
+    enriched_by_cve: dict[str, dict[str, Any]],
+    nvd_cpe_by_cve: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for kev_row in kev_rows:
-        cve_id = kev_row.get("cveID", "").strip()
+        cve_id = _first_non_empty(
+            kev_row.get("cveID"),
+            kev_row.get("cve_id"),
+            kev_row.get("cveid"),
+        )
         if not cve_id:
             continue
         enriched = enriched_by_cve.get(cve_id, {})
@@ -66,13 +93,26 @@ def load_public_kev_rows(
             "cve_id": cve_id,
             "description": _first_non_empty(
                 kev_row.get("shortDescription"),
+                kev_row.get("short_description"),
+                kev_row.get("shortdescription"),
                 enriched.get("Description"),
+                enriched.get("description"),
             ),
-            "cvss_score": _parse_float(enriched.get("CVSS3")),
-            "epss_score": _parse_float(enriched.get("EPSS")),
-            "kev_due_date": _first_non_empty(kev_row.get("dueDate")),
+            "cvss_score": _parse_float(
+                _first_non_empty(enriched.get("CVSS3"), enriched.get("cvss3"))
+            ),
+            "epss_score": _parse_float(
+                _first_non_empty(enriched.get("EPSS"), enriched.get("epss"))
+            ),
+            "kev_due_date": _first_non_empty(
+                kev_row.get("dueDate"),
+                kev_row.get("due_date"),
+                kev_row.get("duedate"),
+            ),
             "known_ransomware_use": _first_non_empty(
                 kev_row.get("knownRansomwareCampaignUse"),
+                kev_row.get("known_ransomware_campaign_use"),
+                kev_row.get("knownransomwarecampaignuse"),
             ),
         }
 
@@ -86,11 +126,15 @@ def load_public_kev_rows(
 
         vendor_name = _first_non_empty(
             kev_row.get("vendorProject"),
+            kev_row.get("vendor_project"),
+            kev_row.get("vendorproject"),
             enriched.get("Vendor"),
+            enriched.get("vendor"),
         )
         product_name = _first_non_empty(
             kev_row.get("product"),
             enriched.get("Product"),
+            enriched.get("product"),
         )
         vendor_id = _slugify(vendor_name or "unknown-vendor")
         items.append({
@@ -117,14 +161,29 @@ def load_fork_seed_data(
 ) -> dict[str, Any]:
     """Load deterministic fork entity and relationship rows from the seed bundle."""
     bundle_root = _require_artifact_root(context, "load_fork_seed_data")
-    payload = {
+    tables = {
         key: _load_csv_rows(bundle_root / filename)
         for key, filename in _FORK_SEED_FILES.items()
     }
+    return _build_fork_seed_data(tables)
 
+
+def normalize_fork_seed_tables(
+    input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    """Normalize parsed fork seed tables into deterministic internal graph rows."""
+    tables = {
+        table_name: _parsed_table_rows(input_payload, table_name)
+        for table_name in _FORK_SEED_FILES
+    }
+    return _build_fork_seed_data(tables)
+
+
+def _build_fork_seed_data(tables: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    payload = {key: [dict(row) for row in rows] for key, rows in tables.items()}
     for row in payload["assets"]:
         row["internet_exposed"] = _parse_bool(row.get("internet_exposed"))
-
     return payload
 
 
@@ -576,12 +635,13 @@ def _version_in_range(installed_version: str, range_spec: dict[str, Any]) -> boo
         return None if comparison is None else comparison == 0
 
     comparable = False
-    for field, predicate in (
+    predicates: tuple[tuple[str, Callable[[int], bool]], ...] = (
         ("version_start_including", lambda value: value >= 0),
         ("version_start_excluding", lambda value: value > 0),
         ("version_end_including", lambda value: value <= 0),
         ("version_end_excluding", lambda value: value < 0),
-    ):
+    )
+    for field, predicate in predicates:
         bound = _first_non_empty(range_spec.get(field))
         if not bound:
             continue
@@ -711,18 +771,35 @@ def _load_nvd_cpe_data(path: Path) -> dict[str, list[dict[str, Any]]]:
         return {}
 
     raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        return {}
+    return _parse_nvd_cpe_rows(raw)
+
+
+def _parse_nvd_cpe_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
 
-    for entry in raw:
+    for entry in rows:
         cve = entry.get("cve", {})
+        if not isinstance(cve, dict):
+            continue
         cve_id = cve.get("id", "")
         if not cve_id:
             continue
 
         product_versions: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-        for config in cve.get("configurations", []):
+        configurations = entry.get("configurations")
+        if not isinstance(configurations, list):
+            configurations = cve.get("configurations", [])
+        for config in configurations:
+            if not isinstance(config, dict):
+                continue
             for node in config.get("nodes", []):
+                if not isinstance(node, dict):
+                    continue
                 for match in node.get("cpeMatch", []):
+                    if not isinstance(match, dict):
+                        continue
                     if not match.get("vulnerable", False):
                         continue
                     parsed = _parse_cpe_criteria(match.get("criteria", ""))
@@ -806,7 +883,7 @@ def _pick_latest_fixed_version(versions: list[dict[str, Any]]) -> str | None:
     fixed_versions = [value["fixed_version"] for value in versions if value.get("fixed_version")]
     if not fixed_versions:
         return None
-    return max(fixed_versions)
+    return cast(str, max(fixed_versions))
 
 
 # ---------------------------------------------------------------------------
@@ -825,6 +902,23 @@ def _require_items(input_payload: dict[str, Any], key: str) -> list[dict[str, An
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ValueError(f"Expected '{key}' to be a list of objects")
     return value
+
+
+def _parsed_table_rows(input_payload: dict[str, Any], table_name: str) -> list[dict[str, Any]]:
+    tables = input_payload.get("tables")
+    if not isinstance(tables, dict):
+        raise ValueError("Expected input.tables to be a mapping")
+    table = tables.get(table_name)
+    if not isinstance(table, dict):
+        raise ValueError(f"Expected parsed table '{table_name}'")
+    rows = table.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError(f"Expected parsed table '{table_name}' to contain rows")
+    return [_strip_provider_metadata(row) for row in rows if isinstance(row, dict)]
+
+
+def _strip_provider_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in row.items() if not key.startswith("_")}
 
 
 def _load_csv_rows(path: Path) -> list[dict[str, str]]:

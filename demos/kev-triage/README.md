@@ -125,7 +125,8 @@ flowchart LR
 - Canonical relationships: Asset Has Control, Asset Has Exception, Asset Owned By, Asset Patch Window, Service Depends On Asset
 
 **Provider source**
-- Load Fork Seed Data (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::load_fork_seed_data`; artifact: Fork Seed Bundle
+- Normalize Fork Seed Tables (Python Function, v1.0.0); source: `src/cruxible_core/demo_providers/kev_triage.py::normalize_fork_seed_tables`; artifact: Fork Seed Bundle
+- Parse Fork Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Fork Seed Bundle
 
 ### 2. Propose Asset Products
 

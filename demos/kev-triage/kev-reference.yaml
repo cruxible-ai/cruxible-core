@@ -139,6 +139,20 @@ quality_checks:
 contracts:
   EmptyInput:
     fields: {}
+  TabularParseOptions:
+    description: Options for common tabular artifact parsing.
+    fields:
+      expected_tables: {type: json, optional: true}
+      table_names: {type: json, optional: true}
+      extensions: {type: json, optional: true}
+      normalize_headers: {type: bool, optional: true}
+  ParsedTabularBundle:
+    description: Generic parsed table bundle produced by common tabular providers.
+    fields:
+      artifact: {type: json}
+      tables: {type: json}
+      files: {type: json}
+      diagnostics: {type: json}
   PublicKevRows:
     fields:
       items:
@@ -177,19 +191,32 @@ artifacts:
   public_kev_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:15c4b0f4ae649a073fc198d086390231e1c6e9e383018c25b56c436f464b04c7
+    sha256: sha256:49bcc51014d35773489260bc9de3c084cde097b62e3271daf89f3378e977b40a
 
 providers:
-  load_public_kev_rows:
+  parse_public_kev_bundle:
     kind: function
     description: >
-      Load KEV catalog, EPSS scores, and NVD CPE configurations. Join on
+      Parse the pinned public KEV artifact into generic provenance-rich
+      tabular rows. Domain normalization happens in the next workflow step.
+    contract_in: TabularParseOptions
+    contract_out: ParsedTabularBundle
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+    artifact: public_kev_bundle
+
+  normalize_public_kev_reference:
+    kind: function
+    description: >
+      Join parsed KEV catalog, EPSS scores, and NVD CPE configurations on
       CVE ID, extract CPE-based product identity and version ranges, and
       emit one row per (CVE, CPE product) pair with aggregated
       affected_versions.
-    contract_in: EmptyInput
+    contract_in: ParsedTabularBundle
     contract_out: PublicKevRows
-    ref: cruxible_core.demo_providers.kev_triage.load_public_kev_rows
+    ref: cruxible_core.demo_providers.kev_triage.normalize_public_kev_reference
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -203,9 +230,22 @@ workflows:
       hashed public-data artifact including NVD CPE match data.
     contract_in: EmptyInput
     steps:
+      - id: raw_tables
+        provider: parse_public_kev_bundle
+        input:
+          expected_tables:
+            - known_exploited_vulnerabilities
+            - epss_kev_nvd
+            - nvd_kev_cves
+        as: raw_tables
+
       - id: rows
-        provider: load_public_kev_rows
-        input: {}
+        provider: normalize_public_kev_reference
+        input:
+          artifact: $steps.raw_tables.artifact
+          tables: $steps.raw_tables.tables
+          files: $steps.raw_tables.files
+          diagnostics: $steps.raw_tables.diagnostics
         as: rows
       - id: vendors
         make_entities:
