@@ -168,7 +168,10 @@ class WorkingSourceObservationV1(_StrictAdapterModel):
 
             try:
                 parse_projection_blocks(
-                    content, source_id=self.source.identity, manifests=self.manifest_bytes
+                    content,
+                    source_id=self.source.identity,
+                    manifests=self.manifest_bytes,
+                    allow_bootstrap=True,
                 )
             except ProjectionMarkerError as exc:
                 raise ValueError(str(exc)) from exc

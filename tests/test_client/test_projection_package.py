@@ -185,3 +185,25 @@ def test_package_refuses_noncanonical_archive_and_manifest_path_escape(tmp_path:
     with pytest.raises(ProjectionMarkerError, match="escapes"):
         retain_local_manifests(workspace, {digest: manifest})
     assert not (outside / "manifests").exists()
+
+
+def test_compact_observation_allows_adjacent_unstamped_draft() -> None:
+    stamp = _stamp()
+    digest, manifest = projection_manifest(stamp)
+    page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
+    page += b"<!-- playbill:block:draft -->\nUnfinished prose.\n<!-- /playbill:block:draft -->\n"
+    observation = WorkingSourceObservationV1(
+        source={"plane": "external", "identity": stamp.source_id},
+        content_base64=base64.b64encode(page).decode(),
+        content_digest=observed_commitment(page),
+        byte_length=len(page),
+        projection_manifests={digest: base64.b64encode(manifest).decode()},
+    )
+    blocks = parse_projection_blocks(
+        observation.content,
+        source_id=stamp.source_id,
+        manifests=observation.manifest_bytes,
+        allow_bootstrap=True,
+    )
+    assert blocks[0].stamp == stamp
+    assert blocks[1].stamp is None
