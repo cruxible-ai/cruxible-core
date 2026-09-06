@@ -401,9 +401,13 @@ def record_playbill_floor_output(
         raise PlaybillWorkspaceError("coverage config has an unsupported tag")
     output = existing.get("floor_output")
     if output is not None:
-        if output != _FLOOR_OUTPUT:
+        if output not in (
+            _FLOOR_OUTPUT,
+            {"tag": "playbill-floor-output-v1", "format": "playbill-floor-export-v2"},
+        ):
             raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
-        return path
+        if output == _FLOOR_OUTPUT:
+            return path
     desired = dict(existing)
     desired["tag"] = _WORKSPACE_CONFIG_TAG
     desired["floor_output"] = dict(_FLOOR_OUTPUT)

@@ -169,7 +169,10 @@ def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path
     assert b"/.playbill/coverage.json\n" in (workspace / ".git/info/exclude").read_bytes()
 
 
-def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(tmp_path: Path) -> None:
+@pytest.mark.parametrize("existing_floor", [None, "playbill-floor-export-v2"])
+def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
+    tmp_path: Path, existing_floor: str | None
+) -> None:
     workspace = tmp_path / "workspace"
     config_path = workspace / ".playbill" / "coverage.json"
     config_path.parent.mkdir(parents=True)
@@ -180,6 +183,11 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(tmp_path
                 "server_url": "https://playbill.example.test",
                 "instance_id": "inst_floor",
                 "rules": [],
+                **(
+                    {"floor_output": {"tag": "playbill-floor-output-v1", "format": existing_floor}}
+                    if existing_floor is not None
+                    else {}
+                ),
             }
         ),
         encoding="utf-8",
