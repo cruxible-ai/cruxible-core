@@ -86,3 +86,19 @@ write latency still needs fresh profiling; existing cold floor cost is disclosed
 Deploy matching SDK and daemon; record the resulting project-instance coordinate
 and actual managed workflow timing. Profile on a private instance copy before
 changing the expensive write stages. Lifecycle hooks remain proposed follow-up.
+
+## Managed dogfood follow-ups
+
+After initial integration, the managed installed-client exercise found and fixed:
+
+- `ce453368`: explicitly registering a floor upgrades an existing supported v2
+  output declaration instead of rejecting it; coverage fields are preserved.
+  Workspace scope: 17 passed, including legacy-profile regression.
+- `5109a72d`: canonical Subject paths returned by Claim reads now round-trip into
+  subject authoring arguments. Shorthand yields identical payloads and reference
+  expectations; malformed/fragmented paths still refuse. SDK/HTTP scope: 56 passed.
+
+These are client conveniences, with no new wire schema or accepted digest rule.
+The earlier managed accepted intent reopened in 12 ms through the installed SDK;
+its accepted coordinate survived deployment unchanged. Larger write attribution
+is recorded in `project-write-replay-profile-2026-09-06.md`.

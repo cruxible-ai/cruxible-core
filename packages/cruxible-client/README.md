@@ -47,7 +47,9 @@ Do not reuse old typed references after moving the connection's coordinate.
 
 World attributes return live Claim contenders rather than silently selecting a
 scalar. Use `world.prefetch(subjects=(...), predicates=(...))` for bounded reads
-of known selections, then inspect each Claim's value and verdict. Acceptance and
+of known selections, then inspect each Claim's value and verdict. A returned
+Claim's `subject` path can be passed directly to `pb.claim(subject=...)` or a
+changeset Claim writer when revising it. Acceptance and
 evidential support are distinct: an accepted Claim may remain unsupported under
 its evidence policy.
 
