@@ -232,6 +232,14 @@ def _subject_address(value: str) -> SemanticAddress:
 
 def _address(value: str | TypedRef, expected: RefKind) -> str:
     if isinstance(value, str):
+        if (
+            expected is RefKind.SUBJECT
+            and value.startswith("subjects/")
+            and value.endswith(".json")
+        ):
+            shorthand = value[len("subjects/") : -len(".json")]
+            _subject_parts(shorthand)
+            return shorthand
         return value
     if value.kind is not expected:
         raise ReferenceKindError(

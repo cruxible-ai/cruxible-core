@@ -60,6 +60,33 @@ def test_evidence_choice_and_claim_rationale_remain_required(pb, batch):
         target.claim(**args, self_source="affected package")
 
 
+@pytest.mark.parametrize("batch", [False, True])
+def test_claim_read_subject_path_round_trips_to_authoring(pb, batch):
+    def build(subject):
+        target = pb.changes(rationale="Read-modify-write") if batch else pb
+        args = {**claim_args(), "subject": subject}
+        draft = target.claim(**args, self_source="affected package")
+        return draft._compiled() if batch else draft
+
+    shorthand = build("sec.vuln/cve-2026-0001")
+    returned_path = build("subjects/sec.vuln/cve-2026-0001.json")
+    assert returned_path.payload == shorthand.payload
+    assert returned_path.reference_expectations == shorthand.reference_expectations
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "subjects/../sec.vuln/cve-2026-0001.json",
+        "subjects/sec.vuln/cve-2026-0001.json/extra.json",
+        "subjects/sec.vuln/cve-2026-0001.json#fragment",
+    ],
+)
+def test_noncanonical_read_subject_paths_are_refused(pb, subject):
+    with pytest.raises(ValueError, match="canonical"):
+        pb.claim(**{**claim_args(), "subject": subject}, self_source="affected package")
+
+
 def test_proposal_uses_submit_result_without_status_read(pb, monkeypatch):
     intent = pb.claim(**claim_args(), self_source="affected package").prepare()
     assert intent.proposal is None
