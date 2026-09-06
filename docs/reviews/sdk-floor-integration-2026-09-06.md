@@ -102,3 +102,27 @@ These are client conveniences, with no new wire schema or accepted digest rule.
 The earlier managed accepted intent reopened in 12 ms through the installed SDK;
 its accepted coordinate survived deployment unchanged. Larger write attribution
 is recorded in `project-write-replay-profile-2026-09-06.md`.
+
+The actual authenticated installed-client project loop completed with two existing
+note revisions, preserving their previous contents and priorities. Intent IDs
+crossed process boundaries for submission, acceptance and readback. Exact candidate
+self-review confirmed the two authored replacements and unchanged governance;
+existing snapshot policy required no approval attestations. Both accepted Claim
+values read back as supported. Raw evidence: `sdk-managed-loop-2026-09-06.json`.
+
+| Actual project-world operation | Single sample |
+|---|---:|
+| Prepare, first authoring after restart | 12.038 s |
+| Reopen prepared intent | 0.004 s |
+| Submit | 10.812 s |
+| Review | 0.503 s |
+| Reopen submitted intent | 0.025 s |
+| Accept | 12.013 s |
+| Read back both accepted values | 0.929 s |
+| First v3 floor refresh at new generation | 6.618 s |
+| Repeated v3 floor refresh including HTTP and verified installation | 0.130 s |
+
+These numbers are not a before/after write benchmark: the prior checkpoint had
+seven members, and cold/warm conditions differ. Write latency remains unresolved.
+The canonical workspace now has the full current-state v3 floor; the instance,
+accepted ledger and independently reproducible derivatives retain their roles.
