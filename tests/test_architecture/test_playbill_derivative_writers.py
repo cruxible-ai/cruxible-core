@@ -179,20 +179,13 @@ def test_sanctioned_writer_inventory_matches_primitive_callers() -> None:
 
 
 def test_one_writer_frames_derivative_text_and_the_scan_proves_it() -> None:
-    """Two writers, both writing one marker line, and the scan keeps it there.
+    """Two framing writers, neither inventing prose, and a scan of every caller.
 
-    It was three, and the third rendered. The publication road that wrote a
-    Claim into its own page is deleted and `block sync` no longer converges a
-    block body, so nothing renders derivative TEXT any more. What is left both
-    writes the same single line: `block repin` stamps a block on a backing list
-    the author names, and `block sync --accept-local` stamps it on the prose the
-    author wrote. Neither invents a body; both prove their output with
-    `assert_projection_block_frame`. `--detach` is the third write and frames
-    nothing at all -- it strips a marker pair, and proves that by re-parsing and
-    by digesting the bytes outside the spans it touched. Declaring the inventory
-    would prove nothing; the scan below enumerates every caller of the framing
-    primitives in the whole tree and refuses any that is not sanctioned, so
-    rendering reappearing anywhere fails here first.
+    Repin can install explicitly supplied agent-authored body bytes; accept-local
+    only updates the opening marker on existing prose. Both prove their output
+    with assert_projection_block_frame. Detachment strips markers and verifies
+    outside bytes. Portable package installation restores already verified bytes;
+    it does not call a framing or prose-generation primitive.
     """
 
     assert set(SANCTIONED_CALLERS) == {"projection_repin", "projection_accept_local"}

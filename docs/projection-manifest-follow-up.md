@@ -1,4 +1,11 @@
-# Compact projection manifests: remaining design slice
+# Compact projection manifests: implementation status
+
+The v1 SDK package and floor batch implements this design slice. See
+[the current contract and usage guide](searchable-floor-and-view-packages.md).
+Local refresh uses retained sidecars; durable exact-view recovery is an explicit
+reviewed exact-content package Claim, not an implicit approval on every refresh.
+The design rationale below records the integrity requirements that informed it.
+
 
 A compact marker should reference immutable canonical bytes of the complete
 backing declaration. `ProjectionBlockStampV1` already contains the authored
@@ -34,6 +41,6 @@ The slice must update all consumers together:
 Document writes must retain the manifest before referencing it. New wire and
 marker versions must preserve old bytes and commitments. The feature should
 ship with offline, missing-manifest, corruption, identity substitution, bounded
-resolution, and rebuild tests. It is deliberately deferred from the initial
-state-loop performance pass rather than implemented as a local-only marker
-rewrite that other authoritative consumers cannot interpret.
+resolution, and rebuild tests. It was deferred from the initial state-loop performance pass so the shared
+parser, coverage observation path, and portable retention mechanism could ship
+together.
