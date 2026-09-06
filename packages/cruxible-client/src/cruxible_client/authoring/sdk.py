@@ -914,7 +914,7 @@ class Intent:
     def __init__(
         self,
         playbill: Playbill,
-        draft: _IntentDraft,
+        draft: _IntentDraft | None,
         raw: Mapping[str, object],
         *,
         preflight: api.PlaybillAuthoringPreflightResult | None = None,
@@ -990,7 +990,9 @@ class Intent:
                     repair=tuple(repairs) if isinstance(repairs, list) else (),
                     owner=cast(str | None, raw.get("owner")),
                     disposition=cast(str | None, raw.get("disposition")),
-                    call_site=self._draft.source_map.locate(offending),
+                    call_site=(
+                        None if self._draft is None else self._draft.source_map.locate(offending)
+                    ),
                 )
             )
         return tuple(result)
@@ -1004,7 +1006,7 @@ class Intent:
     def proposal(self) -> Proposal | None:
         """Last observed proposal identity, without a server read.
 
-        Populated by submit() or status(); None means no proposal was observed
+        Populated by resume_intent(), submit() or status(); None means no proposal was observed
         for this local intent revision. Call status() for fresh server state.
         This handle is not review, approval, or proof of activation eligibility.
         """
@@ -1596,6 +1598,27 @@ class Playbill:
             prediction_id=result.prediction_id,
             outcome=outcome,
             relation=result.relation,
+        )
+
+    def resume_intent(self, intent_id: str) -> Intent:
+        """Read an existing intent after interruption, without submitting it.
+
+        Restores the daemon's latest revision, preflight and observed proposal.
+        Python call-site locations are process-local and are not reconstructed.
+        Review, approval, acceptance and workspace refresh remain explicit.
+        """
+        raw = self._client.resume_playbill_authoring_intent(self._instance_id, intent_id).intent
+        preflight = raw.get("last_preflight")
+        return Intent(
+            self,
+            None,
+            raw,
+            preflight=(
+                None
+                if preflight is None
+                else api.PlaybillAuthoringPreflightResult.model_validate(preflight)
+            ),
+            candidate_status=api.PlaybillCandidateStatus.model_validate(raw["candidate_status"]),
         )
 
     def proposal(self, proposal_id: str) -> Proposal:

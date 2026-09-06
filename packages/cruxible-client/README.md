@@ -58,6 +58,24 @@ returns a typed unavailable refusal; it is not a supported derivation writer.
 
 ## Review and approve an exact candidate
 
+Save `intent.intent_id` after preparation. After a process interruption, reopen
+the daemon-owned work through the same instance and authenticated actor:
+
+```python
+intent = pb.resume_intent(saved_intent_id)
+if intent.refused:
+    print(intent.diagnostics)
+proposal = intent.proposal  # Last observed proposal, without another HTTP call.
+status = intent.status()    # Explicitly check the current lifecycle state.
+```
+
+Resuming reads the latest revision and persisted preflight diagnostics. It does
+not prepare again, submit, approve, accept, or refresh the local floor. In
+particular, recover an uncertain submission this way before deciding what to do
+next. Python call-site locations and response-only lint warnings are not persisted
+and are unavailable on the reopened handle. Review tokens are also process-local;
+review the proposal again before signing in a new process.
+
 Your operator supplies an `ApprovalSigner` capability, configured for an existing
 accepted principal. The agent does not discover a key, select its own authority,
 or send private key bytes to the daemon.

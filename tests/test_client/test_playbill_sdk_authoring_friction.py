@@ -123,3 +123,52 @@ def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
     else:
         getattr(intent, operation)(**options)
     assert intent.proposal is None
+
+
+@pytest.mark.parametrize("state", ["draft", "preflight_refused", "ready_to_submit", "accepted"])
+def test_resume_restores_server_revision_without_repeating_work(pb, monkeypatch, state):
+    preflight = None
+    if state != "draft":
+        preflight = api.PlaybillAuthoringPreflightResult(
+            verdict="refused" if state == "preflight_refused" else "passed",
+            certificate={"intent_id": "saved-intent"},
+            frontier={"diagnostics": [{"code": "example", "message": "Recorded diagnostic"}]},
+        ).model_dump(mode="json")
+    status = api.PlaybillCandidateStatus(
+        state=state,
+        proposal_id="saved-proposal" if state == "accepted" else None,
+        accepted_generation=_COORDINATE if state == "accepted" else None,
+        current_accepted_coordinate=_COORDINATE,
+    )
+    raw = dict(
+        intent_id="saved-intent",
+        intent_revision=3,
+        last_preflight=preflight,
+        candidate_status=status.model_dump(mode="json"),
+    )
+    calls = []
+
+    def resume(instance_id, intent_id):
+        calls.append((instance_id, intent_id))
+        return api.PlaybillAuthoringIntentView(intent=raw)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Reopening must not compile, prepare, submit, or query status again")
+
+    monkeypatch.setattr(pb._client, "resume_playbill_authoring_intent", resume, raising=False)
+    for name in (
+        "compile_playbill_authoring",
+        "preflight_playbill_authoring_intent",
+        "submit_playbill_authoring_intent",
+        "playbill_authoring_intent_status",
+    ):
+        monkeypatch.setattr(pb._client, name, forbidden, raising=False)
+    intent = pb.resume_intent("saved-intent")
+    assert intent.intent_id == "saved-intent" and intent.revision == 3
+    assert intent.refused == (state == "preflight_refused")
+    assert intent._candidate_status == status
+    assert (intent.proposal is not None) == (state == "accepted")
+    if intent.proposal is not None:
+        assert intent.proposal.proposal_id == "saved-proposal"
+    assert all(d.call_site is None for d in intent.diagnostics)
+    assert calls == [("inst_test", "saved-intent")]

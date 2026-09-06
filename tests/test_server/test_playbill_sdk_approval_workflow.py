@@ -11,13 +11,31 @@ from cruxible_client import LocalEd25519ApprovalSigner, Playbill
 from cruxible_client.transport.http import CruxibleClient
 
 
-def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path) -> None:
+def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path, monkeypatch) -> None:
     http, instance_id, private_path = playbill_http
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
     workspace = tmp_path / "demo-workspace"
     workspace.mkdir()
     pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    # Lose the local draft and then the submission response. Both recovery
+    # boundaries must reuse the daemon-owned intent and candidate identities.
+    from cruxible_client.authoring.sdk import Intent
+
+    submit = Intent.submit
+    recovered = []
+
+    def submit_after_reopen(intent):
+        reopened = pb.resume_intent(intent.intent_id)
+        assert reopened.revision == intent.revision and not reopened.refused
+        submit(reopened)
+        again = pb.resume_intent(intent.intent_id)
+        assert again.proposal.proposal_id == reopened.proposal.proposal_id
+        recovered.append(again.proposal.proposal_id)
+        intent._candidate_status = again._candidate_status
+        return intent
+
+    monkeypatch.setattr(Intent, "submit", submit_after_reopen)
     private = serialization.load_ssh_private_key(private_path.read_bytes(), password=None)
     signer = LocalEd25519ApprovalSigner.open(
         signer_id="reviewer",
@@ -44,3 +62,4 @@ def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path) -
     assert len(reviews) == 2 and reviews[0] != reviews[1]
     assert result["value"] == 49 and result["verdict"] == "supported"
     assert result["revision"] == 2
+    assert len(set(recovered)) == 2
