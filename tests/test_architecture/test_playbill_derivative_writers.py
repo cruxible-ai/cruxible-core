@@ -25,7 +25,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PRIMITIVE_DEFINITION = (
     REPO_ROOT / "packages/cruxible-client/src/cruxible_client/contracts/declared_blocks.py"
 )
-PRIMITIVES = {"frame_projection_block", "render_projection_opening"}
+PRIMITIVES = {
+    "frame_projection_block",
+    "render_projection_opening",
+    "render_compact_projection_opening",
+}
 # The card renderers live beside the writer that calls them, so the scan skips
 # nothing: every caller in the tree is enumerated and must be sanctioned.
 CARD_PRIMITIVE_DEFINITION: Path | None = None
@@ -49,7 +53,7 @@ SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]
     f"{_BLOCKS}::repin_projection_block": (
         repin_projection_block,
         "assert_projection_block_frame",
-        ("replace one declared block's opening marker",),
+        ("replace one declared block marker and explicitly supplied authored body",),
     ),
     f"{_BLOCKS}::_apply_projection_restamps": (
         _apply_projection_restamps,

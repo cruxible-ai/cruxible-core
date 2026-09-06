@@ -7,7 +7,7 @@ import binascii
 import hashlib
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
@@ -49,6 +49,9 @@ MAX_PROJECTION_COVERAGE_BINDINGS = 1024
 
 _BLOCK_ID = rb"[a-z][a-z0-9_.-]{0,63}"
 _STAMPED_OPEN = re.compile(rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):([A-Za-z0-9_-]+) -->\n")
+_COMPACT_OPEN = re.compile(
+    rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):ref:(sha256:[0-9a-f]{64}) -->\n"
+)
 _BOOTSTRAP_OPEN = re.compile(rb"<!-- playbill:block:(" + _BLOCK_ID + rb") -->\n")
 _CLOSE = re.compile(rb"<!-- /playbill:block:(" + _BLOCK_ID + rb") -->\n")
 _FENCE_OPEN = re.compile(rb" {0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n?$")
@@ -439,6 +442,52 @@ def render_projection_opening(stamp: ProjectionBlockStampV1) -> bytes:
     return b"<!-- playbill:block:" + stamp.block_id.encode("ascii") + b":" + encoded + b" -->\n"
 
 
+def projection_manifest(stamp: ProjectionBlockStampV1) -> tuple[str, bytes]:
+    """The exact authored declaration, addressed by full SHA-256."""
+    content = canonical_bytes(stamp.model_dump(mode="json"))
+    if len(content) > MAX_PROJECTION_STAMP_BYTES:
+        raise ProjectionMarkerError("projection manifest exceeds its byte ceiling")
+    return "sha256:" + hashlib.sha256(content).hexdigest(), content
+
+
+def render_compact_projection_opening(stamp: ProjectionBlockStampV1) -> bytes:
+    digest, _ = projection_manifest(stamp)
+    return (
+        b"<!-- playbill:block:"
+        + stamp.block_id.encode("ascii")
+        + b":ref:"
+        + digest.encode("ascii")
+        + b" -->\n"
+    )
+
+
+def projection_manifest_refs(content: bytes) -> tuple[str, ...]:
+    """Discover only exact compact references, without resolving their authority."""
+    if len(content) > MAX_PROJECTION_SOURCE_BYTES:
+        raise ProjectionMarkerError("projection source exceeds its byte ceiling")
+    refs = set()
+    for line, _, _ in _marker_candidate_lines(content):
+        match = _COMPACT_OPEN.fullmatch(line)
+        if match:
+            refs.add(match.group(2).decode("ascii"))
+            if len(refs) > MAX_PROJECTION_BLOCKS_PER_SOURCE:
+                raise ProjectionMarkerError("projection manifest count exceeds its ceiling")
+    return tuple(sorted(refs))
+
+
+def _resolve_projection_manifest(
+    digest: str, manifests: Mapping[str, bytes] | None
+) -> ProjectionBlockStampV1:
+    if manifests is None or digest not in manifests:
+        raise ProjectionMarkerError(f"projection manifest is unavailable: {digest}")
+    content = manifests[digest]
+    if len(content) > MAX_PROJECTION_STAMP_BYTES:
+        raise ProjectionMarkerError("projection manifest exceeds its byte ceiling")
+    if "sha256:" + hashlib.sha256(content).hexdigest() != digest:
+        raise ProjectionMarkerError("projection manifest digest does not reproduce")
+    return _parse_projection_stamp(base64.urlsafe_b64encode(content).rstrip(b"="))
+
+
 def render_projection_closing(block_id: str) -> bytes:
     if re.fullmatch(_BLOCK_ID, block_id.encode("ascii", errors="strict")) is None:
         raise ProjectionMarkerError("projection block ID is malformed")
@@ -526,7 +575,7 @@ def declares_projection_block(content: bytes) -> bool:
     for line, _line_start, _offset in _marker_candidate_lines(content):
         if line != line.lstrip(b" ") or line.endswith(b"\r\n"):
             continue
-        if _STAMPED_OPEN.fullmatch(line) is not None:
+        if _STAMPED_OPEN.fullmatch(line) is not None or _COMPACT_OPEN.fullmatch(line) is not None:
             return True
         bootstrap = _BOOTSTRAP_OPEN.fullmatch(line)
         if bootstrap is not None:
@@ -580,7 +629,7 @@ def stamped_projection_windows(content: bytes) -> tuple[ProjectionWindow, ...]:
     for line, line_start, offset in _marker_candidate_lines(content):
         if line != line.lstrip(b" ") or line.endswith(b"\r\n"):
             continue
-        stamped = _STAMPED_OPEN.fullmatch(line)
+        stamped = _STAMPED_OPEN.fullmatch(line) or _COMPACT_OPEN.fullmatch(line)
         if stamped is not None:
             if active is not None:
                 windows.append(ProjectionWindow(active[0], active[1], line_start))
@@ -615,6 +664,7 @@ def _parse_projection_blocks(
     *,
     source_id: str | None,
     allow_bootstrap: bool = False,
+    manifests: Mapping[str, bytes] | None = None,
 ) -> tuple[ParsedProjectionBlock, ...]:
     """Parse one complete source, refusing every ambiguous declaration boundary."""
 
@@ -625,6 +675,11 @@ def _parse_projection_blocks(
     except UnicodeError as exc:
         raise ProjectionMarkerError("projection source is not valid UTF-8") from exc
 
+    if manifests is not None and (
+        len(manifests) > MAX_PROJECTION_BLOCKS_PER_SOURCE
+        or sum(len(value) for value in manifests.values()) > MAX_PROJECTION_SOURCE_BYTES
+    ):
+        raise ProjectionMarkerError("projection manifest package exceeds its byte/count ceiling")
     active: tuple[str, ProjectionBlockStampV1 | None, int, int] | None = None
     seen: set[str] = set()
     blocks: list[ParsedProjectionBlock] = []
@@ -635,9 +690,10 @@ def _parse_projection_blocks(
         if line.endswith(b"\r\n"):
             raise ProjectionMarkerError("projection marker must use an LF-only line ending")
         stamped = _STAMPED_OPEN.fullmatch(line)
+        compact = _COMPACT_OPEN.fullmatch(line)
         bootstrap = _BOOTSTRAP_OPEN.fullmatch(line)
         closing = _CLOSE.fullmatch(line)
-        if stamped is None and bootstrap is None and closing is None:
+        if stamped is None and compact is None and bootstrap is None and closing is None:
             raise ProjectionMarkerError("projection marker has malformed grammar")
         if closing is not None:
             block_id = closing.group(1).decode("ascii")
@@ -663,7 +719,7 @@ def _parse_projection_blocks(
             continue
         if active is not None:
             raise ProjectionMarkerError("projection blocks cannot nest or overlap")
-        opening = stamped if stamped is not None else bootstrap
+        opening = stamped if stamped is not None else compact if compact is not None else bootstrap
         assert opening is not None
         block_id = opening.group(1).decode("ascii")
         if block_id in seen:
@@ -671,8 +727,12 @@ def _parse_projection_blocks(
         if len(seen) >= MAX_PROJECTION_BLOCKS_PER_SOURCE:
             raise ProjectionMarkerError("projection source exceeds its 128-block ceiling")
         seen.add(block_id)
-        if stamped is not None:
-            stamp = _parse_projection_stamp(stamped.group(2))
+        if stamped is not None or compact is not None:
+            stamp = (
+                _parse_projection_stamp(stamped.group(2))
+                if stamped is not None
+                else _resolve_projection_manifest(opening.group(2).decode("ascii"), manifests)
+            )
             if stamp.block_id != block_id:
                 raise ProjectionMarkerError("projection stamp block differs from its marker")
             if source_id is None:
@@ -700,6 +760,7 @@ def parse_projection_blocks(
     *,
     source_id: str,
     allow_bootstrap: bool = False,
+    manifests: Mapping[str, bytes] | None = None,
 ) -> tuple[ParsedProjectionBlock, ...]:
     """Parse one complete source using its known logical source identity."""
 
@@ -707,19 +768,24 @@ def parse_projection_blocks(
         content,
         source_id=source_id,
         allow_bootstrap=allow_bootstrap,
+        manifests=manifests,
     )
 
 
-def discover_projection_blocks(content: bytes) -> tuple[ParsedProjectionBlock, ...]:
+def discover_projection_blocks(
+    content: bytes, *, manifests: Mapping[str, bytes] | None = None
+) -> tuple[ParsedProjectionBlock, ...]:
     """Parse stamped blocks while discovering their one logical source identity."""
 
-    blocks = _parse_projection_blocks(content, source_id=None)
+    blocks = _parse_projection_blocks(content, source_id=None, manifests=manifests)
     if not blocks:
         raise ProjectionMarkerError("source contains no stamped projection blocks")
     return blocks
 
 
-def frame_projection_block(*, stamp: ProjectionBlockStampV1, body: bytes) -> bytes:
+def frame_projection_block(
+    *, stamp: ProjectionBlockStampV1, body: bytes, compact: bool = False
+) -> bytes:
     """Mechanically frame accepted bytes and prove the one frozen marker grammar."""
 
     try:
@@ -728,8 +794,14 @@ def frame_projection_block(*, stamp: ProjectionBlockStampV1, body: bytes) -> byt
         raise ProjectionMarkerError("projection body is not valid UTF-8") from exc
     if not body.endswith(b"\n"):
         raise ProjectionMarkerError("projection body must end with LF")
-    framed = render_projection_opening(stamp) + body + render_projection_closing(stamp.block_id)
-    blocks = parse_projection_blocks(framed, source_id=stamp.source_id)
+    opening = (
+        render_compact_projection_opening(stamp) if compact else render_projection_opening(stamp)
+    )
+    framed = opening + body + render_projection_closing(stamp.block_id)
+    digest, manifest = projection_manifest(stamp)
+    blocks = parse_projection_blocks(
+        framed, source_id=stamp.source_id, manifests={digest: manifest} if compact else None
+    )
     if len(blocks) != 1 or blocks[0].stamp != stamp or blocks[0].body_digest != stamp.body_digest:
         raise ProjectionMarkerError("framed projection body is ambiguous under the marker grammar")
     return framed
@@ -745,6 +817,7 @@ def assert_projection_block_frame(
     start_byte: int | None = None,
     end_byte: int | None = None,
     allow_bootstrap: bool = False,
+    manifests: Mapping[str, bytes] | None = None,
 ) -> ParsedProjectionBlock:
     """Return the one exact block or refuse a malformed sanctioned write."""
 
@@ -754,6 +827,7 @@ def assert_projection_block_frame(
             content,
             source_id=source_id,
             allow_bootstrap=allow_bootstrap,
+            manifests=manifests,
         )
         if block.block_id == block_id
     )
@@ -830,6 +904,9 @@ __all__ = [
     "projection_window_intersecting",
     "render_projection_closing",
     "render_projection_opening",
+    "render_compact_projection_opening",
+    "projection_manifest",
+    "projection_manifest_refs",
     "stamped_projection_windows",
     "upgrade_playbill_presentation_policy",
 ]

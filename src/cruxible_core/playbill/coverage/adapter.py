@@ -146,6 +146,7 @@ class WorkingSourceObservationV1(_StrictAdapterModel):
     )
     source: LogicalSourceIdentityV1
     content_base64: str
+    projection_manifests: dict[str, str] = Field(default_factory=dict)
     content_digest: str
     byte_length: int = Field(ge=0)
     selections: tuple[CoverageSelectionV1, ...] = ()
@@ -159,6 +160,18 @@ class WorkingSourceObservationV1(_StrictAdapterModel):
     @model_validator(mode="after")
     def _observation_reproduces(self) -> "WorkingSourceObservationV1":
         content = self.content
+        if self.projection_manifests:
+            from cruxible_client.contracts.declared_blocks import (
+                ProjectionMarkerError,
+                parse_projection_blocks,
+            )
+
+            try:
+                parse_projection_blocks(
+                    content, source_id=self.source.identity, manifests=self.manifest_bytes
+                )
+            except ProjectionMarkerError as exc:
+                raise ValueError(str(exc)) from exc
         if len(content) != self.byte_length:
             raise ValueError("observed byte length does not match the observed content")
         if observed_commitment(content) != self.content_digest:
@@ -170,6 +183,18 @@ class WorkingSourceObservationV1(_StrictAdapterModel):
             if item.end_byte > self.byte_length:
                 raise ValueError("an observation selection may not run past the observed content")
         return self
+
+    @property
+    def manifest_bytes(self) -> dict[str, bytes]:
+        if (
+            len(self.projection_manifests) > 128
+            or sum(len(value) for value in self.projection_manifests.values()) > 6 * 1024 * 1024
+        ):
+            raise ValueError("projection manifest observation exceeds its budget")
+        return {
+            key: base64.b64decode(value, validate=True)
+            for key, value in self.projection_manifests.items()
+        }
 
     @property
     def content(self) -> bytes:

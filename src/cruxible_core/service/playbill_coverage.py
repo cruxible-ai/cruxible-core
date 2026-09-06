@@ -642,6 +642,7 @@ def _bound_publication_observations(
                 parsed_by_source[preparation.source_id] = parse_projection_blocks(
                     observed.content,
                     source_id=preparation.source_id,
+                    manifests=observed.manifest_bytes,
                 )
             except ProjectionMarkerError:
                 parsed_by_source[preparation.source_id] = ()

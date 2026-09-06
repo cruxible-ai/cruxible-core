@@ -28,6 +28,7 @@ from cruxible_client.authoring.blocks import (
     parse_projection_blocks,
     sync_projection_blocks,
 )
+from cruxible_client.authoring.projection_package import load_projection_manifests
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
@@ -886,11 +887,30 @@ def _unobserved_projection_source(
     }
 
 
+def _manifest_observation(root: Path, content: bytes) -> dict[str, object]:
+    try:
+        manifests = load_projection_manifests(root, content)
+    except ProjectionMarkerError:
+        return {}
+    if not manifests:
+        return {}
+    return {
+        "projection_manifests": {
+            key: base64.b64encode(body).decode("ascii") for key, body in manifests.items()
+        }
+    }
+
+
 def _projection_marker_observation(
-    source_id: str, content: bytes
+    source_id: str, content: bytes, *, workspace: Path
 ) -> tuple[list[dict[str, object]], tuple[str, ...]]:
     try:
-        blocks = parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True)
+        blocks = parse_projection_blocks(
+            content,
+            source_id=source_id,
+            allow_bootstrap=True,
+            manifests=load_projection_manifests(workspace, content),
+        )
     except (ProjectionMarkerError, ValueError):
         return [], ("projection_marker_invalid",)
     marker_notes = (
@@ -961,6 +981,7 @@ def observe_playbill_projection_coverage(
                 content,
                 source_id=document_entry.name,
                 allow_bootstrap=True,
+                manifests=load_projection_manifests(root, content),
             )
         except (ProjectionMarkerError, ValueError):
             claims_complete = False
@@ -1374,6 +1395,7 @@ def observe_playbill_next_workspace_with_coverage(
                     "identity": source_id,
                 },
                 "content_base64": base64.b64encode(content).decode("ascii"),
+                **_manifest_observation(root, content),
                 "content_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
                 "byte_length": len(content),
                 "selections": [],
@@ -1432,7 +1454,7 @@ def observe_playbill_next_workspace_with_coverage(
 
     enriched: dict[str, dict[str, object]] = {}
     for source_id, content in material.items():
-        markers, marker_notes = _projection_marker_observation(source_id, content)
+        markers, marker_notes = _projection_marker_observation(source_id, content, workspace=root)
         notes: list[str] = []
         if not coordinate_matches:
             notes.append("coverage_coordinate_mismatch")

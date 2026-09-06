@@ -14,6 +14,10 @@ from cruxible_client.authoring.insertions import (
     PlaybillInsertionApplyError,
     replace_publication_file,
 )
+from cruxible_client.authoring.projection_package import (
+    load_projection_manifests,
+    retain_local_manifests,
+)
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
@@ -38,9 +42,12 @@ from cruxible_client.contracts.declared_blocks import (
     discover_projection_blocks,
     frame_projection_block,
     parse_projection_blocks,
+    projection_manifest,
+    projection_manifest_refs,
     projection_parameter_digest,
     projection_query_semantic_result_digest,
     projection_window_intersecting,
+    render_compact_projection_opening,
     render_projection_opening,
 )
 from cruxible_client.contracts.errors import PlaybillError
@@ -406,7 +413,9 @@ def _discover_source(
             error=exc,
         )
     try:
-        blocks = discover_projection_blocks(content)
+        blocks = discover_projection_blocks(
+            content, manifests=load_projection_manifests(root, content)
+        )
         source_ids = {block.source_id for block in blocks}
         if len(source_ids) != 1:
             raise ProjectionMarkerError("projection markers disagree on logical source")
@@ -543,6 +552,7 @@ def _apply_projection_restamps(
     instance_id: str,
     *,
     items: list[PlaybillBlockSyncItemV1],
+    root: Path,
     path: Path,
     relative: str,
     source_id: str,
@@ -558,15 +568,25 @@ def _apply_projection_restamps(
     the other direction.
     """
 
+    manifests = load_projection_manifests(root, content)
     replacement = content
     for block, stamp, _index in sorted(
         restamps, key=lambda item: item[0].opening_start, reverse=True
     ):
+        compact = b":ref:sha256:" in content[block.opening_start : block.opening_end]
+        if compact:
+            digest, manifest = projection_manifest(stamp)
+            manifests[digest] = manifest
         replacement = (
             replacement[: block.opening_start]
-            + render_projection_opening(stamp)
+            + (
+                render_compact_projection_opening(stamp)
+                if compact
+                else render_projection_opening(stamp)
+            )
             + replacement[block.opening_end :]
         )
+    manifests = {key: manifests[key] for key in projection_manifest_refs(replacement)}
     try:
         for _block, stamp, _index in restamps:
             assert_projection_block_frame(
@@ -576,6 +596,7 @@ def _apply_projection_restamps(
                 stamp=stamp,
                 body_digest=stamp.body_digest,
                 allow_bootstrap=True,
+                manifests=manifests,
             )
     except ProjectionMarkerError as exc:
         for _block, _stamp, index in restamps:
@@ -590,6 +611,7 @@ def _apply_projection_restamps(
         return
     if check:
         return
+    retain_local_manifests(root, manifests)
     try:
         replace_publication_file(path, expected=content, replacement=replacement)
     except PlaybillInsertionApplyError as exc:
@@ -763,7 +785,12 @@ def sync_projection_blocks(
             items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
             continue
         try:
-            blocks = parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True)
+            blocks = parse_projection_blocks(
+                content,
+                source_id=source_id,
+                allow_bootstrap=True,
+                manifests=load_projection_manifests(root, content),
+            )
         except ProjectionMarkerError as exc:
             # `--all` walks the whole catalog, and a catalogued source is a
             # source, not necessarily a projection page: a captured report ABOUT
@@ -976,6 +1003,7 @@ def sync_projection_blocks(
                 client,
                 instance_id,
                 items=items,
+                root=root,
                 path=path,
                 relative=relative,
                 source_id=source_id,
@@ -1009,7 +1037,10 @@ def sync_projection_blocks(
             if before_outside != after_outside:
                 raise ProjectionSyncError("bytes outside synchronized markers changed")
             final_blocks = parse_projection_blocks(
-                replacement, source_id=source_id, allow_bootstrap=True
+                replacement,
+                source_id=source_id,
+                allow_bootstrap=True,
+                manifests=load_projection_manifests(root, replacement),
             )
             # Detachment is the only edit this verb makes. Nothing renders a
             # block body, so nothing rewrites one, and the only proof left to
@@ -1068,17 +1099,30 @@ def repin_projection_block(
     backing_digest: str | None = None,
     evaluation_time: datetime,
     coordinate: AcceptedCoordinate | None = None,
+    body: bytes | None = None,
+    compact: bool = False,
 ) -> ProjectionBlockStampV1:
-    """Stamp one agent-authored block by replacing its opening line and nothing else."""
+    """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
+
+    Omitted body preserves prose. Compact references are retained locally before
+    the page write; use a reviewed exact-content package Claim for ledger recovery.
+    The whole-file compare-and-swap preserves concurrent author edits.
+    """
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ProjectionRepinError("projection repin requires an absolute evaluation time")
     instant = ensure_utc(evaluation_time)
     formatted = cast(str, format_datetime(instant))
-    sources = WorkspaceSources(Path(workspace))
+    root = Path(workspace).resolve()
+    sources = WorkspaceSources(root)
     path = sources.path_for_source(source_id)
     content = path.read_bytes()
-    blocks = parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True)
+    blocks = parse_projection_blocks(
+        content,
+        source_id=source_id,
+        allow_bootstrap=True,
+        manifests=load_projection_manifests(root, content),
+    )
     block = next((item for item in blocks if item.block_id == block_id), None)
     if block is None:
         raise ProjectionRepinError(f"source {source_id!r} has no block {block_id!r}")
@@ -1164,19 +1208,33 @@ def repin_projection_block(
             )
             for name, parameters in query_refs
         )
+    body_content = content[block.body_start : block.body_end] if body is None else body
+    if not body_content.endswith(b"\n"):
+        raise ProjectionRepinError("projection body must end with LF")
     stamp = ProjectionBlockStampV1(
         source_id=source_id,
         block_id=block_id,
         declared_generation=generation,
         declared_coordinate=active,
         backing=tuple(sorted(backing, key=lambda item: item.identity.qualified.encode("utf-8"))),
-        body_digest=block.body_digest,
+        body_digest=_digest(body_content),
     )
+    compact = compact or b":ref:sha256:" in content[block.opening_start : block.opening_end]
+    manifests = load_projection_manifests(root, content)
+    if compact:
+        digest, manifest = projection_manifest(stamp)
+        manifests[digest] = manifest
     replacement = (
         content[: block.opening_start]
-        + render_projection_opening(stamp)
-        + content[block.opening_end :]
+        + (
+            render_compact_projection_opening(stamp)
+            if compact
+            else render_projection_opening(stamp)
+        )
+        + body_content
+        + content[block.body_end :]
     )
+    manifests = {key: manifests[key] for key in projection_manifest_refs(replacement)}
     try:
         assert_projection_block_frame(
             replacement,
@@ -1185,9 +1243,11 @@ def repin_projection_block(
             stamp=stamp,
             body_digest=stamp.body_digest,
             allow_bootstrap=True,
+            manifests=manifests,
         )
     except ProjectionMarkerError as exc:
         raise ProjectionRepinError("replacement does not reproduce the declared block") from exc
+    retain_local_manifests(root, manifests)
     try:
         replace_publication_file(path, expected=content, replacement=replacement)
     except PlaybillInsertionApplyError as exc:
