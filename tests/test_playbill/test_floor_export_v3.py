@@ -23,13 +23,16 @@ def test_floor_v3_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
     ]
     assert len(changes) == 2
     assert any(
-        row["proposal_id"] and row["reported_actor"] == "owner" for change in changes for row in change["review_context"]
+        row["proposal_id"] and row["reported_actor"] == "owner"
+        for change in changes
+        for row in change["review_context"]
     )
     assert not any(path.startswith(("history/", "evidence/", "cas/")) for path in files)
     assert b"status: ready" not in b"".join(files.values())
     # The immutable note snapshot, not a moving ref, is a rebuild input.
     pinned = snapshot["evaluation_notes_oid"]
     instance.floor_export_memo.clear()
+    instance.floor_structure_memo.clear()
     instance.floor_history_memo.clear()
     instance.floor_review_memo.clear()
     assert service_export_playbill_floor(instance, review_notes_oid=pinned) == files
@@ -39,6 +42,12 @@ def test_floor_v3_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
 
     monkeypatch.setattr(instance, "tree_at", no_tree)
     assert service_export_playbill_floor(instance, review_notes_oid=pinned) == files
+    # A changed review-context snapshot must not reconstruct accepted content.
+    changed_context = service_export_playbill_floor(instance, review_notes_oid="absent")
+    assert (
+        changed_context["current/project.work_item/wi-42.json"]
+        == files["current/project.work_item/wi-42.json"]
+    )
     # Returned maps are caller-owned; mutation must not poison cached exports.
     files.pop("README.md")
     assert "README.md" in service_export_playbill_floor(instance, review_notes_oid=pinned)

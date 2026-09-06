@@ -252,6 +252,7 @@ class PlaybillInstance:
         self.claim_read_history_memo: OrderedDict[str, object] = OrderedDict()
         # Immutable-coordinate exports survive head movement; keys include their
         # review-context snapshot and access profile. Bounded by the floor service.
+        self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_history_memo: OrderedDict[str, object] = OrderedDict()
         self.floor_review_memo: OrderedDict[str, object] = OrderedDict()

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -100,7 +101,8 @@ from cruxible_core.service.playbill_floor_content import current_content, review
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 
 FLOOR_FORMAT_V1 = "playbill-floor-export-v1"
-FLOOR_FORMAT = "playbill-floor-export-v2"
+FLOOR_FORMAT_V2 = "playbill-floor-export-v2"
+FLOOR_FORMAT = "playbill-floor-export-v3"
 MANIFEST_PATH = "manifest.json"
 COVERAGE_MANIFEST_PATH = "coverage-manifest.json"
 FLOOR_DIGEST_DOMAIN_V1 = "playbill-floor-export-v1"
@@ -523,6 +525,12 @@ def service_export_playbill_floor(
 
     if format_version not in (2, 3):
         raise ValueError("unsupported floor format version")
+    if (
+        review_notes_oid is not None
+        and review_notes_oid != "absent"
+        and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", review_notes_oid)
+    ):
+        raise ProposalIntegrityError("review_notes_oid must be an immutable Git OID or 'absent'")
     notes_oid = None
     if format_version == 3:
         notes_oid = (
@@ -543,36 +551,58 @@ def service_export_playbill_floor(
         cached = memo_get(instance.floor_export_memo, key)
         if isinstance(cached, dict):
             return cached.copy()
-    tree = instance.tree_at(coordinate.git_oid)
-    facts = build_accepted_query_facts(
-        instance,
-        coordinate=coordinate,
-        external_readers=external_readers,
-    )
-    vocabulary = build_accepted_discovery_vocabulary(
-        instance,
-        coordinate=coordinate,
-        facts=facts,
-    )
-    entries = _entry_index(vocabulary.entries)
-    claims = tuple(
-        _claim_from_view(view)
-        for view in service_list_playbill_claims(instance, at=accepted).claims
-    )
-    relations = descriptor_relations(claims)
+    structure_key = (coordinate.git_oid, body_access.principal_id, body_access.can_read_body)
+    structure = None if external_readers else memo_get(instance.floor_structure_memo, structure_key)
+    files: dict[str, bytes]
+    if isinstance(structure, tuple):
+        base_files, claims = structure
+        files = base_files.copy()
+    else:
+        tree = instance.tree_at(coordinate.git_oid)
+        facts = build_accepted_query_facts(
+            instance,
+            coordinate=coordinate,
+            external_readers=external_readers,
+        )
+        vocabulary = build_accepted_discovery_vocabulary(
+            instance,
+            coordinate=coordinate,
+            facts=facts,
+        )
+        entries = _entry_index(vocabulary.entries)
+        claims = tuple(
+            _claim_from_view(view)
+            for view in service_list_playbill_claims(instance, at=accepted).claims
+        )
+        relations = descriptor_relations(claims)
 
-    files: dict[str, bytes] = {}
-    files.update(
-        _claim_type_cards(tree, entries=entries, at=accepted, claims=claims, relations=relations)
-    )
-    files.update(
-        _subject_profiles(tree, entries=entries, at=accepted, claims=claims, relations=relations)
-    )
-    files.update(_procedure_cards(instance, tree=tree, coordinate=coordinate, at=accepted))
-    files.update(_documents(instance, at=accepted, access=body_access))
-    files[COVERAGE_MANIFEST_PATH] = _render(
-        _coverage_manifest(instance, at=accepted).model_dump(mode="json")
-    )
+        files = {}
+        files.update(
+            _claim_type_cards(
+                tree, entries=entries, at=accepted, claims=claims, relations=relations
+            )
+        )
+        files.update(
+            _subject_profiles(
+                tree, entries=entries, at=accepted, claims=claims, relations=relations
+            )
+        )
+        files.update(_procedure_cards(instance, tree=tree, coordinate=coordinate, at=accepted))
+        files.update(_documents(instance, at=accepted, access=body_access))
+        files[COVERAGE_MANIFEST_PATH] = _render(
+            _coverage_manifest(instance, at=accepted).model_dump(mode="json")
+        )
+        if (
+            not external_readers
+            and (
+                sum(map(len, files.values()))
+                + sum(len(canonical_bytes(claim.model_dump(mode="json"))) for claim in claims)
+            )
+            <= 32 * 1024 * 1024
+        ):
+            memo_put(
+                instance.floor_structure_memo, structure_key, (files.copy(), claims), capacity=2
+            )
 
     if format_version == 3:
         files.update(
@@ -610,6 +640,7 @@ __all__ = [
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",
     "PlaybillFloorManifestV2",
+    "PlaybillFloorManifestV3",
     "PlaybillProcedureCapabilitiesV1",
     "PlaybillProcedureFloorCardV1",
     "PlaybillProcedureGovernanceV1",
