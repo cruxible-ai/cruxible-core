@@ -2115,6 +2115,8 @@ def playbill_export_floor(
     instance_id: str,
     *,
     at: AcceptedCoordinate | None = None,
+    format_version: Literal[2, 3] = 3,
+    review_notes_oid: str | None = None,
 ) -> contracts.PlaybillFloorExport:
     """Return the deterministic floor as base64 bytes keyed by floor path.
 
@@ -2126,10 +2128,13 @@ def playbill_export_floor(
     files = service_export_playbill_floor(
         get_playbill_manager().get(instance_id),
         at=at,
+        format_version=format_version,
+        review_notes_oid=review_notes_oid,
         access=_access(instance_id, include_body=False),
     )
     manifest = json.loads(files[MANIFEST_PATH])
     return contracts.PlaybillFloorExport(
+        tag=manifest["format"],
         coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(manifest["coordinate"]),
         manifest=manifest,
         files=[

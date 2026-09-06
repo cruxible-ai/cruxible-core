@@ -250,6 +250,11 @@ class PlaybillInstance:
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
         self.claim_read_history_memo: OrderedDict[str, object] = OrderedDict()
+        # Immutable-coordinate exports survive head movement; keys include their
+        # review-context snapshot and access profile. Bounded by the floor service.
+        self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
+        self.floor_history_memo: OrderedDict[str, object] = OrderedDict()
+        self.floor_review_memo: OrderedDict[str, object] = OrderedDict()
 
     @staticmethod
     def _accepted_query_facts(

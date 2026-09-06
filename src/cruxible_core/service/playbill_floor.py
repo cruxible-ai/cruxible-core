@@ -5,8 +5,8 @@ artifacts (ClaimType cards, Subject profiles) and the accepted Documents, plus a
 root manifest that binds every file to the accepted coordinate it came from.
 
 The service writes nothing. It returns a path-to-bytes map that is a pure
-function of the accepted coordinate, so the same coordinate always materializes
-byte-identical files.
+function of the accepted coordinate and, in v3, the explicitly pinned review
+notes snapshot. The same inputs always materialize byte-identical files.
 
 §11.7 makes the file-based context floor half of the reference coverage
 surface, so the floor also carries its own coverage boundary: a
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
@@ -63,6 +64,7 @@ from cruxible_core.playbill.compiler import (
 from cruxible_core.playbill.coverage.contracts import CoverageManifestProfileV2
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.memo import memo_get, memo_put
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -94,6 +96,7 @@ from cruxible_core.service.playbill_discovery import (
     accepted_claim_types,
     build_accepted_discovery_vocabulary,
 )
+from cruxible_core.service.playbill_floor_content import current_content, review_snapshot_oid
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 
 FLOOR_FORMAT_V1 = "playbill-floor-export-v1"
@@ -210,6 +213,14 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     track_record: tuple[PlaybillProcedureTrackRecordEntryV1, ...]
 
 
+class PlaybillFloorManifestV3(_StrictFloorModel):
+    tag: Literal["playbill-floor-manifest-v3"] = "playbill-floor-manifest-v3"
+    format: Literal["playbill-floor-export-v3"] = "playbill-floor-export-v3"
+    coordinate: PlaybillAcceptedCoordinate
+    files: tuple[PlaybillFloorFileV1, ...]
+    floor_digest: str
+
+
 def _resolve_coordinate(
     instance: PlaybillInstance,
     at: PlaybillAcceptedCoordinate | None,
@@ -305,10 +316,12 @@ def _subject_profiles(
     relations: RelationIndex,
 ) -> dict[str, bytes]:
     cardinalities: dict[str, str] = {}
+    grouped: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
     for claim in claims:
+        grouped[canonical_bytes(claim.statement.subject.model_dump(mode="json"))].append(claim)
         contract_path = claim_type_path(claim.statement.predicate)
         content = tree.get(contract_path)
-        if content is not None:
+        if content is not None and claim.statement.predicate not in cardinalities:
             cardinalities[claim.statement.predicate] = parse_claim_type(
                 content, path=contract_path
             ).cardinality
@@ -327,7 +340,7 @@ def _subject_profiles(
             subject_kind=shell.subject_kind,
             subject_id=shell.subject_id,
             artifact_digest=subject_digest(shell).tagged,
-            claims=tuple(claim for claim in claims if claim.statement.subject == address),
+            claims=tuple(grouped.get(canonical_bytes(address.model_dump(mode="json")), ())),
             cardinalities=cardinalities,
             relations=_relations_for(relations, address),
         )
@@ -489,6 +502,8 @@ def service_export_playbill_floor(
     instance: PlaybillInstance,
     *,
     at: PlaybillAcceptedCoordinate | None = None,
+    format_version: Literal[2, 3] = 3,
+    review_notes_oid: str | None = None,
     access: BodyAccessContext | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
 ) -> dict[str, bytes]:
@@ -506,6 +521,28 @@ def service_export_playbill_floor(
     accepted = PlaybillAcceptedCoordinate.from_internal(coordinate)
     body_access = access or BodyAccessContext(principal_id=DEFAULT_FLOOR_PRINCIPAL)
 
+    if format_version not in (2, 3):
+        raise ValueError("unsupported floor format version")
+    notes_oid = None
+    if format_version == 3:
+        notes_oid = (
+            review_snapshot_oid(instance)
+            if review_notes_oid is None
+            else None
+            if review_notes_oid == "absent"
+            else review_notes_oid
+        )
+    key = (
+        coordinate.git_oid,
+        format_version,
+        notes_oid,
+        body_access.principal_id,
+        body_access.can_read_body,
+    )
+    if not external_readers:
+        cached = memo_get(instance.floor_export_memo, key)
+        if isinstance(cached, dict):
+            return cached.copy()
     tree = instance.tree_at(coordinate.git_oid)
     facts = build_accepted_query_facts(
         instance,
@@ -537,6 +574,10 @@ def service_export_playbill_floor(
         _coverage_manifest(instance, at=accepted).model_dump(mode="json")
     )
 
+    if format_version == 3:
+        files.update(
+            current_content(instance, oid=coordinate.git_oid, claims=claims, notes_oid=notes_oid)
+        )
     ordered = {path: files[path] for path in sorted(files, key=lambda item: item.encode("utf-8"))}
     inventory = tuple(
         PlaybillFloorFileV1(
@@ -546,16 +587,20 @@ def service_export_playbill_floor(
         )
         for path, content in ordered.items()
     )
-    manifest = PlaybillFloorManifestV2(
+    manifest_type = PlaybillFloorManifestV2 if format_version == 2 else PlaybillFloorManifestV3
+    manifest = manifest_type(
         coordinate=accepted,
         files=inventory,
         floor_digest=typed_digest(
             Sha256Value,
-            FLOOR_DIGEST_DOMAIN,
+            f"playbill-floor-export-v{format_version}",
             {"files": [item.model_dump(mode="json") for item in inventory]},
         ).tagged,
     )
-    return {MANIFEST_PATH: _render(manifest.model_dump(mode="json")), **ordered}
+    result = {MANIFEST_PATH: _render(manifest.model_dump(mode="json")), **ordered}
+    if not external_readers and sum(map(len, result.values())) <= 32 * 1024 * 1024:
+        memo_put(instance.floor_export_memo, key, result.copy(), capacity=2)
+    return result
 
 
 __all__ = [

@@ -1404,7 +1404,12 @@ async def export_floor(
     instance_id: str,
     req: PlaybillFloorExportRequest,
 ) -> contracts.PlaybillFloorExport:
-    return playbill_api.playbill_export_floor(resolve_server_instance_id(instance_id), at=req.at)
+    return playbill_api.playbill_export_floor(
+        resolve_server_instance_id(instance_id),
+        at=req.at,
+        format_version=req.format_version,
+        review_notes_oid=req.review_notes_oid,
+    )
 
 
 __all__ = ["router"]

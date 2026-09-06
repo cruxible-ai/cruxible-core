@@ -265,7 +265,9 @@ class FloorOutputV1(_StrictMiddlewareModel):
     """A client-owned floor destination; the daemon never sees this path."""
 
     tag: Literal["playbill-floor-output-v1"] = "playbill-floor-output-v1"
-    format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
+    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v3"] = (
+        "playbill-floor-export-v2"
+    )
 
 
 class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
@@ -356,8 +358,12 @@ class FloorManifestFileV1(_StrictMiddlewareModel):
 class FloorFreshnessManifestV2(_StrictMiddlewareModel):
     """The exact v2 manifest shape needed by the presentation-only freshness check."""
 
-    tag: Literal["playbill-floor-manifest-v2"] = "playbill-floor-manifest-v2"
-    format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
+    tag: Literal["playbill-floor-manifest-v2", "playbill-floor-manifest-v3"] = (
+        "playbill-floor-manifest-v2"
+    )
+    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v3"] = (
+        "playbill-floor-export-v2"
+    )
     coordinate: AcceptedCoordinate
     files: tuple[FloorManifestFileV1, ...]
     floor_digest: str
@@ -376,9 +382,11 @@ class FloorFreshnessManifestV2(_StrictMiddlewareModel):
             raise ValueError("floor manifest inventory must be byte-sorted")
         if len(paths) != len(set(paths)) or "manifest.json" in paths:
             raise ValueError("floor manifest inventory paths must be unique and exclude itself")
+        if self.tag != self.format.replace("export", "manifest"):
+            raise ValueError("floor manifest tag differs from its format")
         expected_digest = typed_digest(
             Sha256Value,
-            "playbill-floor-export-v2",
+            self.format,
             {"files": [item.model_dump(mode="json") for item in self.files]},
         ).tagged
         if self.floor_digest != expected_digest:

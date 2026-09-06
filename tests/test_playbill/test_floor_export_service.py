@@ -25,7 +25,7 @@ from cruxible_core.service.playbill_floor import (
     PlaybillProcedureFloorCardV1,
     render_floor_json_v1,
     render_floor_json_v2,
-    service_export_playbill_floor,
+    service_export_playbill_floor as _export,
 )
 from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._knowledge_loop_support import (
@@ -38,6 +38,12 @@ from tests.test_playbill._knowledge_loop_support import (
 from tests.test_playbill._support import client_material
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_procedures import _slot_definition
+
+
+def service_export_playbill_floor(*args, **kwargs):
+    # Frozen v2 regression corpus; v3 has its own completeness tests.
+    return _export(*args, format_version=2, **kwargs)
+
 
 CARD_PATH = "claim-types/project.work_item/status.card.json"
 PROFILE_PATH = "subjects/project.work_item/wi-42.profile.json"

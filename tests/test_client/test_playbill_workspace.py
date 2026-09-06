@@ -126,7 +126,7 @@ def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
     payload = json.loads(written.read_text(encoding="utf-8"))
     assert payload == {
         "floor_output": {
-            "format": "playbill-floor-export-v2",
+            "format": "playbill-floor-export-v3",
             "tag": "playbill-floor-output-v1",
         },
         "instance_id": "inst_two",
@@ -196,7 +196,7 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(tmp_path
     assert payload["rules"] == []
     assert payload["floor_output"] == {
         "tag": "playbill-floor-output-v1",
-        "format": "playbill-floor-export-v2",
+        "format": "playbill-floor-export-v3",
     }
 
 
@@ -455,3 +455,29 @@ def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Pa
     assert item.repair == RepairOperationV1(
         operation="playbill.host.create", arguments={"workspace": "."}
     )
+
+
+def test_floor_refresh_reuses_verified_files_and_repairs_local_edits(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    export = _export()
+    result = materialize_playbill_floor(workspace, export=export)
+    destination = Path(result.destination)
+    card = destination / "cards/fresh.json"
+    original = card.stat()
+    materialize_playbill_floor(workspace, export=export)
+    assert card.stat().st_ino == original.st_ino
+    assert card.stat().st_mtime_ns == original.st_mtime_ns
+    card.write_bytes(b"local corruption")
+    extra = destination / "extra.json"
+    extra.write_bytes(b"extra")
+    materialize_playbill_floor(workspace, export=export)
+    assert card.read_bytes() == b'{"fresh":true}\n'
+    assert not extra.exists()
+    # A symlink with matching bytes must be replaced by a regular owned file.
+    external = tmp_path / "external.json"
+    external.write_bytes(card.read_bytes())
+    card.unlink()
+    card.symlink_to(external)
+    materialize_playbill_floor(workspace, export=export)
+    assert not card.is_symlink()
+    assert external.read_bytes() == card.read_bytes()

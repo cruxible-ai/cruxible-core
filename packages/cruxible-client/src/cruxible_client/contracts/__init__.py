@@ -1898,9 +1898,9 @@ class PlaybillFloorExport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-floor-export-v1", "playbill-floor-export-v2"] = (
-        "playbill-floor-export-v2"
-    )
+    tag: Literal[
+        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v3"
+    ] = "playbill-floor-export-v2"
     coordinate: PlaybillAcceptedCoordinate
     manifest: dict[str, Any]
     files: list[PlaybillFloorFile]

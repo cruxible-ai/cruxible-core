@@ -1708,9 +1708,15 @@ class CruxibleClient:
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        format_version: Literal[2, 3] = 3,
+        review_notes_oid: str | None = None,
     ) -> contracts.PlaybillFloorExport:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/floor/export",
-            json={"at": self._playbill_coordinate_body(at)},
+            json={
+                "at": self._playbill_coordinate_body(at),
+                "format_version": format_version,
+                "review_notes_oid": review_notes_oid,
+            },
         )
         return self._parse_model(response, contracts.PlaybillFloorExport)

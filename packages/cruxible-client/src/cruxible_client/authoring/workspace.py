@@ -49,7 +49,8 @@ from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _CONFIG_EXCLUDE_RULE = b"/.playbill/coverage.json\n"
-_FLOOR_DOMAIN = "playbill-floor-export-v2"
+_FLOOR_DOMAIN = "playbill-floor-export-v3"
+_FLOOR_DOMAINS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
 _FLOOR_OUTPUT = {
     "tag": "playbill-floor-output-v1",
@@ -548,12 +549,12 @@ def _safe_export_path(value: object) -> str:
 def verified_floor_files(export: contracts.PlaybillFloorExport) -> dict[str, bytes]:
     """Verify the v2 envelope, manifest, inventory, and bytes."""
 
-    if export.tag != _FLOOR_DOMAIN:
-        raise PlaybillWorkspaceError("configured floor refresh requires playbill-floor-export-v2")
+    if export.tag not in _FLOOR_DOMAINS:
+        raise PlaybillWorkspaceError("configured floor refresh requires floor export v2 or v3")
     manifest = export.manifest
-    if manifest.get("tag") != "playbill-floor-manifest-v2":
+    if manifest.get("tag") != export.tag.replace("export", "manifest"):
         raise PlaybillWorkspaceError("floor export manifest has an unsupported tag")
-    if manifest.get("format") != _FLOOR_DOMAIN:
+    if manifest.get("format") != export.tag:
         raise PlaybillWorkspaceError("floor export manifest has an unsupported format")
     coordinate = manifest.get("coordinate")
     if coordinate != export.coordinate.model_dump(mode="json"):
@@ -599,7 +600,7 @@ def verified_floor_files(export: contracts.PlaybillFloorExport) -> dict[str, byt
         digest = "sha256:" + hashlib.sha256(content).hexdigest()
         if digest != content_digest:
             raise PlaybillWorkspaceError(f"floor export content digest differs for {path}")
-    expected_floor_digest = _typed_digest(_FLOOR_DOMAIN, {"files": inventory})
+    expected_floor_digest = _typed_digest(export.tag, {"files": inventory})
     if manifest.get("floor_digest") != expected_floor_digest:
         raise PlaybillWorkspaceError("floor export root digest differs from its inventory")
     return decoded
@@ -642,7 +643,10 @@ def configured_floor_path(workspace: str | Path) -> str | None:
         return None
     if not isinstance(output, Mapping):
         raise PlaybillWorkspaceError("coverage floor_output is not an object")
-    if output.get("tag") != "playbill-floor-output-v1" or output.get("format") != _FLOOR_DOMAIN:
+    if (
+        output.get("tag") != "playbill-floor-output-v1"
+        or output.get("format") not in _FLOOR_DOMAINS
+    ):
         raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
     if "path" in output:
         raise PlaybillWorkspaceError(
@@ -656,6 +660,29 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.parent.resolve().is_relative_to(root):
         raise PlaybillWorkspaceError("configured floor output parent escapes the workspace root")
+    # Verify bytes, not just the manifest: a locally edited derived file must
+    # be repaired even when the accepted coordinate has not moved. Never
+    # reuse symlinks or share writable inodes with the previous installation.
+    reusable: dict[str, Path] = {}
+    exact = destination.is_dir() and not destination.is_symlink()
+    if exact:
+        observed: set[str] = set()
+        for parent, directories, filenames in os.walk(destination, followlinks=False):
+            for name in directories:
+                if (Path(parent) / name).is_symlink():
+                    exact = False
+            for name in filenames:
+                source = Path(parent) / name
+                relative = source.relative_to(destination).as_posix()
+                observed.add(relative)
+                if not source.is_symlink() and relative in files:
+                    try:
+                        if source.read_bytes() == files[relative]:
+                            reusable[relative] = source
+                    except OSError:
+                        pass
+        if exact and observed == set(files) and len(reusable) == len(files):
+            return
     stage = Path(
         tempfile.mkdtemp(prefix=f".{destination.name}.playbill-floor-", dir=destination.parent)
     )
@@ -669,7 +696,13 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
             if not target.is_relative_to(stage_root):  # pragma: no cover - prevalidated
                 raise PlaybillWorkspaceError(f"floor export path escapes its stage: {path}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
+            if path in reusable:
+                shutil.copy2(reusable[path], target)
+                # Concurrent local edits cannot contaminate the new export.
+                if target.read_bytes() != content:
+                    target.write_bytes(content)
+            else:
+                target.write_bytes(content)
         if destination.exists() or destination.is_symlink():
             destination.rename(backup)
             moved_old = True

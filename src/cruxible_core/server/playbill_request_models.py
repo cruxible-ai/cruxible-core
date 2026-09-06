@@ -398,3 +398,5 @@ class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):
 
 class PlaybillFloorExportRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
+    format_version: Literal[2, 3] = 3
+    review_notes_oid: str | None = None
