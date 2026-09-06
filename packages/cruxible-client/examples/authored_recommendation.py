@@ -1,7 +1,8 @@
 """Author a recommendation once; derive Claims, retained input, and prose.
 
 Application vocabulary example, not a generic SDK record API. The caller supplies
-accepted typed Subject/ClaimType refs for two string-valued normative predicates.
+accepted typed Subject/ClaimType refs for two string-valued normative predicates,
+or refs staged in the same ChangeSetDraft.
 The vocabulary must admit authored recommendations under its explicit evidence
 policy. Acceptance records the recommendation; it does not adopt the policy.
 
@@ -41,7 +42,7 @@ class Recommendation:
 
 
 def stage(
-    pb: Playbill,
+    pb: Playbill | ChangeSetDraft,
     subject: SubjectRef,
     fields: Mapping[Field, ClaimTypeRef],
     record: Recommendation,
@@ -51,6 +52,7 @@ def stage(
 ) -> ChangeSetDraft:
     """Stage creation or explicitly selected replacements as one governed change.
 
+    Pass an existing changeset to compose records and vocabulary in one proposal.
     Each replacement contradicts the named prior Claim. The caller is responsible
     for reviewing that disposition and selecting the correct Claim for each field.
     """
@@ -75,7 +77,7 @@ def stage(
         sort_keys=True,
         separators=(",", ":"),
     )
-    change = pb.changes(rationale=record.rationale)
+    change = pb if isinstance(pb, ChangeSetDraft) else pb.changes(rationale=record.rationale)
     for name in changed:
         replaces = replacements.get(name)
         change.claim(

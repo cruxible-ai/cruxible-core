@@ -10,6 +10,7 @@ import pytest
 
 from cruxible_client import ClaimRef, ClaimTypeRef, Playbill, SubjectRef
 from cruxible_client.authoring.sdk import ClaimView
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from tests.test_client.test_playbill_sdk import _Client, _workspace
 
 EXAMPLE = runpy.run_path(
@@ -100,3 +101,23 @@ def test_render_follows_read_values_and_refuses_incomplete_or_competing_state():
     ):
         with pytest.raises(ValueError):
             body(invalid)
+
+
+def test_recommendation_composes_with_subject_in_one_changeset(tmp_path):
+    _workspace(tmp_path)
+    pb = Playbill._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
+    change = pb.changes(rationale="Bootstrap the recommendation in one proposal.")
+    subject = change.subject(
+        pb.subject(
+            subject="program.recommendation/projection-refresh",
+            pins=(),
+            lifecycle=ArtifactLifecycle(),
+        )
+    )
+    fields = {
+        name: ClaimTypeRef("program.recommendation." + name, pb.coordinate)
+        for name in ("rule", "rationale")
+    }
+    result = stage(change, subject, fields, Recommendation("Use receipts.", "Refresh cheaply."))
+    assert result is change
+    assert len(result._compiled().payload.members) == 3
