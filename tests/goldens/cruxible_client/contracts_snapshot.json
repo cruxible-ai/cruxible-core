@@ -17669,7 +17669,8 @@
             "default": "playbill-floor-export-v2",
             "enum": [
               "playbill-floor-export-v1",
-              "playbill-floor-export-v2"
+              "playbill-floor-export-v2",
+              "playbill-floor-export-v3"
             ],
             "title": "Tag",
             "type": "string"
@@ -17759,7 +17760,8 @@
             "default": "playbill-floor-export-v2",
             "enum": [
               "playbill-floor-export-v1",
-              "playbill-floor-export-v2"
+              "playbill-floor-export-v2",
+              "playbill-floor-export-v3"
             ],
             "title": "Tag",
             "type": "string"
@@ -17828,6 +17830,25 @@
     },
     "PlaybillFloorRefreshResult": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "destination": {
           "default": null,
           "default_json_serializable": true,
@@ -17939,9 +17960,61 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "Client-owned truth about the optional workspace floor refresh.",
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "destination": {
             "anyOf": [
               {
@@ -19814,6 +19887,20 @@
             "title": "Attempted At"
           }
         },
+        "attempted_sequence": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "attempted_sequence",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Attempted Sequence",
+            "type": "integer"
+          }
+        },
         "detail": {
           "default": null,
           "default_json_serializable": true,
@@ -19854,6 +19941,67 @@
             "type": "string"
           }
         },
+        "published_main_oid": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "published_main_oid",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Published Main Oid"
+          }
+        },
+        "published_refs": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "published_refs",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Published Refs",
+            "type": "object"
+          }
+        },
+        "published_sequence": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "published_sequence",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Published Sequence",
+            "type": "integer"
+          }
+        },
+        "requested_sequence": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "requested_sequence",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Requested Sequence",
+            "type": "integer"
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -19862,7 +20010,9 @@
           "schema": {
             "enum": [
               "current",
-              "behind"
+              "behind",
+              "pending",
+              "publishing"
             ],
             "title": "Status",
             "type": "string"
@@ -19881,11 +20031,32 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "wait_sequence": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "wait_sequence",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wait Sequence"
+          }
         }
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "Where one instance publishes its ledger, and whether that copy is current.\n\nOne model for both doors: `ledger set-mirror` binds a remote and publishes\nto it at once, and `ledger clone-url` reads back what a reviewer clones. The\nURL carries no credential -- one that could is refused before it is stored --\nso this model is safe to print, log and hand to anyone who may read the\ninstance at all.",
+        "description": "Where one instance publishes its ledger, and whether that copy is current.\n\n`ledger set-mirror` binds a remote and waits boundedly for initial publication;\n`ledger clone-url` reads its status. A publish barrier is acknowledged when\npublished_sequence reaches wait_sequence, even if newer work is pending. The\nURL carries no credential -- one that could is refused before it is stored --\nso this model is safe to print, log and hand to anyone who may read the\ninstance at all.",
         "properties": {
           "attempted_at": {
             "anyOf": [
@@ -19898,6 +20069,12 @@
             ],
             "default": null,
             "title": "Attempted At"
+          },
+          "attempted_sequence": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Attempted Sequence",
+            "type": "integer"
           },
           "detail": {
             "anyOf": [
@@ -19919,10 +20096,43 @@
             "title": "Mirror Url",
             "type": "string"
           },
+          "published_main_oid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Published Main Oid"
+          },
+          "published_refs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Published Refs",
+            "type": "object"
+          },
+          "published_sequence": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Published Sequence",
+            "type": "integer"
+          },
+          "requested_sequence": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Requested Sequence",
+            "type": "integer"
+          },
           "status": {
             "enum": [
               "current",
-              "behind"
+              "behind",
+              "pending",
+              "publishing"
             ],
             "title": "Status",
             "type": "string"
@@ -19932,6 +20142,19 @@
             "default": "playbill-ledger-mirror-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "wait_sequence": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wait Sequence"
           }
         },
         "required": [
@@ -35007,6 +35230,17 @@
             "additionalProperties": false,
             "description": "Client-owned truth about the optional workspace floor refresh.",
             "properties": {
+              "coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "destination": {
                 "anyOf": [
                   {
