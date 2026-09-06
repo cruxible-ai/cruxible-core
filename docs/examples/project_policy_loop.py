@@ -300,6 +300,8 @@ def observe(state, phase):
     )
     state[phase]["block_check"] = result.model_dump(mode="json")
     save(STATE, state)
+    assert not result.has_refusals and len(result.items) == 1
+    assert result.items[0].outcome == "unchanged"
     pb.close()
 
 
