@@ -1000,6 +1000,20 @@ class Intent:
         return tuple(cast(dict[str, object], item) for item in status.path_to_acceptance)
 
     @property
+    def proposal(self) -> Proposal | None:
+        """Last observed proposal identity, without a server read.
+
+        Populated by submit() or status(); None means no proposal was observed
+        for this local intent revision. Call status() for fresh server state.
+        This handle is not review, approval, or proof of activation eligibility.
+        """
+
+        status = self._candidate_status
+        if status is None or status.proposal_id is None:
+            return None
+        return self._playbill.proposal(status.proposal_id)
+
+    @property
     def publication(self) -> Publication | None:
         """The one publication a singular Claim intent owns, if it has one."""
 
@@ -1031,6 +1045,7 @@ class Intent:
         ).intent
 
     def prepare(self) -> Intent:
+        self._candidate_status = None
         result = self._playbill._client.preflight_playbill_authoring_intent(
             self._playbill._instance_id, self.intent_id
         )
@@ -1043,6 +1058,7 @@ class Intent:
     def reprepare(self, *, draft: ClaimDraft | ProcedureDraft | SubjectDraft) -> Intent:
         if draft._playbill is not self._playbill:
             raise ValueError("replacement draft belongs to another Playbill connection")
+        self._candidate_status = None
         result = self._playbill._client.compile_playbill_authoring(
             self._playbill._instance_id,
             payload=draft.payload.model_dump(mode="json"),
@@ -1060,6 +1076,7 @@ class Intent:
         return self
 
     def submit(self) -> Intent:
+        self._candidate_status = None
         result = self._playbill._client.submit_playbill_authoring_intent(
             self._playbill._instance_id, self.intent_id
         )
@@ -1075,6 +1092,7 @@ class Intent:
         return status
 
     def rebase(self) -> Intent:
+        self._candidate_status = None
         self._raw = self._playbill._client.rebase_playbill_authoring_intent(
             self._playbill._instance_id, self.intent_id
         ).intent

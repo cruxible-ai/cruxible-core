@@ -78,10 +78,10 @@ def run(
         if intent.refused:
             raise ValueError(f"Preflight refused: {intent.diagnostics}")
         intent.submit()
-        proposal_id = intent.status().proposal_id
-        if proposal_id is None:
+        proposal = intent.proposal
+        if proposal is None:
             raise ValueError("Submission did not produce a proposal")
-        proposal = pb.proposal(proposal_id)
+        proposal_id = proposal.proposal_id
         reviewed = proposal.review()
         if not review_decision(reviewed):
             raise RuntimeError(f"Left proposal {proposal_id} pending after review")
@@ -109,12 +109,6 @@ def run(
             role=ClaimRole.NORMATIVE,
             rationale="Runbook gives the initial deadline.",
             supported_by=pb.file("sdk-demo.md").anchor("forty-eight hours"),
-            copied_from=None,
-            self_source=None,
-            qualifier=None,
-            effective_period=None,
-            revises=None,
-            dispositions={},
             subject_definition=subject,
             claim_type_definition=claim_type,
         ).prepare()
@@ -131,14 +125,8 @@ def run(
             role=ClaimRole.NORMATIVE,
             rationale="The source deadline changed; revise the same Claim with new evidence.",
             supported_by=pb.file("sdk-demo.md").anchor("forty-nine hours"),
-            copied_from=None,
-            self_source=None,
-            qualifier=None,
-            effective_period=None,
             revises=first.claim_id,
             dispositions={first.claim_id: Disposition.CONTRADICT},
-            subject_definition=None,
-            claim_type_definition=None,
         ).prepare()
     )
     assert repaired.claim_id == first.claim_id and repaired.value == 49
